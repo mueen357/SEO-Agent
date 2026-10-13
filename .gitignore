@@ -51,3 +51,12 @@ Thumbs.db
 # Scratch and Local Testing Profiles
 scratch_profile/
 scratch/
+
+# Databases & Persistence
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+siteaudit.db
+siteaudit.sqlite

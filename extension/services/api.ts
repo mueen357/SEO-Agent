@@ -1,8 +1,17 @@
-﻿/**
+/**
  * Backend API Client & Health Check Service
  */
 
-import type { BackendHealthResponse } from '../types/audit';
+import type {
+  AuditCancelResponse,
+  AuditIssuesResponse,
+  AuditListResponse,
+  AuditPagesResponse,
+  AuditRecord,
+  BackendHealthResponse,
+  CreateAuditRequest,
+  ListAuditsParams,
+} from '../types/audit';
 
 const DEFAULT_API_BASE = 'http://127.0.0.1:8000';
 
@@ -49,4 +58,147 @@ export async function checkBackendHealth(baseUrl: string = DEFAULT_API_BASE): Pr
       latencyMs
     };
   }
+}
+
+/**
+ * Create a persistent audit record (POST /api/v1/audits)
+ */
+export async function createAudit(
+  request: CreateAuditRequest,
+  idempotencyKey?: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditRecord> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+  if (idempotencyKey) {
+    headers['Idempotency-Key'] = idempotencyKey;
+  }
+
+  const response = await fetch(`${baseUrl}/api/v1/audits`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to create audit (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve an existing audit by ID (GET /api/v1/audits/{id})
+ */
+export async function getAudit(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditRecord> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to retrieve audit (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Query audits with pagination and status/hostname filters (GET /api/v1/audits)
+ */
+export async function listAudits(
+  params?: ListAuditsParams,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditListResponse> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.page_size) query.set('page_size', String(params.page_size));
+  if (params?.status) query.set('status', params.status);
+  if (params?.hostname) query.set('hostname', params.hostname);
+
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  const response = await fetch(`${baseUrl}/api/v1/audits${qs}`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to list audits (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Cancel an audit job (POST /api/v1/audits/{id}/cancel)
+ */
+export async function cancelAudit(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditCancelResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/cancel`, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to cancel audit (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve pages for an audit (GET /api/v1/audits/{id}/pages)
+ */
+export async function getAuditPages(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditPagesResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/pages`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch audit pages (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve issues for an audit (GET /api/v1/audits/{id}/issues)
+ */
+export async function getAuditIssues(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditIssuesResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/issues`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch audit issues (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
 }

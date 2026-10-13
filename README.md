@@ -14,128 +14,93 @@ A production-oriented, AI-powered website audit system delivered through a Googl
   - **Side Panel (`entrypoints/sidepanel/`):** Comprehensive audit dashboard featuring Overview, Quick Audit metrics, Metadata inspection, Headings hierarchy, Image alt analysis, Link graph breakdown, and structured placeholders for future phases.
   - **Background Worker (`entrypoints/background.ts`):** Manifest V3 service worker coordinating side panel opening and extension messaging.
   - **Content Script (`entrypoints/content.ts`):** On-page messaging responder for runtime audit requests.
-- **Modular Directory Structure:**
-  - `components/audit/`: HeadingsSection, ImagesSection, LinksSection, MetadataSection, PlaceholderSection, QuickAuditSummary
-  - `components/common/`: Badge, BackendIndicator
-  - `components/layout/`: Header
-  - `services/`: auditRunner, extractor, api, tab, storage
-  - `types/`: audit.ts, messaging.ts
-  - `utils/`: url.ts
+- **Client Services:**
+  - `services/api.ts`: Typed API client for `/health`, `/api/v1/audits`, idempotency headers, audit retrieval, listing, and cancellation.
+  - `services/auditRunner.ts` & `services/extractor.ts`: Client-side DOM extraction for zero-backend Quick Audits.
 - **Build Output:** `extension/.output/chrome-mv3`
 
-### Backend (API Service)
-- **Framework:** Python 3.12 / 3.11+ with FastAPI & Uvicorn
-- **Development Binding:** Strictly bound to `127.0.0.1:8000` (not exposed to public interfaces)
-- **CORS Hardening:** Development CORS policy explicitly permits local origins and `chrome-extension://*` regex origins with `allow_credentials=False` (preventing wildcard credential exposure).
+### Backend (Persistent Audit API Service — Phase 1.3)
+- **Framework:** Python 3.12 with FastAPI & Uvicorn
+- **Development Binding:** Strictly bound to `127.0.0.1:8000` (development isolation)
+- **Database & ORM:** SQLAlchemy 2.x async engine with SQLite (`siteaudit.db`) for local development, architected with portable schemas ready for PostgreSQL.
+- **Database Migrations:** Alembic with reversible migrations (`0001_initial_audit_tables.py`).
+- **Security & SSRF Protection:** Pre-flight URL validation blocking non-HTTP schemes, userinfo credentials, excessive length, localhost, private IP ranges (RFC 1918), link-local/APIPA, multicast, reserved ranges, and cloud-metadata addresses (`169.254.169.254`). Pre-flight DNS resolution with safe failure modes.
+- **Idempotency:** Persisted `Idempotency-Key` header mechanism with deterministic SHA-256 payload hashing and 409 Conflict protection.
 - **Core Endpoints:**
-  - `GET /health`: Health status endpoint returning `{"status": "ok", "service": "website-audit-api"}`
-  - `GET /docs`: Interactive Swagger documentation
-  - `GET /redoc`: ReDoc documentation
-- **Testing:** Pytest with HTTPX AsyncClient and ASGITransport
+  - `GET /health` & `GET /api/v1/health`: Backward-compatible health check (`{"status": "ok", "service": "website-audit-api"}`)
+  - `GET /docs` & `GET /redoc`: Interactive Swagger and ReDoc documentation
+  - `POST /api/v1/audits`: 202 Accepted; creates persistent audit record in `created` state
+  - `GET /api/v1/audits/{id}`: Retrieves audit record by UUID
+  - `GET /api/v1/audits`: Paginated query with status and hostname filtering
+  - `POST /api/v1/audits/{id}/cancel`: Terminal-state protected audit cancellation
+  - `GET /api/v1/audits/{id}/pages`: Empty collection placeholder (crawling scheduled for Phase 1.4)
+  - `GET /api/v1/audits/{id}/issues`: Empty collection placeholder (issue detection scheduled for Phase 1.5)
 
 ---
 
-## 2. Prerequisites & Local Paths
+## 2. Directory Structure
 
-- **Operating System:** Windows 11 Pro 64-bit
-- **Node.js:** v24.19.0+ LTS with npm 11.17.0+
-- **Python:** 3.12+ (Active virtual environment at `backend/.venv`)
-- **Browser:** Google Chrome (Installed at `C:\Program Files\Google\Chrome\Application\chrome.exe`)
-
-### Project Paths
-- **Project Root:** `D:\Website-Audit-Agent`
-- **Chrome Extension Directory:** `D:\Website-Audit-Agent\extension`
-- **Backend Directory:** `D:\Website-Audit-Agentackend`
-- **Documentation:** `D:\Website-Audit-Agent\docs`
-- **Scripts:** `D:\Website-Audit-Agent\scripts`
+```
+D:\Website-Audit-Agent/
+├── backend/
+│   ├── alembic/                # Database migrations
+│   │   ├── versions/
+│   │   │   └── 0001_initial_audit_tables.py
+│   │   └── env.py
+│   ├── app/
+│   │   ├── api/v1/             # Endpoints: router, audits, health
+│   │   ├── core/               # Errors & structured logging
+│   │   ├── database/           # Base, session, models (Audit, IdempotencyRecord)
+│   │   ├── repositories/       # AuditRepository (SQLAlchemy 2.x)
+│   │   ├── schemas/            # Pydantic v2 request/response schemas
+│   │   ├── services/           # AuditService & safe url_validation
+│   │   ├── config.py           # Pydantic Settings
+│   │   └── main.py             # FastAPI entrypoint
+│   ├── tests/                  # Pytest async suite (isolated DB fixtures)
+│   ├── alembic.ini
+│   └── requirements.txt
+├── extension/
+│   ├── components/             # React UI components (Popup, Sidepanel, Audit cards)
+│   ├── entrypoints/            # Background worker, popup, sidepanel
+│   ├── services/               # API client, DOM extractor, tab services
+│   ├── types/                  # Audit models & messaging interfaces
+│   ├── utils/                  # Safe URL utilities
+│   ├── tests/                  # Vitest suite
+│   ├── package.json
+│   └── wxt.config.ts
+├── docs/                       # Architecture & test result documentation
+├── scripts/                    # Automation scripts (verify_all.ps1, run_backend.ps1)
+└── README.md
+```
 
 ---
 
-## 3. Chrome Extension Setup & Build
+## 3. Quick Start & Verification
 
-### Development Mode (with Live Reload):
+### Running the Backend Server
 ```powershell
-cd "D:\Website-Audit-Agent\extension"
-npm run dev
+powershell -ExecutionPolicy Bypass -File scripts\run_backend.ps1
 ```
-
-### Type Checking & Production Build:
+Or directly:
 ```powershell
-cd "D:\Website-Audit-Agent\extension"
-npm run compile   # TypeScript validation (tsc --noEmit)
-npm test          # Unit test suite (Vitest + JSDOM)
-npm run build     # Builds production bundle to .output/chrome-mv3
-```
-
-### Loading the Extension in Google Chrome
-1. Open Google Chrome and navigate to: `chrome://extensions/`
-2. Enable **Developer mode** using the toggle switch in the top-right corner.
-3. Click the **Load unpacked** button.
-4. Select the directory:
-   `D:\Website-Audit-Agent\extension\.output\chrome-mv3`
-5. The **Website Audit Agent** extension icon will now appear in your toolbar.
-6. Click the extension icon to view the popup or open the Chrome Side Panel.
-
----
-
-## 4. Backend Setup & Launch
-
-### Virtual Environment Activation:
-```powershell
-cd "D:\Website-Audit-Agentackend"
-.\.venv\Scripts\Activate.ps1
-```
-
-### Running the FastAPI Server:
-```powershell
-cd "D:\Website-Audit-Agentackend"
+cd backend
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-### Running Backend Tests:
+### Running Complete Verification Suite (Frontend + Backend)
 ```powershell
-cd "D:\Website-Audit-Agentackend"
-.\.venv\Scripts\pytest.exe -v
+powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 ```
+Executes:
+1. Extension TypeScript validation (`tsc --noEmit`)
+2. Extension Vitest suite (`vitest run` — 24 tests)
+3. Extension production build (`wxt build` -> `.output/chrome-mv3`)
+4. Backend Pytest suite (`pytest -v` — 26 tests)
+5. Playwright headless Chromium launch verification
+6. Alembic reversible migration lifecycle test
 
----
-
-## 5. Quick Page Audit Capabilities
-
-The Quick Audit engine operates strictly on the active page's live DOM:
-1. **Document Title:** Text, character length, short/long/missing recommendations.
-2. **Meta Description:** Content extraction, character length, presence checks.
-3. **Canonical URL:** Relative href resolution, presence check.
-4. **Meta Robots Directive:** Directives extraction (index, noindex, follow, nofollow).
-5. **HTML Language:** Detection of `lang` attribute on root `<html>` element.
-6. **Headings Hierarchy (H1-H6):** Sequential extraction in exact DOM order, total counts per heading level, detection of missing H1 or multiple H1 tags.
-7. **Image Analysis:** Total image count, images completely missing an `alt` attribute vs images with empty `alt=""` (valid decorative images), sample issues list.
-8. **Hyperlink Graph:** Total hyperlinks, internal links (matching current hostname), external links (different domain), non-HTTP links (`mailto:`, `tel:`, `javascript:`).
-9. **Preliminary Findings:** Actionable, objective recommendations with severity ratings (`critical`, `warning`, `info`, `good`).
-
----
-
-## 6. Permissions & Security Policy
-
-### Manifest V3 Permissions:
-- `activeTab`: Provides temporary access to the currently active tab when invoked.
-- `storage`: Enables local caching of audit results via `chrome.storage.local`.
-- `sidePanel`: Grants access to the Chrome Side Panel API.
-- `scripting`: Fallback script execution on pages opened prior to extension installation.
-- `tabs`: Allows querying the active tab state and detecting URL changes.
-
-### Host Permissions:
-- `http://127.0.0.1:8000/*` and `http://localhost:8000/*`: Dedicated to local backend health queries.
-- Unrestricted wildcard host permissions (`<all_urls>`) are avoided.
-
-### Subdomain Classification Rule:
-- By default (strict hostname consistency), links to subdomains (e.g. `blog.example.com` when viewing `example.com`) are classified as external to match the tab's exact hostname. Optional configuration flag `includeSubdomains` allows treating root-domain subdomains as internal.
-
----
-
-## 7. Known Limitations
-
-1. **Restricted Pages:** Cannot execute on `chrome://`, `chrome-extension://`, `edge://`, `about:blank`, or Chrome Web Store pages (gracefully handled with informative status indicators).
-2. **Iframes and Shadow DOM:** Content nested within cross-origin iframes or closed shadow roots is not extracted in the preliminary DOM audit.
-3. **Dynamic SPA Hydration:** Single-page applications rendering client-side content after hydration are audited based on current DOM state at the time of audit execution.
-4. **Local Audit Scope:** Labeled explicitly as "Quick Page Audit" — does not fabricate site-wide crawl metrics, domain authority, or search ranking figures.
+### Database Migrations
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```

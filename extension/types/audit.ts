@@ -94,3 +94,81 @@ export interface BackendHealthResponse {
   checkedAt: number;
   latencyMs?: number;
 }
+
+
+// ==========================================
+// Phase 1.3 Persistent Audit Models & Types
+// ==========================================
+
+export type AuditMode = 'quick' | 'full' | 'verified_owner';
+
+export type AuditStatus =
+  | 'created'
+  | 'queued'
+  | 'crawling'
+  | 'analyzing'
+  | 'enriching'
+  | 'generating_recommendations'
+  | 'completed'
+  | 'partially_completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface AuditRecord {
+  id: string;
+  target_url: string;
+  normalized_url: string;
+  hostname: string;
+  mode: AuditMode;
+  status: AuditStatus;
+  max_pages: number;
+  pages_discovered: number;
+  pages_crawled: number;
+  configuration_json: Record<string, unknown>;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface CreateAuditRequest {
+  target_url: string;
+  mode?: AuditMode;
+  max_pages?: number;
+  configuration?: Record<string, unknown>;
+}
+
+export interface AuditListResponse {
+  audits: AuditRecord[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface AuditCancelResponse {
+  message: string;
+  audit: AuditRecord;
+}
+
+export interface AuditPagesResponse {
+  audit_id: string;
+  total: number;
+  pages: unknown[];
+  message: string;
+}
+
+export interface AuditIssuesResponse {
+  audit_id: string;
+  total: number;
+  issues: unknown[];
+  message: string;
+}
+
+export interface ListAuditsParams {
+  page?: number;
+  page_size?: number;
+  status?: AuditStatus | string;
+  hostname?: string;
+}
