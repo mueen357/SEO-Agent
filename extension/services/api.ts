@@ -10,6 +10,9 @@ import type {
   PaginatedIssuesResponse,
   IssueSummaryData,
   AnalyzeAuditResponse,
+  SiteWideSummaryResponse,
+  PaginatedFindingGroupsResponse,
+  LinkGraphSummaryResponse,
   AuditRecord,
   BackendHealthResponse,
   CreateAuditRequest,
@@ -335,6 +338,107 @@ export async function runTechnicalAuditAnalysis(
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
     const message = errorBody?.error?.message || `Failed to run Technical SEO analysis (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+
+/**
+
+
+/**
+ * Trigger deterministic site-wide SEO intelligence analysis (POST /api/v1/audits/{id}/analyze/sitewide)
+ */
+export async function runSitewideAuditAnalysis(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AnalyzeAuditResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/analyze/sitewide`, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to run site-wide SEO analysis (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve site-wide intelligence summary (GET /api/v1/audits/{id}/sitewide/summary)
+ */
+export async function getSitewideSummary(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<SiteWideSummaryResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/sitewide/summary`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch site-wide summary (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve site-wide duplicate finding groups (GET /api/v1/audits/{id}/sitewide/duplicate-groups)
+ */
+export async function getSitewideDuplicateGroups(
+  auditId: string,
+  options: {
+    groupType?: string;
+    ruleId?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<PaginatedFindingGroupsResponse> {
+  const query = new URLSearchParams();
+  if (options.groupType) query.set('group_type', options.groupType);
+  if (options.ruleId) query.set('rule_id', options.ruleId);
+  if (options.page) query.set('page', String(options.page));
+  if (options.pageSize) query.set('page_size', String(options.pageSize));
+
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/sitewide/duplicate-groups${qs}`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch duplicate groups (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve deterministic internal link graph (GET /api/v1/audits/{id}/sitewide/link-graph)
+ */
+export async function getSitewideLinkGraph(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<LinkGraphSummaryResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/sitewide/link-graph`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch link graph (HTTP ${response.status})`;
     throw new Error(message);
   }
 

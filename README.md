@@ -61,6 +61,19 @@ A production-oriented, AI-powered website audit system delivered through a Googl
 - **Standards & Compatibility Hardening:** RFC 5646 (BCP 47) regex language validation, valid relative canonical URL resolution against base URL, proportionate structural H1 severities, and distinct actionable findings vs. total assessments reporting.
 - **Side Panel Technical Findings View:** Enhanced `SeoFindingsView.tsx` with dedicated "Run Technical (22 Rules)", "Run On-Page (16 Rules)", and "Run Full Analysis (38 Rules)" buttons, Technical SEO category filtering, and real-time KPI metrics.
 
+### Site-Wide SEO Analysis & Link Intelligence (Phase 2.3)
+- **13 Deterministic Site-Wide Rules (`backend/app/audit_engine/rules/sitewide/`):** Total rule engine expanded to **51 rules total** (16 On-Page, 22 Technical, 13 Site-Wide).
+  - **Duplicate Content:** `SITE_CONTENT_DUPLICATE_EXACT` (normalized primary text SHA-256 digest), `SITE_CONTENT_DUPLICATE_NEAR` (64-bit SimHash with Hamming distance <= 3, length ratio >= 0.75).
+  - **Duplicate Metadata:** `SITE_TITLE_DUPLICATE`, `SITE_META_DESCRIPTION_DUPLICATE`, `SITE_H1_DUPLICATE`.
+  - **Internal Link Graph:** `SITE_NO_OBSERVED_INTERNAL_INLINKS`, `SITE_LOW_INTERNAL_INLINKS`, `SITE_DEEP_CRAWL_PATH`.
+  - **Internal Link Health:** `SITE_INTERNAL_LINK_TO_4XX` (confirmed 404s), `SITE_INTERNAL_LINK_TO_5XX` (server errors), `SITE_INTERNAL_LINK_TO_REDIRECT` (3xx hops).
+  - **Canonical Consolidation:** `SITE_DUPLICATE_CANONICAL_REVIEW`, `SITE_CONTENT_CANONICAL_CONFLICT`.
+- **Deterministic Primary Content Extraction (`backend/app/content/`):** Strips navigation, headers, footers, scripts, and widgets while prioritizing `<main>`, `<article>`, and `#content` containers. Computes 64-bit SimHash formatted as 16-character hex strings to prevent SQLite signed integer overflow.
+- **Internal Link Graph (`InternalLinkGraph`):** In-memory directed graph of in-scope crawl hyperlinks tracking inlinks, outlinks, depth, broken links, redirects, and sitemap-only discoveries.
+- **Rule-Family Isolation:** Atomic rule replacement scoped by rule prefix (`ONPAGE_`, `TECH_`, `SITE_`), preventing issue deletion across shared categories.
+- **Task 2.2 Accuracy Fixes:** Nullable canonical tag count (None for legacy unrecorded, 0 for none, 1 for single, N for multiple), relative canonical resolution (`/services`, `./services`, `../services`, `?page=2`, `#fragment`), RFC 5646 structural scoping, multiple canonical conflict vs identical classification, and collision-proof group fingerprinting.
+- **Chrome Extension Site-Wide View (`SiteWideIntelligenceView.tsx`):** Dedicated side panel view featuring 6 sub-tabs: Overview, Duplicate Content, Duplicate Metadata, Internal Link Graph, Canonical Consolidation, and Coverage & Caveats.
+
 ## 2. Directory Structure
 
 ```
@@ -116,9 +129,9 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_all.ps1
 ```
 Executes:
 1. Extension TypeScript validation (`tsc --noEmit`)
-2. Extension Vitest suite (`vitest run` — 24 tests)
+2. Extension Vitest suite (`vitest run` — 39 tests)
 3. Extension production build (`wxt build` -> `.output/chrome-mv3`)
-4. Backend Pytest suite (`pytest -v` — 26 tests)
+4. Backend Pytest suite (`pytest -v` — 138 tests)
 5. Playwright headless Chromium launch verification
 6. Alembic reversible migration lifecycle test
 

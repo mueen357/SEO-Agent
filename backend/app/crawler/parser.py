@@ -8,6 +8,7 @@ import re
 from typing import Any
 from bs4 import BeautifulSoup
 
+from app.content import MainContentExtractor
 from app.crawler.normalizer import normalize_url
 from app.crawler.scope import CrawlScope
 
@@ -30,7 +31,8 @@ class ParsedPageData:
     title: str | None = None
     meta_description: str | None = None
     canonical_url: str | None = None
-    canonical_tag_count: int = 1
+    canonical_tag_count: int | None = None
+    canonical_hrefs: list[str] = field(default_factory=list)
     meta_robots: str | None = None
     html_lang: str | None = None
     headings_json: dict[str, Any] = field(default_factory=dict)
@@ -41,6 +43,15 @@ class ParsedPageData:
     external_link_count: int = 0
     discovered_links: list[DiscoveredLink] = field(default_factory=list)
     content_hash: str | None = None
+
+    # Main content extraction and fingerprints
+    normalized_main_text_hash: str | None = None
+    main_text_simhash: str | None = None
+    main_text_word_count: int = 0
+    main_text_character_count: int = 0
+    extraction_source: str = "empty"
+    extraction_version: str = "1.0.0"
+    content_quality_status: str = "empty"
 
 
 class HTMLPageParser:
@@ -57,8 +68,11 @@ class HTMLPageParser:
         if not html_bytes:
             return ParsedPageData()
 
-        # Compute content hash
+        # Compute raw content hash
         content_hash = hashlib.sha256(html_bytes).hexdigest()
+
+        # Extract main text and content fingerprints
+        content_res = MainContentExtractor.extract(html_bytes)
 
         try:
             soup = BeautifulSoup(html_bytes, "lxml")
@@ -67,7 +81,16 @@ class HTMLPageParser:
             try:
                 soup = BeautifulSoup(html_bytes, "html.parser")
             except Exception:
-                return ParsedPageData(content_hash=content_hash)
+                return ParsedPageData(
+                    content_hash=content_hash,
+                    normalized_main_text_hash=content_res.normalized_main_text_hash,
+                    main_text_simhash=content_res.main_text_simhash,
+                    main_text_word_count=content_res.word_count,
+                    main_text_character_count=content_res.character_count,
+                    extraction_source=content_res.extraction_source,
+                    extraction_version=content_res.extraction_version,
+                    content_quality_status=content_res.content_quality_status,
+                )
 
         # 1. Title (bounded)
         title_tag = soup.find("title")
@@ -85,13 +108,21 @@ class HTMLPageParser:
                     meta_desc = content.strip()[:1000]
                     break
 
-        # 3. Canonical URL
+        # 3. Canonical URLs and tag count
         canonical_url = None
-        canonical_tags = soup.find_all("link", rel=lambda r: r and "canonical" in r.lower())
+        canonical_hrefs: list[str] = []
+        canonical_tags = soup.find_all(
+            "link",
+            rel=lambda r: r and ("canonical" in r if isinstance(r, list) else "canonical" in str(r).lower()),
+        )
         canonical_tag_count = len(canonical_tags)
-        if canonical_tags and canonical_tags[0].get("href"):
-            raw_canonical = canonical_tags[0].get("href", "").strip()
-            canonical_url = normalize_url(raw_canonical, base_url=current_url)
+        for tag in canonical_tags[:10]:
+            raw_href = tag.get("href", "").strip()
+            if raw_href:
+                canonical_hrefs.append(raw_href)
+
+        if canonical_hrefs:
+            canonical_url = normalize_url(canonical_hrefs[0], base_url=current_url)
 
         # 4. Meta robots
         meta_robots = None
@@ -176,6 +207,7 @@ class HTMLPageParser:
             meta_description=meta_desc,
             canonical_url=canonical_url,
             canonical_tag_count=canonical_tag_count,
+            canonical_hrefs=canonical_hrefs,
             meta_robots=meta_robots,
             html_lang=html_lang,
             headings_json=headings_data,
@@ -186,4 +218,11 @@ class HTMLPageParser:
             external_link_count=external_count,
             discovered_links=discovered_links,
             content_hash=content_hash,
+            normalized_main_text_hash=content_res.normalized_main_text_hash,
+            main_text_simhash=content_res.main_text_simhash,
+            main_text_word_count=content_res.word_count,
+            main_text_character_count=content_res.character_count,
+            extraction_source=content_res.extraction_source,
+            extraction_version=content_res.extraction_version,
+            content_quality_status=content_res.content_quality_status,
         )

@@ -177,3 +177,49 @@
      - 112 backend pytest tests passing (100% pass rate).
      - 35 frontend vitest tests passing (100% pass rate).
      - 0 TypeScript errors (`tsc --noEmit`), successful production build (`wxt build`).
+
+---
+
+### Task 2.3 — Site-Wide SEO Analysis, Duplicate Content Detection, and Internal Link Intelligence
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-13
+- **Completed Components:**
+  1. **13 New Deterministic Site-Wide Rules (51 Total Rules Registered):**
+     - **Duplicate Content (Exact & Near):** `SITE_CONTENT_DUPLICATE_EXACT` (grouped by normalized primary text SHA-256 digest), `SITE_CONTENT_DUPLICATE_NEAR` (grouped by 64-bit SimHash with Hamming distance <= 3, length ratio >= 0.75, minimum word count >= 20).
+     - **Duplicate Metadata:** `SITE_TITLE_DUPLICATE` (exact match on normalized title), `SITE_META_DESCRIPTION_DUPLICATE` (exact match on normalized description), `SITE_H1_DUPLICATE` (exact match on primary H1 heading).
+     - **Internal Link Graph Topology:** `SITE_NO_OBSERVED_INTERNAL_INLINKS` (non-seed pages with 0 observed inlinks in sampled crawl), `SITE_LOW_INTERNAL_INLINKS` (non-seed pages with <= 2 inlinks), `SITE_DEEP_CRAWL_PATH` (pages with crawl depth >= 4).
+     - **Internal Link Health:** `SITE_INTERNAL_LINK_TO_4XX` (links to confirmed 404/4xx pages), `SITE_INTERNAL_LINK_TO_5XX` (links to confirmed 500/5xx server errors), `SITE_INTERNAL_LINK_TO_REDIRECT` (links targeting 301/302 redirects instead of direct canonical URLs).
+     - **Canonical Consolidation:** `SITE_DUPLICATE_CANONICAL_REVIEW` (duplicates with divergent or missing canonical consolidation), `SITE_CONTENT_CANONICAL_CONFLICT` (duplicates with conflicting self-referencing canonicals or broken targets).
+  2. **Deterministic Primary Content Extraction & Fingerprinting (`backend/app/content/`):**
+     - `MainContentExtractor`: Strips boilerplate (`<nav>`, `<footer>`, `<header>`, `<aside>`, scripts, styles, widgets) while prioritizing `<main>`, `<article>`, and `#content` tags.
+     - `normalizer.py`: Unicode NFKC normalization, HTML entity decoding, whitespace compaction, case folding, word tokenization, and bigram extraction.
+     - `fingerprint.py`: SHA-256 hex digest and deterministic 64-bit SimHash encoded as a 16-character hex string (preventing SQLite signed 64-bit integer overflow).
+     - `similarity.py`: Hamming distance calculation, SimHash normalized similarity metric, and length ratio comparison.
+  3. **Internal Link Graph Engine (`InternalLinkGraph`):**
+     - In-memory directed graph constructed purely from stored `CrawlLink` records.
+     - Calculates unique inlinks, outlinks, seed reachability, crawl depth, and sitemap-only discovery status.
+     - Differentiates limited crawl sample limitations from domain-wide orphan proof.
+  4. **Task 2.2 Accuracy & Regression Fixes:**
+     - `canonical_tag_count`: Default `1` removed for legacy records; now nullable (`None` for unrecorded, `0` for none, `1` for single, `N` for multiple).
+     - Relative canonical URLs: Resolves `/services`, `./services`, `../services`, `services/plumbing`, `?page=2`, and `#fragment`. Rejects malformed strings (`not-a-url`).
+     - BCP 47 language claim: Accurately scoped to RFC 5646 structural syntax.
+     - Multiple canonical declarations: Accurately differentiates multiple identical tags (`warning`) vs multiple conflicting targets (`fail`).
+     - Group fingerprint collision protection: Generates stable fingerprints using `fingerprint_key` when `crawl_page_id` is `None`.
+  5. **Rule-Family Isolation & Transactional Persistence:**
+     - Replaces issues by rule prefix (`ONPAGE_`, `TECH_`, `SITE_`) rather than broad category strings, ensuring that running site-wide rules does not delete on-page or technical findings.
+  6. **Database Migration (`0006_add_sitewide_intelligence.py`):**
+     - Added content extraction and fingerprint columns to `crawl_pages` (`normalized_main_text_hash`, `main_text_simhash`, `main_text_word_count`, `main_text_character_count`, `extraction_source`, `extraction_version`, `content_quality_status`).
+     - Created `site_finding_groups` table with indexed `audit_id`, `rule_id`, `group_fingerprint`, and `group_type`.
+  7. **REST API Additions:**
+     - `POST /api/v1/audits/{id}/analyze/sitewide`
+     - `GET /api/v1/audits/{id}/sitewide/summary`
+     - `GET /api/v1/audits/{id}/sitewide/duplicate-groups`
+     - `GET /api/v1/audits/{id}/sitewide/link-graph`
+  8. **Chrome Extension UI Integration:**
+     - Added dedicated "Site-Wide Intelligence" view in the extension side panel with 6 functional sub-views: Overview, Duplicate Content, Duplicate Metadata, Internal Link Graph, Canonical Consolidation, and Coverage & Caveats.
+     - Direct "Run Site-Wide Analysis" action with loading, empty, and error state handling.
+  9. **Comprehensive Verification:**
+     - 138 backend pytest tests passing (100% pass rate).
+     - 39 frontend vitest tests passing (100% pass rate).
+     - 0 TypeScript compilation errors (`tsc --noEmit`).
+     - Successful production extension build (`wxt build`).

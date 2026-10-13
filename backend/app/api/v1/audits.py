@@ -18,7 +18,10 @@ from app.schemas.audit import (
 from app.schemas.issues import (
     AnalyzeAuditResponse,
     IssueSummaryResponse,
+    LinkGraphSummaryResponse,
+    PaginatedFindingGroupsResponse,
     PaginatedIssuesResponse,
+    SiteWideSummaryResponse,
 )
 from app.services.issue_service import IssueService
 from app.schemas.crawl import (
@@ -267,3 +270,69 @@ async def get_audit_issues_summary(
 ) -> IssueSummaryResponse:
     service = IssueService(db)
     return await service.get_summary(audit_id)
+
+
+@router.post(
+    "/{audit_id}/analyze/sitewide",
+    response_model=AnalyzeAuditResponse,
+    summary="Execute Site-Wide SEO and Topological Analysis",
+    description="Evaluates all 13 site-wide rules: duplicate content, duplicate metadata, internal link graph, broken internal links, redirects, and canonical consolidation."
+)
+async def analyze_sitewide_audit(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> AnalyzeAuditResponse:
+    service = IssueService(db)
+    return await service.run_sitewide_analysis(audit_id)
+
+
+@router.get(
+    "/{audit_id}/sitewide/summary",
+    response_model=SiteWideSummaryResponse,
+    summary="Retrieve Site-Wide Intelligence Summary",
+    description="Returns aggregate counts of exact and near duplicate groups, duplicate metadata, and crawl coverage."
+)
+async def get_sitewide_summary(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> SiteWideSummaryResponse:
+    service = IssueService(db)
+    return await service.get_sitewide_summary(audit_id)
+
+
+@router.get(
+    "/{audit_id}/sitewide/duplicate-groups",
+    response_model=PaginatedFindingGroupsResponse,
+    summary="Retrieve Duplicate Content & Metadata Finding Groups",
+    description="Returns paginated duplicate groups with affected URLs and similarity evidence."
+)
+async def get_sitewide_duplicate_groups(
+    audit_id: uuid.UUID,
+    rule_id: Optional[str] = Query(None, description="Filter by rule ID (e.g. SITE_CONTENT_DUPLICATE_EXACT)"),
+    group_type: Optional[str] = Query(None, description="Filter by group type (e.g. exact_duplicate_content, near_duplicate_content)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: AsyncSession = Depends(get_db)
+) -> PaginatedFindingGroupsResponse:
+    service = IssueService(db)
+    return await service.get_sitewide_duplicate_groups(
+        audit_id=audit_id,
+        rule_id=rule_id,
+        group_type=group_type,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/{audit_id}/sitewide/link-graph",
+    response_model=LinkGraphSummaryResponse,
+    summary="Retrieve Internal Link Graph & Topological Metrics",
+    description="Constructs and returns internal link graph nodes, depth, inlinks, outlinks, and orphan caveats."
+)
+async def get_sitewide_link_graph(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> LinkGraphSummaryResponse:
+    service = IssueService(db)
+    return await service.get_sitewide_link_graph(audit_id)

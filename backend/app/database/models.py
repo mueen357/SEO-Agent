@@ -91,6 +91,7 @@ class Audit(Base):
     sitemaps: Mapped[List["CrawlSitemap"]] = relationship("CrawlSitemap", back_populates="audit", cascade="all, delete-orphan")
     renders: Mapped[List["CrawlPageRender"]] = relationship("CrawlPageRender", back_populates="audit", cascade="all, delete-orphan")
     issues: Mapped[List["SeoIssue"]] = relationship("SeoIssue", back_populates="audit", cascade="all, delete-orphan")
+    site_finding_groups: Mapped[List["SiteFindingGroup"]] = relationship("SiteFindingGroup", back_populates="audit", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_audits_status_created_at", "status", "created_at"),
@@ -135,7 +136,18 @@ class CrawlPage(Base):
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     meta_description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     canonical_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
-    canonical_tag_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    canonical_tag_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    canonical_hrefs_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
+
+    # Main content extraction and fingerprints
+    normalized_main_text_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    main_text_simhash: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
+    main_text_word_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
+    main_text_character_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
+    extraction_source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, default="empty")
+    extraction_version: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, default="1.0.0")
+    content_quality_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, default="empty")
+
     meta_robots: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     html_lang: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     headings_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -317,4 +329,29 @@ class SeoIssue(Base):
         Index("ix_seo_issues_audit_category", "audit_id", "category"),
         Index("ix_seo_issues_audit_severity", "audit_id", "severity"),
         Index("ix_seo_issues_audit_status", "audit_id", "status"),
+    )
+
+
+class SiteFindingGroup(Base):
+    """Persisted site-wide findings group (e.g. duplicate content groups, duplicate titles)."""
+
+    __tablename__ = "site_finding_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    audit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("audits.id", ondelete="CASCADE"), nullable=False, index=True)
+    rule_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    rule_version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0.0")
+    group_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    group_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    affected_page_ids_json: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    affected_urls_json: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    evidence_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    audit: Mapped["Audit"] = relationship("Audit", back_populates="site_finding_groups")
+
+    __table_args__ = (
+        Index("ix_site_finding_groups_audit_rule", "audit_id", "rule_id"),
+        Index("ix_site_finding_groups_fingerprint", "audit_id", "group_fingerprint", unique=True),
     )

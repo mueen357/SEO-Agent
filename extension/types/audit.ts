@@ -351,3 +351,75 @@ export interface AnalyzeAuditResponse {
   engine_version?: string;
   summary: IssueSummaryData;
 }
+
+
+// ==========================================
+// Phase 2.3 - Site-Wide Intelligence Types
+// ==========================================
+
+export interface SiteFindingGroupItem {
+  id: string;
+  audit_id: string;
+  rule_id: string;
+  rule_version: string;
+  group_fingerprint: string;
+  group_type: string;
+  affected_page_ids: string[];
+  affected_urls: string[];
+  evidence: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaginatedFindingGroupsResponse {
+  audit_id: string;
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  items: SiteFindingGroupItem[];
+}
+
+export interface LinkGraphNodeItem {
+  url: string;
+  crawl_page_id?: string | null;
+  http_status?: number | null;
+  inbound_internal_count: number;
+  outbound_internal_count: number;
+  crawl_depth: number;
+  is_sitemap_only: boolean;
+  is_seed: boolean;
+}
+
+export interface LinkGraphSummaryResponse {
+  audit_id: string;
+  total_nodes: number;
+  total_internal_edges: number;
+  unique_destinations: number;
+  orphan_count: number;
+  low_inlink_count: number;
+  broken_link_destinations: number;
+  redirect_destinations: number;
+  max_crawl_depth: number;
+  sitemap_only_count: number;
+  crawl_completeness_caveat: string;
+  nodes: LinkGraphNodeItem[];
+}
+
+export interface SiteWideSummaryResponse {
+  audit_id: string;
+  total_assessments: number;
+  actionable_findings: number;
+  pass_count: number;
+  warning_count: number;
+  fail_count: number;
+  unknown_count: number;
+  exact_duplicate_groups_count: number;
+  near_duplicate_groups_count: number;
+  duplicate_metadata_groups_count: number;
+  canonical_conflict_groups_count: number;
+  pages_analyzed: number;
+  pages_excluded: number;
+  evidence_coverage: string;
+  rules_executed_count: number;
+}

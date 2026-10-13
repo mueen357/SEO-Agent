@@ -23,8 +23,19 @@ class RuleAssessment:
     confidence: float = 1.0
     documentation_url: Optional[str] = None
     rule_version: str = "1.0.0"
+    fingerprint_key: Optional[str] = None
 
     def compute_fingerprint(self, audit_id: uuid.UUID, crawl_page_id: Optional[uuid.UUID]) -> str:
         """Deterministic fingerprint for deduplication and idempotent upserts."""
-        key = f"{audit_id}:{crawl_page_id or 'site'}:{self.rule_id}:{self.source_type}:{self.rule_version}"
+        if crawl_page_id:
+            scope_part = str(crawl_page_id)
+        else:
+            group_key = (
+                self.fingerprint_key
+                or self.evidence.get("group_id")
+                or self.evidence.get("group_fingerprint")
+                or "site"
+            )
+            scope_part = f"site:{group_key}"
+        key = f"{audit_id}:{scope_part}:{self.rule_id}:{self.source_type}:{self.rule_version}"
         return hashlib.sha256(key.encode("utf-8")).hexdigest()

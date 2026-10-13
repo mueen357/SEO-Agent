@@ -190,32 +190,68 @@ class CanonicalMultipleRule(BaseRule):
     def evaluate(self, ctx: PageAuditContext) -> RuleAssessment:
         count = ctx.canonical_tag_count
 
-        if count > 1:
+        if count is None:
             return RuleAssessment(
                 rule_id=self.rule_id,
                 category=self.category,
                 subcategory=self.subcategory,
-                title=f"Multiple canonical tags detected ({count} tags)",
-                description=f"Page HTML contains {count} rel='canonical' elements. Declaring multiple canonical URLs creates ambiguous signals and search engines may disregard all of them.",
-                severity="high",
-                status="fail",
+                title="Canonical tag count evidence unknown",
+                description="Canonical tag count evidence was not recorded for this crawl record.",
+                severity="info",
+                status="unknown",
+                evidence={"page_url": ctx.url, "canonical_tag_count": None},
+                recommendation="Re-crawl page to inspect canonical tag declarations.",
+                source_type=ctx.source_type,
+                confidence=0.8,
+                documentation_url=self.documentation_url,
+            )
+
+        if count <= 1:
+            return RuleAssessment(
+                rule_id=self.rule_id,
+                category=self.category,
+                subcategory=self.subcategory,
+                title="Single or zero canonical tags",
+                description=f"Page specifies {count} canonical tag declaration.",
+                severity="info",
+                status="pass",
                 evidence={"page_url": ctx.url, "canonical_tag_count": count},
-                recommendation="Consolidate canonical declarations into a single, unambiguous rel='canonical' tag in the HTML <head>.",
+                recommendation="No action needed.",
                 source_type=ctx.source_type,
                 confidence=1.0,
                 documentation_url=self.documentation_url,
             )
 
+        # count > 1: check if declarations are identical or conflicting
+        hrefs = ctx.canonical_hrefs
+        if hrefs and len(hrefs) > 1:
+            norm_hrefs = {h.strip().lower().rstrip("/") for h in hrefs if h and h.strip()}
+            if len(norm_hrefs) <= 1:
+                return RuleAssessment(
+                    rule_id=self.rule_id,
+                    category=self.category,
+                    subcategory=self.subcategory,
+                    title=f"Multiple identical canonical tags ({count} declarations)",
+                    description=f"Page HTML contains {count} rel='canonical' tags that point to the exact same destination ('{list(norm_hrefs)[0]}'). While non-conflicting, redundant duplicate declarations should be removed.",
+                    severity="medium",
+                    status="warning",
+                    evidence={"page_url": ctx.url, "canonical_tag_count": count, "canonical_hrefs": hrefs},
+                    recommendation="Remove redundant duplicate canonical declarations so exactly one rel='canonical' tag remains.",
+                    source_type=ctx.source_type,
+                    confidence=1.0,
+                    documentation_url=self.documentation_url,
+                )
+
         return RuleAssessment(
             rule_id=self.rule_id,
             category=self.category,
             subcategory=self.subcategory,
-            title="Single canonical tag",
-            description=f"Page specifies {count} canonical tag.",
-            severity="info",
-            status="pass",
-            evidence={"page_url": ctx.url, "canonical_tag_count": count},
-            recommendation="No action needed.",
+            title=f"Multiple conflicting canonical tags detected ({count} tags)",
+            description=f"Page HTML contains {count} conflicting rel='canonical' elements. Declaring conflicting canonical URLs creates ambiguous signals and search engines may disregard all declarations.",
+            severity="high",
+            status="fail",
+            evidence={"page_url": ctx.url, "canonical_tag_count": count, "canonical_hrefs": hrefs if hrefs else None},
+            recommendation="Consolidate canonical declarations into a single, unambiguous rel='canonical' tag in the HTML <head>.",
             source_type=ctx.source_type,
             confidence=1.0,
             documentation_url=self.documentation_url,

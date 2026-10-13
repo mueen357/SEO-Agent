@@ -30,6 +30,7 @@ import { FullAuditOverview } from '../../components/audit/FullAuditOverview';
 import { FullAuditPagesTable } from '../../components/audit/FullAuditPagesTable';
 import { PageDetailsModal } from '../../components/audit/PageDetailsModal';
 import { SeoFindingsView } from '../../components/audit/SeoFindingsView';
+import { SiteWideIntelligenceView } from '../../components/audit/SiteWideIntelligenceView';
 
 import { getActiveTab } from '../../services/tab';
 import {
@@ -89,7 +90,7 @@ export default function App() {
   const [pagesCurrentPage, setPagesCurrentPage] = useState(1);
   const [pagesTotalPages, setPagesTotalPages] = useState(0);
   const [selectedPage, setSelectedPage] = useState<CrawlPageItem | null>(null);
-  const [fullAuditSubView, setFullAuditSubView] = useState<'pages' | 'findings'>('pages');
+  const [fullAuditSubView, setFullAuditSubView] = useState<'pages' | 'findings' | 'sitewide'>('pages');
   const [isFullAuditing, setIsFullAuditing] = useState(false);
 
   const pollingRef = useRef<number | null>(null);
@@ -345,6 +346,16 @@ export default function App() {
             >
               SEO Rule Findings
             </button>
+            <button
+              onClick={() => setFullAuditSubView('sitewide')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                fullAuditSubView === 'sitewide'
+                  ? 'bg-slate-800 text-cyan-400 border border-slate-700'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              Site-Wide Intelligence
+            </button>
           </div>
 
           {fullAuditSubView === 'pages' ? (
@@ -358,8 +369,14 @@ export default function App() {
               onSelectPage={(p) => setSelectedPage(p)}
               selectedPageId={selectedPage?.id}
             />
-          ) : (
+          ) : fullAuditSubView === 'findings' ? (
             <SeoFindingsView
+              auditId={fullAudit?.id || null}
+              isBackendOnline={health?.status === 'ok'}
+              isAuditRunning={isFullAuditing}
+            />
+          ) : (
+            <SiteWideIntelligenceView
               auditId={fullAudit?.id || null}
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}

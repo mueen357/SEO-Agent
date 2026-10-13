@@ -10,6 +10,10 @@ import {
   getAuditIssuesSummary,
   runAuditAnalysis,
   runTechnicalAuditAnalysis,
+  runSitewideAuditAnalysis,
+  getSitewideSummary,
+  getSitewideDuplicateGroups,
+  getSitewideLinkGraph,
 } from '../services/api';
 import {
   saveActiveFullAuditId,
@@ -351,6 +355,152 @@ describe('Full Website Audit API & Storage Client', () => {
     expect(global.fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:8000/api/v1/audits/test-id/analyze/technical',
       expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('runSitewideAuditAnalysis triggers POST /api/v1/audits/{id}/analyze/sitewide', async () => {
+    const mockResp = {
+      audit_id: 'test-id',
+      status: 'completed',
+      message: 'Site-wide SEO analysis completed.',
+      pages_analyzed: 5,
+      issues_found: 13,
+      summary: {
+        total_assessments: 13,
+        actionable_findings: 3,
+        fail_count: 1,
+        warning_count: 2,
+        pass_count: 10,
+        total_issues: 13,
+        by_category: { content: 5, links: 6, technical: 2 },
+        by_severity: { high: 1, medium: 2, low: 10 },
+        by_status: { fail: 1, warning: 2, pass: 10 },
+        rules_executed_count: 13,
+      },
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockResp,
+    } as any);
+
+    const res = await runSitewideAuditAnalysis('test-id');
+    expect(res.status).toBe('completed');
+    expect(res.pages_analyzed).toBe(5);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/audits/test-id/analyze/sitewide',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('getSitewideSummary retrieves GET /api/v1/audits/{id}/sitewide/summary', async () => {
+    const mockSummary = {
+      audit_id: 'test-id',
+      total_assessments: 13,
+      actionable_findings: 4,
+      pass_count: 9,
+      warning_count: 3,
+      fail_count: 1,
+      unknown_count: 0,
+      exact_duplicate_groups_count: 1,
+      near_duplicate_groups_count: 1,
+      duplicate_metadata_groups_count: 2,
+      canonical_conflict_groups_count: 0,
+      pages_analyzed: 8,
+      pages_excluded: 0,
+      evidence_coverage: 'sampled_crawl',
+      rules_executed_count: 13,
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockSummary,
+    } as any);
+
+    const res = await getSitewideSummary('test-id');
+    expect(res.exact_duplicate_groups_count).toBe(1);
+    expect(res.near_duplicate_groups_count).toBe(1);
+    expect(res.rules_executed_count).toBe(13);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/audits/test-id/sitewide/summary',
+      expect.objectContaining({ method: 'GET' })
+    );
+  });
+
+  it('getSitewideDuplicateGroups queries GET /api/v1/audits/{id}/sitewide/duplicate-groups with params', async () => {
+    const mockGroupsResp = {
+      audit_id: 'test-id',
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+      items: [
+        {
+          id: 'group-1',
+          audit_id: 'test-id',
+          rule_id: 'SITE_CONTENT_DUPLICATE_EXACT',
+          rule_version: '1.0.0',
+          group_fingerprint: 'sha_test',
+          group_type: 'exact_duplicate_content',
+          affected_page_ids: ['p1', 'p2'],
+          affected_urls: ['https://example.com/p1', 'https://example.com/p2'],
+          evidence: { sha256: 'abcd1234' },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockGroupsResp,
+    } as any);
+
+    const res = await getSitewideDuplicateGroups('test-id', { groupType: 'exact_duplicate_content' });
+    expect(res.total).toBe(1);
+    expect(res.items?.[0]?.group_type).toBe('exact_duplicate_content');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/audits/test-id/sitewide/duplicate-groups?group_type=exact_duplicate_content',
+      expect.objectContaining({ method: 'GET' })
+    );
+  });
+
+  it('getSitewideLinkGraph retrieves GET /api/v1/audits/{id}/sitewide/link-graph', async () => {
+    const mockGraphResp = {
+      audit_id: 'test-id',
+      total_nodes: 2,
+      total_internal_edges: 3,
+      unique_destinations: 2,
+      orphan_count: 0,
+      low_inlink_count: 1,
+      broken_link_destinations: 0,
+      redirect_destinations: 0,
+      max_crawl_depth: 1,
+      sitemap_only_count: 0,
+      crawl_completeness_caveat: 'Sampled crawl graph.',
+      nodes: [
+        {
+          url: 'https://example.com/',
+          inbound_internal_count: 1,
+          outbound_internal_count: 2,
+          crawl_depth: 0,
+          is_sitemap_only: false,
+          is_seed: true,
+        },
+      ],
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockGraphResp,
+    } as any);
+
+    const res = await getSitewideLinkGraph('test-id');
+    expect(res.total_nodes).toBe(2);
+    expect(res.nodes?.[0]?.is_seed).toBe(true);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/audits/test-id/sitewide/link-graph',
+      expect.objectContaining({ method: 'GET' })
     );
   });
 });

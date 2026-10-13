@@ -23,6 +23,7 @@ import {
   getAuditIssues,
   runAuditAnalysis,
   runTechnicalAuditAnalysis,
+  runSitewideAuditAnalysis,
 } from '../../services/api';
 import type {
   SeoIssueItem,
@@ -48,7 +49,7 @@ export function SeoFindingsView({
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [analyzingType, setAnalyzingType] = useState<'all' | 'on_page' | 'technical' | null>(null);
+  const [analyzingType, setAnalyzingType] = useState<'all' | 'on_page' | 'technical' | 'sitewide' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Filters
@@ -92,7 +93,7 @@ export function SeoFindingsView({
     fetchIssues(1);
   }, [fetchIssues]);
 
-  const handleRunAnalysis = async (categoryType: 'all' | 'on_page' | 'technical' = 'all') => {
+  const handleRunAnalysis = async (categoryType: 'all' | 'on_page' | 'technical' | 'sitewide' = 'all') => {
     if (!auditId || !isBackendOnline || analyzingType) return;
     setAnalyzingType(categoryType);
     setError(null);
@@ -102,6 +103,8 @@ export function SeoFindingsView({
         resp = await runTechnicalAuditAnalysis(auditId);
       } else if (categoryType === 'on_page') {
         resp = await runAuditAnalysis(auditId, 'on_page');
+      } else if (categoryType === 'sitewide') {
+        resp = await runSitewideAuditAnalysis(auditId);
       } else {
         resp = await runAuditAnalysis(auditId);
       }
@@ -174,13 +177,16 @@ export function SeoFindingsView({
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-bold text-slate-200">Evidence-Based SEO Rule Findings</h3>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/80 text-cyan-400 border border-cyan-800/60">
-                38 Rules Total
+                51 Rules Total
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-800/60">
                 22 Technical
               </span>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-950 text-slate-400 border border-slate-800">
                 16 On-Page
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/80 text-cyan-300 border border-cyan-800/60">
+                13 Site-Wide
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">

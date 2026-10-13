@@ -87,8 +87,12 @@ class PageAuditContext:
         return {str(k).lower(): str(v) for k, v in raw.items()}
 
     @property
-    def canonical_tag_count(self) -> int:
-        return getattr(self.page, "canonical_tag_count", 1) or 1
+    def canonical_tag_count(self) -> Optional[int]:
+        return getattr(self.page, "canonical_tag_count", None)
+
+    @property
+    def canonical_hrefs(self) -> List[str]:
+        return getattr(self.page, "canonical_hrefs_json", None) or []
 
     @property
     def redirect_chain(self) -> List[Dict[str, Any]]:
@@ -131,3 +135,34 @@ class SiteAuditContext:
     sitemap_urls: Set[str] = field(default_factory=set)
     robots_txt_status: Optional[str] = None
     robots_txt_content: Optional[str] = None
+
+
+@dataclass
+class SiteWideAuditContext:
+    """Comprehensive contextual evidence for evaluating site-wide SEO and topological rules."""
+
+    audit_id: uuid.UUID
+    target_url: str = ""
+    hostname: str = ""
+    host: Optional[str] = None
+    crawl_status: Optional[str] = "completed" 
+    pages: List[CrawlPage] = field(default_factory=list)
+    links: List[CrawlLink] = field(default_factory=list)
+    sitemaps: List[CrawlSitemap] = field(default_factory=list)
+    sitemap_urls: Set[str] = field(default_factory=set)
+    link_graph: Any = None
+    robots_txt_status: Optional[str] = None
+    robots_txt_content: Optional[str] = None
+    exact_duplicate_groups: List[Dict[str, Any]] = field(default_factory=list)
+    near_duplicate_groups: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def total_pages(self) -> int:
+        return len(self.pages)
+
+    def __post_init__(self) -> None:
+        if not self.hostname and self.host:
+            self.hostname = self.host
+        elif not self.host and self.hostname:
+            self.host = self.hostname
+
