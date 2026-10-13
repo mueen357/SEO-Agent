@@ -103,7 +103,7 @@ try {
 
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 if ($allPass) {
-    Write-Host " ALL PHASE 1.3 VERIFICATIONS PASSED SUCCESSFULLY! " -ForegroundColor Green
+    Write-Host " ALL PHASE 1.4A VERIFICATIONS PASSED SUCCESSFULLY! " -ForegroundColor Green
 } else {
     Write-Host " ONE OR MORE VERIFICATION CHECKS FAILED. " -ForegroundColor Red
 }

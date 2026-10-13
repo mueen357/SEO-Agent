@@ -172,3 +172,64 @@ export interface ListAuditsParams {
   status?: AuditStatus | string;
   hostname?: string;
 }
+
+
+// --- Phase 1.4A Crawler Types ---
+
+export interface CrawlPageItem {
+  id: string;
+  audit_id: string;
+  requested_url: string;
+  final_url: string;
+  depth: number;
+  fetch_status: string;
+  http_status: number | null;
+  content_type: string | null;
+  response_time_ms: number;
+  title: string | null;
+  meta_description: string | null;
+  canonical_url: string | null;
+  meta_robots: string | null;
+  html_lang: string | null;
+  headings_json?: Record<string, any>;
+  image_count: number;
+  missing_alt_count: number;
+  empty_alt_count: number;
+  internal_link_count: number;
+  external_link_count: number;
+  content_hash: string | null;
+  error_message: string | null;
+  fetched_at: string;
+}
+
+export interface CrawlPagesListResponse {
+  audit_id: string;
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  pages: CrawlPageItem[];
+  message?: string | null;
+}
+
+export interface CrawlSitemapItem {
+  id: string;
+  audit_id: string;
+  sitemap_url: string;
+  status: string;
+  url_count: number;
+  error_message: string | null;
+  discovered_at: string;
+}
+
+export interface CrawlSitemapsListResponse {
+  audit_id: string;
+  total: number;
+  sitemaps: CrawlSitemapItem[];
+}
+
+export interface AuditStartResponse {
+  message: string;
+  audit_id: string;
+  status: string;
+}

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.database.models import AuditMode, AuditStatus
+from app.schemas.crawl import CrawlPageResponse
 
 
 class AuditCreateRequest(BaseModel):
@@ -44,6 +45,7 @@ class AuditResponse(BaseModel):
     pages_discovered: int
     pages_crawled: int
     configuration_json: Dict[str, Any]
+    progress_json: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -78,8 +80,11 @@ class AuditCancelResponse(BaseModel):
 class AuditPagesCollectionResponse(BaseModel):
     audit_id: uuid.UUID
     total: int = 0
-    pages: List[Dict[str, Any]] = Field(default_factory=list)
-    message: str = "Page crawling has not been executed yet. The core crawling pipeline is scheduled for Phase 1.4."
+    page: int = 1
+    page_size: int = 20
+    total_pages: int = 0
+    pages: List[CrawlPageResponse] = Field(default_factory=list)
+    message: Optional[str] = None
 
 
 class AuditIssuesCollectionResponse(BaseModel):

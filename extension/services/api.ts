@@ -202,3 +202,46 @@ export async function getAuditIssues(
 
   return response.json();
 }
+
+
+/**
+ * Start background crawl execution for an audit (POST /api/v1/audits/{id}/start)
+ */
+export async function startAudit(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<{ message: string; audit_id: string; status: string }> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/start`, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to start audit (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve discovered sitemaps for an audit (GET /api/v1/audits/{id}/sitemaps)
+ */
+export async function getAuditSitemaps(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<{ audit_id: string; total: number; sitemaps: any[] }> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/sitemaps`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch audit sitemaps (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
