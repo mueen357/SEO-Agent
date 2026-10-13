@@ -15,9 +15,15 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
+  Server,
+  FileText,
 } from 'lucide-react';
 
-import { getAuditIssues, runAuditAnalysis } from '../../services/api';
+import {
+  getAuditIssues,
+  runAuditAnalysis,
+  runTechnicalAuditAnalysis,
+} from '../../services/api';
 import type {
   SeoIssueItem,
   IssueSummaryData,
@@ -42,7 +48,7 @@ export function SeoFindingsView({
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzingType, setAnalyzingType] = useState<'all' | 'on_page' | 'technical' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Filters
@@ -86,18 +92,25 @@ export function SeoFindingsView({
     fetchIssues(1);
   }, [fetchIssues]);
 
-  const handleRunAnalysis = async () => {
-    if (!auditId || !isBackendOnline || analyzing) return;
-    setAnalyzing(true);
+  const handleRunAnalysis = async (categoryType: 'all' | 'on_page' | 'technical' = 'all') => {
+    if (!auditId || !isBackendOnline || analyzingType) return;
+    setAnalyzingType(categoryType);
     setError(null);
     try {
-      const resp = await runAuditAnalysis(auditId);
+      let resp;
+      if (categoryType === 'technical') {
+        resp = await runTechnicalAuditAnalysis(auditId);
+      } else if (categoryType === 'on_page') {
+        resp = await runAuditAnalysis(auditId, 'on_page');
+      } else {
+        resp = await runAuditAnalysis(auditId);
+      }
       setSummary(resp.summary);
       await fetchIssues(1);
     } catch (err: any) {
       setError(err.message || 'Failed to execute SEO analysis.');
     } finally {
-      setAnalyzing(false);
+      setAnalyzingType(null);
     }
   };
 
@@ -137,84 +150,143 @@ export function SeoFindingsView({
         <ShieldCheck className="w-8 h-8 text-slate-600 mx-auto" />
         <h3 className="text-sm font-semibold text-slate-200">No Full Audit Selected</h3>
         <p className="text-xs text-slate-400 max-w-sm mx-auto">
-          Start or select a Full Website Audit above to inspect evidence-based on-page findings.
+          Start or select a Full Website Audit above to inspect evidence-based on-page and technical findings.
         </p>
       </div>
     );
   }
 
+  // Summary counts
+  const totalAssessments = summary?.total_assessments ?? summary?.total_issues ?? 0;
+  const actionableFindings =
+    summary?.actionable_findings ??
+    ((summary?.by_status?.fail || 0) + (summary?.by_status?.warning || 0));
+  const failCount = summary?.fail_count ?? summary?.by_status?.fail ?? 0;
+  const warningCount = summary?.warning_count ?? summary?.by_status?.warning ?? 0;
+  const passCount = summary?.pass_count ?? summary?.by_status?.pass ?? 0;
+
   return (
     <div className="space-y-4">
       {/* Action & Status Header */}
       <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
-            <div className="flex items-center space-x-2">
-              <h3 className="text-sm font-bold text-slate-200">Evidence-Based On-Page SEO Findings</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-bold text-slate-200">Evidence-Based SEO Rule Findings</h3>
               <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/80 text-cyan-400 border border-cyan-800/60">
-                16 Rules
+                38 Rules Total
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950/80 text-indigo-300 border border-indigo-800/60">
+                22 Technical
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-950 text-slate-400 border border-slate-800">
+                16 On-Page
               </span>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Deterministic audits grounded in Google Search Central documentation.
+            <p className="text-xs text-slate-400 mt-1">
+              Grounded in HTTP response headers, robots directives, sitemaps, and W3C/Google Search Central standards.
             </p>
           </div>
 
-          <button
-            onClick={handleRunAnalysis}
-            disabled={analyzing || !isBackendOnline || isAuditRunning}
-            className={`flex items-center justify-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm shrink-0 ${
-              !isBackendOnline || isAuditRunning
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                : analyzing
-                ? 'bg-cyan-500/50 text-slate-950 cursor-wait'
-                : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-cyan-500/20 active:scale-95'
-            }`}
-          >
-            {analyzing ? (
-              <>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Run Technical Button */}
+            <button
+              onClick={() => handleRunAnalysis('technical')}
+              disabled={!!analyzingType || !isBackendOnline || isAuditRunning}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                !isBackendOnline || isAuditRunning
+                  ? 'bg-slate-800/50 border-slate-700/50 text-slate-500 cursor-not-allowed'
+                  : analyzingType === 'technical'
+                  ? 'bg-indigo-950 border-indigo-700 text-indigo-300 cursor-wait'
+                  : 'bg-indigo-950/60 hover:bg-indigo-900/80 border-indigo-800/80 text-indigo-300 hover:text-indigo-200 active:scale-95'
+              }`}
+              title="Execute 22 Technical SEO checks: HTTP status codes, robots, sitemaps, redirects, canon, HTTPS"
+            >
+              {analyzingType === 'technical' ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Evaluating Rules...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Run On-Page Analysis</span>
-              </>
-            )}
-          </button>
+              ) : (
+                <Server className="w-3.5 h-3.5" />
+              )}
+              <span>Run Technical</span>
+            </button>
+
+            {/* Run On-Page Button */}
+            <button
+              onClick={() => handleRunAnalysis('on_page')}
+              disabled={!!analyzingType || !isBackendOnline || isAuditRunning}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                !isBackendOnline || isAuditRunning
+                  ? 'bg-slate-800/50 border-slate-700/50 text-slate-500 cursor-not-allowed'
+                  : analyzingType === 'on_page'
+                  ? 'bg-slate-900 border-slate-700 text-slate-300 cursor-wait'
+                  : 'bg-slate-900/80 hover:bg-slate-800 border-slate-700 text-slate-300 active:scale-95'
+              }`}
+              title="Execute 16 On-Page SEO checks: titles, descriptions, headings, images, links"
+            >
+              {analyzingType === 'on_page' ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileText className="w-3.5 h-3.5" />
+              )}
+              <span>Run On-Page</span>
+            </button>
+
+            {/* Run All Analysis Button */}
+            <button
+              onClick={() => handleRunAnalysis('all')}
+              disabled={!!analyzingType || !isBackendOnline || isAuditRunning}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all shadow-sm ${
+                !isBackendOnline || isAuditRunning
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                  : analyzingType === 'all'
+                  ? 'bg-cyan-500/50 text-slate-950 cursor-wait'
+                  : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-cyan-500/20 active:scale-95'
+              }`}
+              title="Execute all 38 rules across on-page and technical categories"
+            >
+              {analyzingType === 'all' ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Evaluating All Rules...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Run Full Analysis</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Aggregate KPI Badges */}
-        {summary && summary.total_issues > 0 ? (
+        {totalAssessments > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t border-slate-800/60">
             <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/60 text-center">
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">Total Assessed</span>
-              <div className="text-base font-bold text-slate-200 font-mono">{summary.total_issues}</div>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold">Actionable Issues</span>
+              <div className="text-base font-bold text-cyan-400 font-mono">{actionableFindings}</div>
             </div>
             <div className="p-2 rounded-lg bg-rose-950/20 border border-rose-900/40 text-center">
-              <span className="text-[10px] text-rose-400 uppercase font-semibold">Fails</span>
-              <div className="text-base font-bold text-rose-300 font-mono">{summary.by_status.fail || 0}</div>
+              <span className="text-[10px] text-rose-400 uppercase font-semibold">Failures</span>
+              <div className="text-base font-bold text-rose-300 font-mono">{failCount}</div>
             </div>
             <div className="p-2 rounded-lg bg-amber-950/20 border border-amber-900/40 text-center">
               <span className="text-[10px] text-amber-400 uppercase font-semibold">Warnings</span>
-              <div className="text-base font-bold text-amber-300 font-mono">{summary.by_status.warning || 0}</div>
+              <div className="text-base font-bold text-amber-300 font-mono">{warningCount}</div>
             </div>
             <div className="p-2 rounded-lg bg-emerald-950/20 border border-emerald-900/40 text-center">
-              <span className="text-[10px] text-emerald-400 uppercase font-semibold">Passed</span>
-              <div className="text-base font-bold text-emerald-300 font-mono">{summary.by_status.pass || 0}</div>
+              <span className="text-[10px] text-emerald-400 uppercase font-semibold">Passed Checks</span>
+              <div className="text-base font-bold text-emerald-300 font-mono">{passCount}</div>
             </div>
-            <div className="p-2 rounded-lg bg-purple-950/20 border border-purple-900/40 text-center">
-              <span className="text-[10px] text-purple-400 uppercase font-semibold">High / Crit</span>
-              <div className="text-base font-bold text-purple-300 font-mono">
-                {(summary.by_severity.critical || 0) + (summary.by_severity.high || 0)}
-              </div>
+            <div className="p-2 rounded-lg bg-indigo-950/20 border border-indigo-900/40 text-center">
+              <span className="text-[10px] text-indigo-400 uppercase font-semibold">Total Assessed</span>
+              <div className="text-base font-bold text-indigo-300 font-mono">{totalAssessments}</div>
             </div>
           </div>
         ) : (
           <div className="text-xs text-slate-400 pt-2 border-t border-slate-800/60 flex items-center space-x-2">
             <AlertCircle className="w-3.5 h-3.5 text-slate-500" />
-            <span>Analysis has not run yet. Click &quot;Run On-Page Analysis&quot; above to inspect crawled evidence.</span>
+            <span>Analysis has not run yet. Click &quot;Run Full Analysis&quot; above to inspect crawled evidence.</span>
           </div>
         )}
       </div>
@@ -268,7 +340,8 @@ export function SeoFindingsView({
           className="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 focus:outline-none focus:border-cyan-500"
         >
           <option value="all">All Categories</option>
-          <option value="on_page">On-Page Metadata</option>
+          <option value="technical">Technical SEO (22 Rules)</option>
+          <option value="on_page">On-Page Metadata (16 Rules)</option>
           <option value="images">Images & Media</option>
           <option value="links">Links Structure</option>
         </select>
@@ -287,9 +360,9 @@ export function SeoFindingsView({
       ) : issues.length === 0 ? (
         <div className="p-8 rounded-xl bg-slate-900/30 border border-slate-800/60 text-center space-y-2">
           <p className="text-xs text-slate-400 font-medium">
-            {summary && summary.total_issues > 0
-              ? 'No issues found by executed rules matching the current filters.'
-              : 'Analysis not run. Click "Run On-Page Analysis" above to process crawl evidence.'}
+            {totalAssessments > 0
+              ? 'No issues found matching current filters.'
+              : 'Analysis not run yet. Click "Run Full Analysis" or "Run Technical" above to evaluate crawl evidence.'}
           </p>
           <p className="text-[11px] text-slate-500">
             Our rules do not generate fictional issues or arbitrary numeric scores.

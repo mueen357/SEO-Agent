@@ -229,15 +229,30 @@ async def get_audit_issues(
 @router.post(
     "/{audit_id}/analyze",
     response_model=AnalyzeAuditResponse,
-    summary="Execute Deterministic On-Page SEO Analysis",
-    description="Evaluates all crawled pages for the audit against registered deterministic SEO rules and persists findings."
+    summary="Execute Deterministic SEO Analysis",
+    description="Evaluates crawled pages for the audit against registered deterministic SEO rules (on_page, technical, or all) and persists findings."
 )
 async def analyze_audit(
+    audit_id: uuid.UUID,
+    category: Optional[str] = Query(None, description="Category to analyze: 'on_page', 'technical', or 'all'"),
+    db: AsyncSession = Depends(get_db)
+) -> AnalyzeAuditResponse:
+    service = IssueService(db)
+    return await service.run_analysis(audit_id, category=category)
+
+
+@router.post(
+    "/{audit_id}/analyze/technical",
+    response_model=AnalyzeAuditResponse,
+    summary="Execute Technical SEO Analysis",
+    description="Evaluates crawled pages and site-level context against registered technical SEO rules and persists findings."
+)
+async def analyze_technical_audit(
     audit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db)
 ) -> AnalyzeAuditResponse:
     service = IssueService(db)
-    return await service.run_onpage_analysis(audit_id)
+    return await service.run_technical_analysis(audit_id)
 
 
 @router.get(

@@ -141,3 +141,39 @@
      - 93 backend pytest tests (100% pass across framework, rules, API, and E2E fixtures).
      - 34 frontend vitest tests (100% pass including issue API clients).
      - 0 TypeScript errors (`tsc --noEmit`), successful production build (`wxt build`).
+
+### Task 2.2 — Evidence-Based Technical SEO Rule Engine
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-13
+- **Completed Components:**
+  1. **22 Deterministic Technical SEO Rules (`backend/app/audit_engine/rules/technical/`):**
+     - **HTTP Status Codes:** `TECH_HTTP_4XX` (client errors 400, 403, 404, 410), `TECH_HTTP_5XX` (server errors 500, 502, 503), `TECH_HTTP_429` (crawl rate limits), `TECH_HTTP_UNSUPPORTED_CONTENT` (non-HTML MIME types).
+     - **Robots Directives:** `TECH_META_ROBOTS_DIRECTIVES` (evaluates `noindex`, `none`, `noimageindex`).
+     - **Indexability & Response Headers:** `TECH_X_ROBOTS_TAG` (detects and parses `X-Robots-Tag` HTTP header directives).
+     - **Robots.txt Compliance:** `TECH_ROBOTS_FETCH_STATUS` (site-level `/robots.txt` availability), `TECH_ROBOTS_DISALLOW` (flags URLs prohibited by Disallow directives), `TECH_ROBOTS_SITEMAP_DECLARATION` (site-level XML sitemap reference check).
+     - **XML Sitemaps:** `TECH_SITEMAP_AVAILABILITY` (site-level discovery), `TECH_SITEMAP_PARSE_ERROR` (flags corrupt XML or parsing failures), `TECH_SITEMAP_URL_STATUS` (flags sitemap URLs returning non-200), `TECH_SITEMAP_NOINDEX_CONFLICT` (sitemap URLs with noindex), `TECH_SITEMAP_CANONICAL_CONFLICT` (sitemap URLs pointing canonical elsewhere).
+     - **Redirect Hygiene:** `TECH_REDIRECT_CHAIN` (detects chains with >= 2 hops), `TECH_REDIRECT_LOOP` (detects circular redirect cycles), `TECH_REDIRECT_FAILURE` (3xx pointing to broken targets).
+     - **Canonical Targets:** `TECH_CANONICAL_TARGET_STATUS` (canonical targets returning 4xx/5xx), `TECH_CANONICAL_CONFLICT` (cross-URL canonical references), `TECH_CANONICAL_MULTIPLE` (multiple canonical link elements).
+     - **HTTPS Security:** `TECH_HTTPS_USAGE` (unencrypted HTTP page URLs), `TECH_HTTPS_DOWNGRADE` (insecure redirect transitions).
+  2. **Rule Engine & Site Topology Context:**
+     - Abstract `SiteAuditContext` capturing domain-wide topology, all crawled pages, sitemaps, robots.txt status, and sitemap URL sets.
+     - Central `AuditEngine.evaluate_site()` evaluating site-level rules alongside page-level rules.
+     - Category-safe transactional analysis: running technical rules replaces only `category="technical"` issues while preserving on-page issues.
+  3. **Task 2.1 Compatibility Hardening:**
+     - Standards-aware RFC 5646 (BCP 47) regex validation supporting 2-3 letter primary subtags, scripts, regions, and variants.
+     - Valid relative canonicals (`/path`, `./path`, `../path`) resolve against page URL and pass; malformed strings fail.
+     - Missing H1 severity proportionate (`low` severity structural review advisory).
+     - Summary metrics explicitly distinguish total assessments vs. actionable findings (`fail` + `warning`), pass, unknown, and not applicable.
+  4. **Database Migration (0005_add_technical_seo_evidence.py):**
+     - Reversible migration adding `headers_json` and `canonical_tag_count` to `crawl_pages`, `urls_json` to `crawl_sitemaps`, and `robots_txt_status` + `robots_txt_content` to `audits`.
+  5. **REST API Extensions:**
+     - `POST /api/v1/audits/{id}/analyze/technical` and `POST /api/v1/audits/{id}/analyze?category=...`.
+     - `GET /api/v1/audits/{id}/issues?category=technical`.
+  6. **Chrome Extension Integration:**
+     - Updated `SeoFindingsView.tsx` with dedicated action buttons: "Run Full Analysis (38 Rules)", "Run Technical (22 Rules)", and "Run On-Page (16 Rules)".
+     - Category filter option for "Technical SEO (22 Rules)".
+     - Modern KPI cards displaying Actionable Issues, Failures, Warnings, Passed Checks, and Total Assessed.
+  7. **Comprehensive Verification:**
+     - 112 backend pytest tests passing (100% pass rate).
+     - 35 frontend vitest tests passing (100% pass rate).
+     - 0 TypeScript errors (`tsc --noEmit`), successful production build (`wxt build`).

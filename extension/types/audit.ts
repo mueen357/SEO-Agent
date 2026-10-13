@@ -315,8 +315,15 @@ export interface SeoIssueItem {
 }
 
 export interface IssueSummaryData {
-  audit_id: string;
+  audit_id?: string;
   total_issues: number;
+  total_assessments?: number;
+  actionable_findings?: number;
+  pass_count?: number;
+  warning_count?: number;
+  fail_count?: number;
+  unknown_count?: number;
+  not_applicable_count?: number;
   by_category: Record<string, number>;
   by_severity: Record<string, number>;
   by_status: Record<string, number>;
@@ -337,8 +344,10 @@ export interface PaginatedIssuesResponse {
 export interface AnalyzeAuditResponse {
   audit_id: string;
   status: string;
-  message: string;
+  message?: string;
   pages_analyzed: number;
   issues_found: number;
+  total_issues?: number;
+  engine_version?: string;
   summary: IssueSummaryData;
 }

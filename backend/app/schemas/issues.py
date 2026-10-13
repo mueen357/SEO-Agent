@@ -1,4 +1,4 @@
-"""Pydantic schemas for SEO issues, analysis results, and summaries."""
+"""Pydantic schemas for SEO issues and findings."""
 
 import uuid
 from datetime import datetime
@@ -7,12 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SeoIssueResponse(BaseModel):
-    """Structured SEO issue response."""
+    """Normalized response schema for an individual SEO rule assessment."""
 
     id: uuid.UUID
     audit_id: uuid.UUID
     crawl_page_id: Optional[uuid.UUID] = None
-    page_url: Optional[str] = None
     rule_id: str
     category: str
     subcategory: str
@@ -26,17 +25,22 @@ class SeoIssueResponse(BaseModel):
     confidence: float
     documentation_url: Optional[str] = None
     rule_version: str
-    fingerprint: str
     created_at: datetime
-    updated_at: datetime
+    page_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class IssueSummaryResponse(BaseModel):
-    """Aggregate counts of issues by severity, status, and category."""
+    """Aggregate summary statistics of SEO rule assessments."""
 
-    audit_id: uuid.UUID
+    total_assessments: int = 0
+    actionable_findings: int = 0
+    pass_count: int = 0
+    warning_count: int = 0
+    fail_count: int = 0
+    unknown_count: int = 0
+    not_applicable_count: int = 0
     total_issues: int = 0
     by_category: Dict[str, int] = Field(default_factory=dict)
     by_severity: Dict[str, int] = Field(default_factory=dict)
@@ -45,24 +49,27 @@ class IssueSummaryResponse(BaseModel):
 
 
 class PaginatedIssuesResponse(BaseModel):
-    """Paginated collection of audit SEO issues."""
+    """Paginated collection of SEO issues."""
 
-    audit_id: uuid.UUID
+    audit_id: Optional[uuid.UUID] = None
     total: int
     page: int
     page_size: int
-    total_pages: int
-    issues: List[SeoIssueResponse]
+    total_pages: Optional[int] = None
+    items: List[SeoIssueResponse] = Field(default_factory=list)
+    issues: List[SeoIssueResponse] = Field(default_factory=list)
     summary: Optional[IssueSummaryResponse] = None
     message: Optional[str] = None
 
 
 class AnalyzeAuditResponse(BaseModel):
-    """Response returned upon completing deterministic on-page rule analysis."""
+    """Response returned when an SEO rule analysis execution completes."""
 
     audit_id: uuid.UUID
-    status: str
-    message: str
     pages_analyzed: int
-    issues_found: int
+    total_issues: int
+    issues_found: int = 0
+    status: str = "completed"
+    engine_version: str = "2.2.0"
     summary: IssueSummaryResponse
+    message: Optional[str] = None

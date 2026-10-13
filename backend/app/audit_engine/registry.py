@@ -4,6 +4,7 @@ from typing import Dict, List, Type
 
 from app.audit_engine.rules.base import BaseRule
 from app.audit_engine.rules.onpage import ALL_ONPAGE_RULES
+from app.audit_engine.rules.technical import ALL_TECHNICAL_RULES
 
 
 class RuleRegistry:
@@ -17,6 +18,8 @@ class RuleRegistry:
         for rule_cls in ALL_ONPAGE_RULES:
             instance = rule_cls()
             self.register(instance)
+        for rule in ALL_TECHNICAL_RULES:
+            self.register(rule)
 
     def register(self, rule: BaseRule) -> None:
         self._rules[rule.rule_id] = rule
@@ -28,6 +31,8 @@ class RuleRegistry:
         return list(self._rules.values())
 
     def get_rules_by_category(self, category: str) -> List[BaseRule]:
+        if category == "on_page":
+            return [r for r in self._rules.values() if r.category in ("on_page", "links", "images")]
         return [r for r in self._rules.values() if r.category == category]
 
 

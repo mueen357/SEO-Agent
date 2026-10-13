@@ -11,7 +11,7 @@ class H1PresenceRule(BaseRule):
     rule_id = "ONPAGE_H1_PRESENCE"
     category = "on_page"
     subcategory = "headings"
-    default_severity = "medium"
+    default_severity = "low"
 
     def evaluate(self, ctx: PageAuditContext) -> RuleAssessment:
         counts = ctx.headings_json.get("counts", {})
@@ -23,8 +23,8 @@ class H1PresenceRule(BaseRule):
                 category=self.category,
                 subcategory=self.subcategory,
                 title="Missing H1 heading",
-                description="The page HTML contains no <h1> heading tag.",
-                severity="medium",
+                description="The page HTML contains no <h1> heading tag. While not a strict Google indexing requirement, a single descriptive H1 provides clear structural context for users and search engines.",
+                severity="low",
                 status="warning",
                 evidence={"page_url": ctx.url, "h1_count": 0, "source": ctx.source_type},
                 recommendation="Add an <h1> heading to clearly communicate the primary subject of the page to users and search engines.",

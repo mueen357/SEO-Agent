@@ -46,6 +46,8 @@ class CrawlRepository:
             title=page_data.get("title"),
             meta_description=page_data.get("meta_description"),
             canonical_url=page_data.get("canonical_url"),
+            canonical_tag_count=page_data.get("canonical_tag_count", 1),
+            headers_json=page_data.get("headers_json", {}),
             meta_robots=page_data.get("meta_robots"),
             html_lang=page_data.get("html_lang"),
             headings_json=page_data.get("headings_json"),
@@ -135,6 +137,7 @@ class CrawlRepository:
             status=sitemap_data.get("status", "success"),
             url_count=sitemap_data.get("url_count", 0),
             error_message=sitemap_data.get("error_message"),
+            urls_json=sitemap_data.get("discovered_urls", [])[:2000],
             discovered_at=datetime.now(timezone.utc),
         )
         self.session.add(sm)

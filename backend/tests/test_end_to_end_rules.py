@@ -127,7 +127,7 @@ async def test_end_to_end_onpage_rule_analysis(client: AsyncClient, test_db_sess
     assert all_issues_res.status_code == 200
     all_issues = all_issues_res.json()
     assert all_issues["total"] == initial_total
-    assert len(all_issues["issues"]) == initial_total
+    assert len(all_issues["issues"]) == min(initial_total, 50)
 
     # 8. Query Filtered by Severity: severity=high
     high_res = await client.get(f"/api/v1/audits/{audit_id}/issues?severity=high")

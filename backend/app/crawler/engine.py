@@ -164,8 +164,19 @@ class CrawlEngine:
                 self.pages_failed += 1
 
             # Prepare page record for persistence
+            SAFE_HEADERS = {
+                "x-robots-tag", "content-type", "location", "strict-transport-security",
+                "cache-control", "etag", "last-modified", "server",
+            }
+            safe_headers = {
+                k.lower(): str(v)[:500]
+                for k, v in fetch_res.headers.items()
+                if k.lower() in SAFE_HEADERS
+            }
             page_data = {
                 "requested_url": fetch_res.requested_url,
+                "headers_json": safe_headers,
+                "canonical_tag_count": getattr(parsed, "canonical_tag_count", 1),
                 "final_url": fetch_res.final_url,
                 "depth": current_depth,
                 "fetch_status": fetch_res.fetch_status,

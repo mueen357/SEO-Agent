@@ -54,6 +54,13 @@ A production-oriented, AI-powered website audit system delivered through a Googl
 - **SHA-256 Fingerprint Deduplication:** Cryptographic fingerprints (`audit_id:crawl_page_id:rule_id:source:version`) ensuring idempotent re-analysis without duplicate database records.
 - **Side Panel SEO Findings View (`extension/components/audit/SeoFindingsView.tsx`):** Real-time severity badges, category/severity/status filtering, expandable evidence inspector, actionable advice callouts, and on-demand analysis triggers.
 
+### Evidence-Based Technical SEO Rule Engine (Phase 2.2)
+- **22 Deterministic Technical SEO Rules (`backend/app/audit_engine/rules/technical/`):** Evaluates HTTP status codes (4xx, 5xx, 429, non-HTML content), meta robots directives, `X-Robots-Tag` headers, `robots.txt` compliance (status, disallow rules, sitemap declarations), XML sitemaps (availability, parse errors, URL HTTP status, noindex/canonical conflicts), redirect chains & loops, canonical target validation (status, cross-URL conflicts, multiple canonical tags), and HTTPS security (downgrades, insecure schemes).
+- **Site-Wide & Cross-Page Topology Context:** Evaluates both per-page contexts (`PageAuditContext`) and site-wide topology (`SiteAuditContext`) for holistic indexability analysis.
+- **Category-Safe Transactional Analysis:** Running technical rules replaces only `category="technical"` issues, keeping on-page rules intact and enabling independent or unified analysis.
+- **Standards & Compatibility Hardening:** RFC 5646 (BCP 47) regex language validation, valid relative canonical URL resolution against base URL, proportionate structural H1 severities, and distinct actionable findings vs. total assessments reporting.
+- **Side Panel Technical Findings View:** Enhanced `SeoFindingsView.tsx` with dedicated "Run Technical (22 Rules)", "Run On-Page (16 Rules)", and "Run Full Analysis (38 Rules)" buttons, Technical SEO category filtering, and real-time KPI metrics.
+
 ## 2. Directory Structure
 
 ```

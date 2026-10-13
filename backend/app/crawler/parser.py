@@ -30,6 +30,7 @@ class ParsedPageData:
     title: str | None = None
     meta_description: str | None = None
     canonical_url: str | None = None
+    canonical_tag_count: int = 1
     meta_robots: str | None = None
     html_lang: str | None = None
     headings_json: dict[str, Any] = field(default_factory=dict)
@@ -86,9 +87,10 @@ class HTMLPageParser:
 
         # 3. Canonical URL
         canonical_url = None
-        canonical_tag = soup.find("link", rel=lambda r: r and "canonical" in r.lower())
-        if canonical_tag and canonical_tag.get("href"):
-            raw_canonical = canonical_tag.get("href", "").strip()
+        canonical_tags = soup.find_all("link", rel=lambda r: r and "canonical" in r.lower())
+        canonical_tag_count = len(canonical_tags)
+        if canonical_tags and canonical_tags[0].get("href"):
+            raw_canonical = canonical_tags[0].get("href", "").strip()
             canonical_url = normalize_url(raw_canonical, base_url=current_url)
 
         # 4. Meta robots
@@ -173,6 +175,7 @@ class HTMLPageParser:
             title=title,
             meta_description=meta_desc,
             canonical_url=canonical_url,
+            canonical_tag_count=canonical_tag_count,
             meta_robots=meta_robots,
             html_lang=html_lang,
             headings_json=headings_data,

@@ -1,10 +1,11 @@
 """Audit execution context holding crawled and rendered page evidence."""
 
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
-from app.database.models import CrawlLink, CrawlPage, CrawlPageRender
+from app.database.models import CrawlLink, CrawlPage, CrawlPageRender, CrawlSitemap
 
 
 @dataclass
@@ -16,6 +17,15 @@ class PageAuditContext:
     links: List[CrawlLink] = field(default_factory=list)
     audit_target_url: str = ""
     audit_hostname: str = ""
+
+    # Cross-page and site evidence
+    all_pages: Optional[List[CrawlPage]] = None
+    url_to_page: Dict[str, CrawlPage] = field(default_factory=dict)
+    sitemaps: List[CrawlSitemap] = field(default_factory=list)
+    sitemap_urls: Set[str] = field(default_factory=set)
+    robots_txt_status: Optional[str] = None
+    robots_txt_content: Optional[str] = None
+    response_headers: Optional[Dict[str, str]] = None
 
     @property
     def url(self) -> str:
@@ -70,3 +80,54 @@ class PageAuditContext:
     @property
     def headings_json(self) -> Dict[str, Any]:
         return self.page.headings_json or {}
+
+    @property
+    def headers(self) -> Dict[str, str]:
+        raw = self.response_headers or getattr(self.page, "headers_json", None) or {}
+        return {str(k).lower(): str(v) for k, v in raw.items()}
+
+    @property
+    def canonical_tag_count(self) -> int:
+        return getattr(self.page, "canonical_tag_count", 1) or 1
+
+    @property
+    def redirect_chain(self) -> List[Dict[str, Any]]:
+        return self.page.redirect_chain_json or []
+
+    @property
+    def is_in_sitemap(self) -> bool:
+        norm_url = self.url.rstrip("/")
+        for sm_url in self.sitemap_urls:
+            if sm_url.rstrip("/") == norm_url:
+                return True
+        return False
+
+    def lookup_page(self, target_url: str) -> Optional[CrawlPage]:
+        """Lookup a crawled page by URL."""
+        if not target_url:
+            return None
+        norm = target_url.rstrip("/")
+        # Try direct lookup
+        if target_url in self.url_to_page:
+            return self.url_to_page[target_url]
+        if norm in self.url_to_page:
+            return self.url_to_page[norm]
+        # Match normalized
+        for u, p in self.url_to_page.items():
+            if u.rstrip("/") == norm or (p.final_url and p.final_url.rstrip("/") == norm):
+                return p
+        return None
+
+
+@dataclass
+class SiteAuditContext:
+    """Site-level contextual evidence for site-wide technical SEO rules."""
+
+    audit_id: uuid.UUID
+    target_url: str
+    hostname: str
+    pages: List[CrawlPage] = field(default_factory=list)
+    sitemaps: List[CrawlSitemap] = field(default_factory=list)
+    sitemap_urls: Set[str] = field(default_factory=set)
+    robots_txt_status: Optional[str] = None
+    robots_txt_content: Optional[str] = None

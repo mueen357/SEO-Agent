@@ -21,11 +21,20 @@ class IssueRepository:
         audit_id: uuid.UUID,
         assessments: List[Tuple[RuleAssessment, Optional[uuid.UUID]]],
         replace_existing: bool = True,
+        categories_to_replace: Optional[List[str]] = None,
     ) -> int:
         """Persist rule assessments as SeoIssue records with deterministic fingerprints."""
         if replace_existing:
             # Atomic clear of prior analysis for clean idempotent reruns
-            await self.db.execute(delete(SeoIssue).where(SeoIssue.audit_id == audit_id))
+            if categories_to_replace:
+                await self.db.execute(
+                    delete(SeoIssue).where(
+                        SeoIssue.audit_id == audit_id,
+                        SeoIssue.category.in_(categories_to_replace),
+                    )
+                )
+            else:
+                await self.db.execute(delete(SeoIssue).where(SeoIssue.audit_id == audit_id))
 
         saved_count = 0
         seen_fingerprints = set()
@@ -147,6 +156,13 @@ class IssueRepository:
             total += cnt
 
         return {
+            "total_assessments": total,
+            "actionable_findings": by_status.get("fail", 0) + by_status.get("warning", 0),
+            "pass_count": by_status.get("pass", 0),
+            "warning_count": by_status.get("warning", 0),
+            "fail_count": by_status.get("fail", 0),
+            "unknown_count": by_status.get("unknown", 0),
+            "not_applicable_count": by_status.get("not_applicable", 0),
             "total_issues": total,
             "by_category": by_category,
             "by_severity": by_severity,

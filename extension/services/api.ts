@@ -295,13 +295,18 @@ export async function getAuditIssuesSummary(
 }
 
 /**
- * Trigger deterministic on-page SEO rule analysis (POST /api/v1/audits/{id}/analyze)
+ * Trigger deterministic SEO rule analysis (POST /api/v1/audits/{id}/analyze)
  */
 export async function runAuditAnalysis(
   auditId: string,
+  category?: string,
   baseUrl: string = DEFAULT_API_BASE
 ): Promise<AnalyzeAuditResponse> {
-  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/analyze`, {
+  const url = category
+    ? `${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/analyze?category=${encodeURIComponent(category)}`
+    : `${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/analyze`;
+
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'Accept': 'application/json' },
   });
@@ -309,6 +314,27 @@ export async function runAuditAnalysis(
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
     const message = errorBody?.error?.message || `Failed to run SEO analysis (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Trigger deterministic technical SEO rule analysis (POST /api/v1/audits/{id}/analyze/technical)
+ */
+export async function runTechnicalAuditAnalysis(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AnalyzeAuditResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/analyze/technical`, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to run Technical SEO analysis (HTTP ${response.status})`;
     throw new Error(message);
   }
 

@@ -9,6 +9,7 @@ import {
   getAuditIssues,
   getAuditIssuesSummary,
   runAuditAnalysis,
+  runTechnicalAuditAnalysis,
 } from '../services/api';
 import {
   saveActiveFullAuditId,
@@ -313,6 +314,42 @@ describe('Full Website Audit API & Storage Client', () => {
     expect(res.issues_found).toBe(16);
     expect(global.fetch).toHaveBeenCalledWith(
       'http://127.0.0.1:8000/api/v1/audits/test-id/analyze',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+  it('runTechnicalAuditAnalysis triggers POST /api/v1/audits/{id}/analyze/technical', async () => {
+    const mockAnalyzeResp = {
+      audit_id: 'test-id',
+      status: 'completed',
+      message: 'Technical SEO rule analysis completed successfully. Analyzed 3 page(s).',
+      pages_analyzed: 3,
+      issues_found: 22,
+      summary: {
+        total_assessments: 22,
+        actionable_findings: 5,
+        fail_count: 2,
+        warning_count: 3,
+        pass_count: 17,
+        total_issues: 22,
+        by_category: { technical: 22 },
+        by_severity: { high: 2, medium: 3, low: 17 },
+        by_status: { fail: 2, warning: 3, pass: 17 },
+        rules_executed_count: 22,
+      },
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockAnalyzeResp,
+    } as any);
+
+    const res = await runTechnicalAuditAnalysis('test-id');
+    expect(res.status).toBe('completed');
+    expect(res.pages_analyzed).toBe(3);
+    expect(res.issues_found).toBe(22);
+    expect(res.summary.actionable_findings).toBe(5);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/audits/test-id/analyze/technical',
       expect.objectContaining({ method: 'POST' })
     );
   });

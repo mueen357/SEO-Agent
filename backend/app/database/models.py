@@ -60,12 +60,15 @@ class Audit(Base):
     pages_crawled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     configuration_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
     # Worker lease & progress tracking
     worker_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     progress_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    robots_txt_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    robots_txt_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -126,11 +129,13 @@ class CrawlPage(Base):
     content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     response_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     redirect_chain_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    headers_json: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True, default=dict)
 
     # SEO extracted data
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     meta_description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     canonical_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    canonical_tag_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     meta_robots: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     html_lang: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     headings_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -144,6 +149,7 @@ class CrawlPage(Base):
 
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="pages")
@@ -187,6 +193,7 @@ class CrawlSitemap(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="valid")
     url_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="sitemaps")
@@ -217,6 +224,7 @@ class CrawlPageRender(Base):
     rendered_title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     rendered_meta_description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     rendered_canonical_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    canonical_tag_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     rendered_meta_robots: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     rendered_headings_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -232,6 +240,7 @@ class CrawlPageRender(Base):
     screenshot_mobile_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     rendered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     page: Mapped["CrawlPage"] = relationship("CrawlPage", back_populates="render")

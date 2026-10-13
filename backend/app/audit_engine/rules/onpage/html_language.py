@@ -1,4 +1,4 @@
-"""HTML language attribute audit rules."""
+"""HTML language attribute audit rules complying with RFC 5646 (BCP 47)."""
 
 import re
 
@@ -6,7 +6,17 @@ from app.audit_engine.context import PageAuditContext
 from app.audit_engine.result import RuleAssessment
 from app.audit_engine.rules.base import BaseRule
 
-BCP47_PATTERN = re.compile(r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$")
+# Standards-aware BCP 47 pattern supporting 2-3 letter primary subtags, script, regional, variants, and extensions
+BCP47_PATTERN = re.compile(
+    r"^(?:(?:[a-z]{2,3}(?:-[a-z]{3}){0,3}|[a-z]{4,8})"
+    r"(?:-[a-z]{4})?"
+    r"(?:-[a-z]{2}|-[0-9]{3})?"
+    r"(?:-[a-z0-9]{5,8}|-[0-9][a-z0-9]{3})*"
+    r"(?:-[a-wy-z0-9](?:-[a-z0-9]{2,8})+)*"
+    r"(?:-x(?:-[a-z0-9]{1,8})+)?|"
+    r"x(?:-[a-z0-9]{1,8})+)$",
+    re.IGNORECASE,
+)
 
 
 class HtmlLanguageRule(BaseRule):
@@ -28,7 +38,7 @@ class HtmlLanguageRule(BaseRule):
                 severity="low",
                 status="warning",
                 evidence={"page_url": ctx.url, "html_lang": None, "source": ctx.source_type},
-                recommendation="Add a valid lang attribute to the <html> tag (e.g. lang='en' or lang='es') to aid accessibility and translation.",
+                recommendation="Add a valid BCP 47 lang attribute to the <html> tag (e.g. lang='en', lang='es-419') to assist screen readers and language processing.",
                 source_type=ctx.source_type,
                 confidence=1.0,
             )
@@ -44,7 +54,7 @@ class HtmlLanguageRule(BaseRule):
                 severity="low",
                 status="warning",
                 evidence={"page_url": ctx.url, "html_lang": lang, "source": ctx.source_type},
-                recommendation="Specify a valid language code in the <html> lang attribute.",
+                recommendation="Specify a valid BCP 47 language code in the <html> lang attribute.",
                 source_type=ctx.source_type,
                 confidence=1.0,
             )
@@ -55,13 +65,13 @@ class HtmlLanguageRule(BaseRule):
                 category=self.category,
                 subcategory=self.subcategory,
                 title="Invalid HTML lang format",
-                description=f"The <html> lang attribute '{lang_str}' does not conform to standard BCP 47 language format.",
+                description=f"The <html> lang attribute '{lang_str}' does not conform to standard BCP 47 format.",
                 severity="low",
                 status="warning",
                 evidence={"page_url": ctx.url, "html_lang": lang_str, "source": ctx.source_type},
-                recommendation="Use a standard BCP 47 language code (e.g., 'en', 'en-US', 'fr', 'de').",
+                recommendation="Use a standard BCP 47 language tag (e.g., 'en', 'en-US', 'zh-Hans', 'es-419').",
                 source_type=ctx.source_type,
-                confidence=0.85,
+                confidence=0.9,
             )
 
         return RuleAssessment(
