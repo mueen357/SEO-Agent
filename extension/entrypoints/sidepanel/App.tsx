@@ -29,6 +29,7 @@ import { PlaceholderSection } from '../../components/audit/PlaceholderSection';
 import { FullAuditOverview } from '../../components/audit/FullAuditOverview';
 import { FullAuditPagesTable } from '../../components/audit/FullAuditPagesTable';
 import { PageDetailsModal } from '../../components/audit/PageDetailsModal';
+import { SeoFindingsView } from '../../components/audit/SeoFindingsView';
 
 import { getActiveTab } from '../../services/tab';
 import {
@@ -88,6 +89,7 @@ export default function App() {
   const [pagesCurrentPage, setPagesCurrentPage] = useState(1);
   const [pagesTotalPages, setPagesTotalPages] = useState(0);
   const [selectedPage, setSelectedPage] = useState<CrawlPageItem | null>(null);
+  const [fullAuditSubView, setFullAuditSubView] = useState<'pages' | 'findings'>('pages');
   const [isFullAuditing, setIsFullAuditing] = useState(false);
 
   const pollingRef = useRef<number | null>(null);
@@ -321,16 +323,48 @@ export default function App() {
             isBackendOnline={health?.status === 'ok'}
           />
 
-          <FullAuditPagesTable
-            pages={pages}
-            total={pagesTotal}
-            currentPage={pagesCurrentPage}
-            pageSize={20}
-            totalPages={pagesTotalPages}
-            onPageChange={handlePageChange}
-            onSelectPage={(p) => setSelectedPage(p)}
-            selectedPageId={selectedPage?.id}
-          />
+          {/* Sub-view switcher between Pages and SEO Findings */}
+          <div className="flex items-center space-x-2 border-b border-slate-800 pb-2">
+            <button
+              onClick={() => setFullAuditSubView('pages')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                fullAuditSubView === 'pages'
+                  ? 'bg-slate-800 text-cyan-400 border border-slate-700'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              Crawled Pages ({pagesTotal})
+            </button>
+            <button
+              onClick={() => setFullAuditSubView('findings')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                fullAuditSubView === 'findings'
+                  ? 'bg-slate-800 text-cyan-400 border border-slate-700'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              SEO Rule Findings
+            </button>
+          </div>
+
+          {fullAuditSubView === 'pages' ? (
+            <FullAuditPagesTable
+              pages={pages}
+              total={pagesTotal}
+              currentPage={pagesCurrentPage}
+              pageSize={20}
+              totalPages={pagesTotalPages}
+              onPageChange={handlePageChange}
+              onSelectPage={(p) => setSelectedPage(p)}
+              selectedPageId={selectedPage?.id}
+            />
+          ) : (
+            <SeoFindingsView
+              auditId={fullAudit?.id || null}
+              isBackendOnline={health?.status === 'ok'}
+              isAuditRunning={isFullAuditing}
+            />
+          )}
         </main>
       ) : (
         /* VIEW B: QUICK PAGE AUDIT (Preserved 100%) */

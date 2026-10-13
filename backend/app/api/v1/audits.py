@@ -15,6 +15,12 @@ from app.schemas.audit import (
     AuditPagesCollectionResponse,
     AuditResponse,
 )
+from app.schemas.issues import (
+    AnalyzeAuditResponse,
+    IssueSummaryResponse,
+    PaginatedIssuesResponse,
+)
+from app.services.issue_service import IssueService
 from app.schemas.crawl import (
     AuditStartResponse,
     CrawlPageResponse,
@@ -194,14 +200,55 @@ async def get_audit_sitemaps(
 
 @router.get(
     "/{audit_id}/issues",
-    response_model=AuditIssuesCollectionResponse,
+    response_model=PaginatedIssuesResponse,
     summary="Retrieve Detected SEO Issues for Audit",
-    description="Returns detected SEO issues. Returns empty collection with informational message (issue detection scheduled for Phase 1.5)."
+    description="Returns paginated, filterable SEO issues produced by deterministic rule engines."
 )
 async def get_audit_issues(
     audit_id: uuid.UUID,
+    category: Optional[str] = Query(None, description="Filter issues by category (e.g. on_page, images, links)"),
+    severity: Optional[str] = Query(None, description="Filter issues by severity (critical, high, medium, low, info)"),
+    status: Optional[str] = Query(None, description="Filter issues by assessment status (pass, warning, fail, unknown)"),
+    crawl_page_id: Optional[uuid.UUID] = Query(None, description="Filter issues for a specific crawled page"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
     db: AsyncSession = Depends(get_db)
-) -> AuditIssuesCollectionResponse:
-    service = AuditService(db)
-    await service.get_audit(audit_id)
-    return AuditIssuesCollectionResponse(audit_id=audit_id)
+) -> PaginatedIssuesResponse:
+    service = IssueService(db)
+    return await service.get_audit_issues(
+        audit_id=audit_id,
+        category=category,
+        severity=severity,
+        status=status,
+        crawl_page_id=crawl_page_id,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/{audit_id}/analyze",
+    response_model=AnalyzeAuditResponse,
+    summary="Execute Deterministic On-Page SEO Analysis",
+    description="Evaluates all crawled pages for the audit against registered deterministic SEO rules and persists findings."
+)
+async def analyze_audit(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> AnalyzeAuditResponse:
+    service = IssueService(db)
+    return await service.run_onpage_analysis(audit_id)
+
+
+@router.get(
+    "/{audit_id}/issues/summary",
+    response_model=IssueSummaryResponse,
+    summary="Retrieve SEO Issues Aggregate Summary",
+    description="Returns aggregate counts of detected issues grouped by category, severity, and assessment status."
+)
+async def get_audit_issues_summary(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> IssueSummaryResponse:
+    service = IssueService(db)
+    return await service.get_summary(audit_id)

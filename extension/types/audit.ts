@@ -281,3 +281,64 @@ export interface CrawlPageRenderItem {
   error_message?: string | null;
   rendered_at: string;
 }
+
+
+// ==========================================
+// Phase 2.1 - SEO Issues & Analysis Types
+// ==========================================
+
+export type IssueSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type IssueStatus = 'pass' | 'warning' | 'fail' | 'unknown' | 'not_applicable';
+export type IssueCategory = 'on_page' | 'images' | 'links' | 'technical' | 'content' | 'structured_data' | 'local_seo' | 'technology' | 'ai_search';
+
+export interface SeoIssueItem {
+  id: string;
+  audit_id: string;
+  crawl_page_id?: string | null;
+  page_url?: string | null;
+  rule_id: string;
+  category: string;
+  subcategory: string;
+  title: string;
+  description: string;
+  severity: IssueSeverity;
+  status: IssueStatus;
+  evidence_json: Record<string, any>;
+  recommendation: string;
+  source_type: 'raw_http' | 'rendered_browser' | 'derived_from_crawl' | 'unknown';
+  confidence: number;
+  documentation_url?: string | null;
+  rule_version: string;
+  fingerprint: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IssueSummaryData {
+  audit_id: string;
+  total_issues: number;
+  by_category: Record<string, number>;
+  by_severity: Record<string, number>;
+  by_status: Record<string, number>;
+  rules_executed_count: number;
+}
+
+export interface PaginatedIssuesResponse {
+  audit_id: string;
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  issues: SeoIssueItem[];
+  summary?: IssueSummaryData | null;
+  message?: string | null;
+}
+
+export interface AnalyzeAuditResponse {
+  audit_id: string;
+  status: string;
+  message: string;
+  pages_analyzed: number;
+  issues_found: number;
+  summary: IssueSummaryData;
+}

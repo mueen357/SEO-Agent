@@ -104,3 +104,40 @@
   8. **Worker Lifecycle Integration:** Decoupled 15-second background heartbeat loop (`_heartbeat_loop()`) keeping 60-second database worker leases alive during multi-page rendering cycles.
   9. **Chrome Extension Side Panel Integration:** Enhanced side panel with mode toggle ("Quick Page Audit" vs "Full Website Audit"), live 2.5-second polling loop, cancellation support, paginated crawled pages table, and detailed page inspection modal with raw vs rendered diffs and lab metrics.
   10. **Comprehensive Verification:** 71 backend pytest tests (100% pass), 31 frontend vitest tests (100% pass), 0 TypeScript errors, and successful WXT Manifest V3 production build.
+
+## Phase 2: Core Audit Engines
+
+### Task 2.1 — Evidence-Based On-Page SEO Rule Engine
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-13
+- **Completed Components:**
+  1. **Modular Rule Engine Architecture (`backend/app/audit_engine/`):**
+     - Abstract `BaseRule` base class with stable identifiers, category/subcategory taxonomy, and Google Search Central references.
+     - Central `RuleRegistry` discovering and registering all 16 on-page rules.
+     - `PageAuditContext` normalizing both raw HTTP crawl metadata and rendered DOM artifacts into unified evidence.
+     - `AuditEngine` with per-rule exception isolation (individual rule failures output `unknown` without aborting the audit) and strict SHA-256 fingerprinting (`audit:page:rule:src:ver`).
+  2. **16 Deterministic On-Page SEO Rules:**
+     - **Title:** `ONPAGE_TITLE_PRESENT` (Missing/Empty/Pass), `ONPAGE_TITLE_LENGTH` (Review range advisory 30-70 chars, not rigid penalty), `ONPAGE_TITLE_REPETITIVE` (Detects repetitive phrasing).
+     - **Meta Description:** `ONPAGE_META_DESC_PRESENT` (Missing/Empty/Pass; never substitutes `og:description`), `ONPAGE_META_DESC_LENGTH` (Review range advisory 70-160 chars).
+     - **Headings:** `ONPAGE_H1_PRESENCE` (Missing H1), `ONPAGE_H1_MULTIPLE` (Structural advisory, not Google ranking penalty), `ONPAGE_H1_EMPTY` (Empty H1), `ONPAGE_HEADING_HIERARCHY` (Detects large heading level skips e.g. H2->H5).
+     - **Canonical:** `ONPAGE_CANONICAL_PRESENCE` (Absent advisory), `ONPAGE_CANONICAL_VALID` (Distinguishes self-referencing pass, cross-domain intentional advisory, and malformed fail).
+     - **Images:** `ONPAGE_IMAGE_ALT_MISSING` (Identifies images missing alt), `ONPAGE_IMAGE_ALT_EMPTY` (Accounts for valid decorative `alt=""` per WCAG/Google guidelines).
+     - **Links:** `ONPAGE_INTERNAL_OUTLINKS` (Pages without internal links), `ONPAGE_EMPTY_ANCHOR_TEXT` (Flags empty anchors without fake broken-link claims).
+     - **HTML Language:** `ONPAGE_HTML_LANG` (Validates BCP 47 language declaration format without assuming English).
+  3. **Relational Issue Persistence & Alembic Migration:**
+     - Reversible Alembic migration `0004_add_seo_issues.py` adding `seo_issues` table with foreign keys to `audits` and `crawl_pages`.
+     - Enum constraints on `category`, `severity`, `status`, and `source_type`.
+     - Unique fingerprint constraint (`audit_id`, `fingerprint`) ensuring 100% idempotent reruns with zero duplicate findings.
+  4. **Audit Service & REST API Endpoints:**
+     - `POST /api/v1/audits/{id}/analyze`: Triggers deterministic on-page evaluation and persists findings atomically.
+     - `GET /api/v1/audits/{id}/issues`: Paginated retrieval with filtering by `category`, `severity`, `status`, and `crawl_page_id`.
+     - `GET /api/v1/audits/{id}/issues/summary`: Real-time aggregate count breakdown by category, severity, and status.
+  5. **Chrome Extension SEO Findings View:**
+     - New interactive `SeoFindingsView` component in Full Website Audit side panel.
+     - Severity breakdown KPI badges (`critical`, `high`, `medium`, `low`, `info`).
+     - Real-time dropdown filters for severity, category, and evaluation status (`pass`, `warning`, `fail`, `unknown`).
+     - Expandable JSON evidence inspector, actionable recommendation callouts, and manual "Run On-Page Analysis" action button.
+  6. **Comprehensive Verification:**
+     - 93 backend pytest tests (100% pass across framework, rules, API, and E2E fixtures).
+     - 34 frontend vitest tests (100% pass including issue API clients).
+     - 0 TypeScript errors (`tsc --noEmit`), successful production build (`wxt build`).

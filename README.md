@@ -46,6 +46,14 @@ A production-oriented, AI-powered website audit system delivered through a Googl
 - **Laboratory Performance Metrics & Screenshots:** Non-fabricated laboratory timings (`DOMContentLoaded`, `loadEvent`, duration) and optional viewport screenshots (desktop/mobile) with UUID-safe paths and Git-ignored storage.
 - **Full Website Audit Side Panel:** Chrome extension side panel mode supporting live 2.5s polling, cancellation, paginated crawled pages, and detailed page inspection modal with raw vs rendered diffs.
 
+
+### Evidence-Based On-Page SEO Rule Engine (Phase 2.1)
+- **Modular Audit Engine (`backend/app/audit_engine/`):** Registry-based rule engine executing 16 deterministic on-page SEO evaluations against crawled HTML and rendered browser DOM evidence without making external HTTP calls or calling LLM APIs.
+- **Strict Separation of Status and Severity:** Orthogonal rule assessment status (`pass`, `warning`, `fail`, `unknown`, `not_applicable`) distinct from impact severity (`critical`, `high`, `medium`, `low`, `info`).
+- **Grounded Heuristics & Official Standards:** Google Search Central aligned guidance for title links, snippet lengths, heading hierarchies, canonical consolidation, WCAG decorative `alt=""` images, internal link graph analysis, and BCP 47 language validation.
+- **SHA-256 Fingerprint Deduplication:** Cryptographic fingerprints (`audit_id:crawl_page_id:rule_id:source:version`) ensuring idempotent re-analysis without duplicate database records.
+- **Side Panel SEO Findings View (`extension/components/audit/SeoFindingsView.tsx`):** Real-time severity badges, category/severity/status filtering, expandable evidence inspector, actionable advice callouts, and on-demand analysis triggers.
+
 ## 2. Directory Structure
 
 ```

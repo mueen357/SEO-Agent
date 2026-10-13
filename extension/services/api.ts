@@ -7,6 +7,9 @@ import type {
   AuditIssuesResponse,
   AuditListResponse,
   AuditPagesResponse,
+  PaginatedIssuesResponse,
+  IssueSummaryData,
+  AnalyzeAuditResponse,
   AuditRecord,
   BackendHealthResponse,
   CreateAuditRequest,
@@ -187,26 +190,7 @@ export async function getAuditPages(
   return response.json();
 }
 
-/**
- * Retrieve issues for an audit (GET /api/v1/audits/{id}/issues)
- */
-export async function getAuditIssues(
-  auditId: string,
-  baseUrl: string = DEFAULT_API_BASE
-): Promise<AuditIssuesResponse> {
-  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/issues`, {
-    method: 'GET',
-    headers: { 'Accept': 'application/json' },
-  });
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    const message = errorBody?.error?.message || `Failed to fetch audit issues (HTTP ${response.status})`;
-    throw new Error(message);
-  }
-
-  return response.json();
-}
 
 
 /**
@@ -245,6 +229,86 @@ export async function getAuditSitemaps(
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
     const message = errorBody?.error?.message || `Failed to fetch audit sitemaps (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve detected SEO issues for an audit (GET /api/v1/audits/{id}/issues)
+ */
+export async function getAuditIssues(
+  auditId: string,
+  options: {
+    category?: string;
+    severity?: string;
+    status?: string;
+    crawl_page_id?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<PaginatedIssuesResponse> {
+  const query = new URLSearchParams();
+  if (options.category) query.set('category', options.category);
+  if (options.severity) query.set('severity', options.severity);
+  if (options.status) query.set('status', options.status);
+  if (options.crawl_page_id) query.set('crawl_page_id', options.crawl_page_id);
+  if (options.page) query.set('page', String(options.page));
+  if (options.pageSize) query.set('page_size', String(options.pageSize));
+
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/issues${qs}`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch audit issues (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve aggregate summary counts of SEO issues (GET /api/v1/audits/{id}/issues/summary)
+ */
+export async function getAuditIssuesSummary(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<IssueSummaryData> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/issues/summary`, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to fetch issues summary (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
+ * Trigger deterministic on-page SEO rule analysis (POST /api/v1/audits/{id}/analyze)
+ */
+export async function runAuditAnalysis(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AnalyzeAuditResponse> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/analyze`, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to run SEO analysis (HTTP ${response.status})`;
     throw new Error(message);
   }
 

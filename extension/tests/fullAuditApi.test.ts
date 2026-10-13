@@ -6,6 +6,9 @@ import {
   getAudit,
   getAuditPages,
   cancelAudit,
+  getAuditIssues,
+  getAuditIssuesSummary,
+  runAuditAnalysis,
 } from '../services/api';
 import {
   saveActiveFullAuditId,
@@ -203,5 +206,114 @@ describe('Full Website Audit API & Storage Client', () => {
 
     await clearActiveFullAuditId();
     expect(store['website_audit_active_full_id']).toBeUndefined();
+  });
+
+  it('getAuditIssues fetches paginated issues with filter parameters', async () => {
+    const mockIssuesResp = {
+      audit_id: 'test-id',
+      total: 1,
+      page: 1,
+      page_size: 20,
+      total_pages: 1,
+      issues: [
+        {
+          id: 'issue-1',
+          audit_id: 'test-id',
+          crawl_page_id: 'page-1',
+          page_url: 'https://example.com/item',
+          rule_id: 'ONPAGE_TITLE_PRESENT',
+          category: 'on_page',
+          subcategory: 'title',
+          title: 'Missing page title',
+          description: 'The page has no title tag.',
+          severity: 'high',
+          status: 'fail',
+          evidence_json: { document_title: null },
+          recommendation: 'Add a concise, descriptive title.',
+          source_type: 'raw_http',
+          confidence: 1.0,
+          rule_version: '1.0.0',
+          fingerprint: 'abc123hash',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      summary: {
+        audit_id: 'test-id',
+        total_issues: 1,
+        by_category: { on_page: 1 },
+        by_severity: { high: 1 },
+        by_status: { fail: 1 },
+        rules_executed_count: 1,
+      },
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockIssuesResp,
+    } as any);
+
+    const res = await getAuditIssues('test-id', { severity: 'high', category: 'on_page', page: 1, pageSize: 20 });
+    expect(res.total).toBe(1);
+    expect(res.issues[0]?.rule_id).toBe('ONPAGE_TITLE_PRESENT');
+    expect(res.issues[0]?.severity).toBe('high');
+    expect(res.summary?.by_status.fail).toBe(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/audits/test-id/issues?category=on_page&severity=high&page=1&page_size=20'),
+      expect.objectContaining({ method: 'GET' })
+    );
+  });
+
+  it('getAuditIssuesSummary fetches aggregate issue breakdown', async () => {
+    const mockSummary = {
+      audit_id: 'test-id',
+      total_issues: 12,
+      by_category: { on_page: 8, images: 2, links: 2 },
+      by_severity: { high: 2, medium: 4, low: 6 },
+      by_status: { fail: 2, warning: 4, pass: 6 },
+      rules_executed_count: 12,
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockSummary,
+    } as any);
+
+    const res = await getAuditIssuesSummary('test-id');
+    expect(res.total_issues).toBe(12);
+    expect(res.by_category.on_page).toBe(8);
+    expect(res.by_status.fail).toBe(2);
+  });
+
+  it('runAuditAnalysis triggers POST /api/v1/audits/{id}/analyze', async () => {
+    const mockAnalyzeResp = {
+      audit_id: 'test-id',
+      status: 'completed',
+      message: 'Analysis completed successfully',
+      pages_analyzed: 3,
+      issues_found: 16,
+      summary: {
+        audit_id: 'test-id',
+        total_issues: 16,
+        by_category: { on_page: 12, images: 2, links: 2 },
+        by_severity: { high: 2, medium: 4, low: 10 },
+        by_status: { fail: 2, warning: 4, pass: 10 },
+        rules_executed_count: 16,
+      },
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockAnalyzeResp,
+    } as any);
+
+    const res = await runAuditAnalysis('test-id');
+    expect(res.status).toBe('completed');
+    expect(res.pages_analyzed).toBe(3);
+    expect(res.issues_found).toBe(16);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/audits/test-id/analyze',
+      expect.objectContaining({ method: 'POST' })
+    );
   });
 });
