@@ -85,6 +85,7 @@ class Audit(Base):
     pages: Mapped[List["CrawlPage"]] = relationship("CrawlPage", back_populates="audit", cascade="all, delete-orphan")
     links: Mapped[List["CrawlLink"]] = relationship("CrawlLink", back_populates="audit", cascade="all, delete-orphan")
     sitemaps: Mapped[List["CrawlSitemap"]] = relationship("CrawlSitemap", back_populates="audit", cascade="all, delete-orphan")
+    renders: Mapped[List["CrawlPageRender"]] = relationship("CrawlPageRender", back_populates="audit", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_audits_status_created_at", "status", "created_at"),
@@ -145,6 +146,7 @@ class CrawlPage(Base):
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="pages")
     links: Mapped[List["CrawlLink"]] = relationship("CrawlLink", back_populates="source_page", cascade="all, delete-orphan")
+    render: Mapped[Optional["CrawlPageRender"]] = relationship("CrawlPageRender", back_populates="page", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_crawl_pages_audit_url", "audit_id", "requested_url", unique=True),
@@ -185,3 +187,49 @@ class CrawlSitemap(Base):
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="sitemaps")
+
+
+class CrawlPageRender(Base):
+    __tablename__ = "crawl_page_renders"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    crawl_page_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("crawl_pages.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True
+    )
+    audit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("audits.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    render_status: Mapped[str] = mapped_column(String(50), nullable=False, default="success", index=True)
+    render_strategy: Mapped[str] = mapped_column(String(50), nullable=False, default="HTTP_ONLY")
+    render_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    # Rendered DOM extraction
+    rendered_title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    rendered_meta_description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    rendered_canonical_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+    rendered_meta_robots: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    rendered_headings_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    rendered_image_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rendered_link_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Structured comparison and laboratory performance measurements
+    comparison_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    performance_metrics_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    # Screenshot paths
+    screenshot_desktop_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    screenshot_mobile_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rendered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    page: Mapped["CrawlPage"] = relationship("CrawlPage", back_populates="render")
+    audit: Mapped["Audit"] = relationship("Audit", back_populates="renders")

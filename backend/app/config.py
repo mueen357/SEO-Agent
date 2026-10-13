@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     default_max_pages_full: int = 50
     max_allowed_pages: int = 500
     idempotency_ttl_hours: int = 24
+    # Rendering & Browser settings (Phase 1.4B)
+    render_javascript_mode: str = "auto"
+    allow_public_rendering: bool = False
+    render_navigation_timeout_seconds: float = 20.0
+    render_total_timeout_seconds: float = 25.0
+    render_hydration_wait_seconds: float = 1.5
+    render_max_dom_size_bytes: int = 5 * 1024 * 1024
+    render_max_concurrent_contexts: int = 2
+    enable_screenshots: bool = False
+    screenshot_storage_dir: str = "./storage/screenshots"
+
 
 
 @lru_cache

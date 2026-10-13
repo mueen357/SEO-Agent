@@ -155,8 +155,11 @@ export interface AuditCancelResponse {
 export interface AuditPagesResponse {
   audit_id: string;
   total: number;
-  pages: unknown[];
-  message: string;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+  pages: CrawlPageItem[];
+  message?: string | null;
 }
 
 export interface AuditIssuesResponse {
@@ -200,6 +203,7 @@ export interface CrawlPageItem {
   content_hash: string | null;
   error_message: string | null;
   fetched_at: string;
+  render?: CrawlPageRenderItem | null;
 }
 
 export interface CrawlPagesListResponse {
@@ -232,4 +236,48 @@ export interface AuditStartResponse {
   message: string;
   audit_id: string;
   status: string;
+}
+
+export interface CrawlPageRenderItem {
+  id: string;
+  crawl_page_id: string;
+  audit_id: string;
+  render_status: 'success' | 'failed' | 'skipped' | 'unavailable';
+  render_strategy: 'HTTP_ONLY' | 'RENDER_RECOMMENDED' | 'RENDER_REQUIRED' | 'RENDER_UNAVAILABLE';
+  render_reason?: string | null;
+  evidence_json?: Record<string, any>;
+  rendered_title?: string | null;
+  rendered_meta_description?: string | null;
+  rendered_canonical_url?: string | null;
+  rendered_meta_robots?: string | null;
+  rendered_headings_json?: Record<string, any>;
+  rendered_image_count: number;
+  rendered_link_count: number;
+  comparison_json?: {
+    title_changed?: boolean;
+    raw_title?: string;
+    rendered_title?: string;
+    meta_description_changed?: boolean;
+    canonical_changed?: boolean;
+    h1_changed?: boolean;
+    headings_added_count?: number;
+    images_added_count?: number;
+    links_added_count?: number;
+    rendered_reveals_more_content?: boolean;
+    summary?: string;
+  };
+  performance_metrics_json?: {
+    is_lab_measurement?: boolean;
+    navigation_duration_ms?: number | null;
+    dom_content_loaded_ms?: number | null;
+    load_event_ms?: number | null;
+    dom_interactive_ms?: number | null;
+    response_time_ms?: number | null;
+    resource_count?: number;
+    transfer_size_bytes?: number;
+  };
+  screenshot_desktop_path?: string | null;
+  screenshot_mobile_path?: string | null;
+  error_message?: string | null;
+  rendered_at: string;
 }

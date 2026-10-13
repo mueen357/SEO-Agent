@@ -87,3 +87,20 @@
   8. **API Endpoints:** Implemented `POST /api/v1/audits/{id}/start`, updated `GET /api/v1/audits/{id}/pages`, added `GET /api/v1/audits/{id}/sitemaps`.
   9. **Automated Testing:** 54 backend tests + 24 frontend tests passing (100% pass rate).
   10. **Live Smoke Test:** Verified against `https://example.com` (1 page crawled, HTTP 200, Title='Example Domain', status='completed').
+
+---
+
+### Task 1.4B — Secure JavaScript Rendering, Dynamic Website Extraction, Chrome Extension Integration, and End-to-End Audit Verification
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-13
+- **Completed Components:**
+  1. **Playwright Renderer Architecture:** Dedicated rendering module (`app/renderer/`) featuring `BrowserManager` (Chromium lifecycle, process pool, concurrency semaphores, crash recovery), `PageRenderer` (DOM capture, hydration wait, bounded timeouts), and `ResourcePolicy`.
+  2. **Browser Network Security & SSRF Defense:** Custom asynchronous forward HTTP and CONNECT proxy (`ValidatingEgressProxy`) checking destination IPs with `is_public_ip` (blocking loopback, RFC 1918, link-local, cloud metadata `169.254.169.254`, and non-80/443 ports). Enforced TLS certificate validation (`ignore_https_errors=False`), disabled downloads, blocked service workers, and secondary DevTools route filtering.
+  3. **Honest Host Security Posture:** On uncontained Windows environments, public-site dynamic rendering is disabled by default (`allow_public_rendering = False`), reporting `RENDER_UNAVAILABLE` with clear explanation of network container requirements, while preserving full HTTP-only crawling and offline fixture rendering.
+  4. **Smart JavaScript Detection:** Configurable heuristics (`RenderDetector`) identifying empty SPA roots (`#root`, `#app`, `#__next`), placeholders, and SSR discrimination (>250 chars body text evaluated as `HTTP_ONLY`).
+  5. **Raw vs Rendered Analysis:** Dedicated comparison engine (`RawVsRenderedComparator`) diffing titles, meta descriptions, canonical URLs, robots directives, headings, images, and links without overwriting raw HTTP evidence.
+  6. **Lab Performance Metrics & Screenshots:** Non-fabricated laboratory timings (`DOMContentLoaded`, `loadEvent`, duration, resource count) and optional desktop/mobile screenshots with UUID-safe paths and Git-ignored storage.
+  7. **Database Persistence & Migrations:** Reversible Alembic migration `0003_add_page_render_tables.py` introducing `crawl_page_renders` table linked to `crawl_pages` and `audits`.
+  8. **Worker Lifecycle Integration:** Decoupled 15-second background heartbeat loop (`_heartbeat_loop()`) keeping 60-second database worker leases alive during multi-page rendering cycles.
+  9. **Chrome Extension Side Panel Integration:** Enhanced side panel with mode toggle ("Quick Page Audit" vs "Full Website Audit"), live 2.5-second polling loop, cancellation support, paginated crawled pages table, and detailed page inspection modal with raw vs rendered diffs and lab metrics.
+  10. **Comprehensive Verification:** 71 backend pytest tests (100% pass), 31 frontend vitest tests (100% pass), 0 TypeScript errors, and successful WXT Manifest V3 production build.

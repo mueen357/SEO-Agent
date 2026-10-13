@@ -166,9 +166,14 @@ export async function cancelAudit(
  */
 export async function getAuditPages(
   auditId: string,
+  page: number = 1,
+  pageSize: number = 20,
   baseUrl: string = DEFAULT_API_BASE
 ): Promise<AuditPagesResponse> {
-  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/pages`, {
+  const url = new URL(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/pages`);
+  url.searchParams.set('page', String(page));
+  url.searchParams.set('page_size', String(pageSize));
+  const response = await fetch(url.toString(), {
     method: 'GET',
     headers: { 'Accept': 'application/json' },
   });

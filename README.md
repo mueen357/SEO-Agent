@@ -38,6 +38,14 @@ A production-oriented, AI-powered website audit system delivered through a Googl
 
 ---
 
+### Dynamic Rendering Subsystem & Extension Dashboard (Phase 1.4B)
+- **Headless Chromium Renderer (`backend/app/renderer/`):** Controlled Playwright process manager with context-level concurrency limiting, hydration waiting, and process crash recovery.
+- **Validating Egress Proxy:** Custom asynchronous forward proxy (`ValidatingEgressProxy`) performing socket-level IP destination verification against `is_public_ip()` to block SSRF (loopback, RFC 1918, link-local, cloud metadata `169.254.169.254`, and non-standard ports).
+- **Dynamic Detection Heuristics:** `RenderDetector` evaluating empty SPA containers (`#root`, `#app`, `#__next`) and placeholders vs. server-side rendered content.
+- **Raw vs. Rendered Comparison:** Dedicated comparator diffing titles, meta descriptions, canonical URLs, robots directives, headings, images, and links while preserving raw HTTP evidence.
+- **Laboratory Performance Metrics & Screenshots:** Non-fabricated laboratory timings (`DOMContentLoaded`, `loadEvent`, duration) and optional viewport screenshots (desktop/mobile) with UUID-safe paths and Git-ignored storage.
+- **Full Website Audit Side Panel:** Chrome extension side panel mode supporting live 2.5s polling, cancellation, paginated crawled pages, and detailed page inspection modal with raw vs rendered diffs.
+
 ## 2. Directory Structure
 
 ```

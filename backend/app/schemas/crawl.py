@@ -6,6 +6,31 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class CrawlPageRenderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    crawl_page_id: uuid.UUID
+    audit_id: uuid.UUID
+    render_status: str
+    render_strategy: str
+    render_reason: Optional[str] = None
+    evidence_json: Dict[str, Any] = Field(default_factory=dict)
+    rendered_title: Optional[str] = None
+    rendered_meta_description: Optional[str] = None
+    rendered_canonical_url: Optional[str] = None
+    rendered_meta_robots: Optional[str] = None
+    rendered_headings_json: Dict[str, Any] = Field(default_factory=dict)
+    rendered_image_count: int = 0
+    rendered_link_count: int = 0
+    comparison_json: Dict[str, Any] = Field(default_factory=dict)
+    performance_metrics_json: Dict[str, Any] = Field(default_factory=dict)
+    screenshot_desktop_path: Optional[str] = None
+    screenshot_mobile_path: Optional[str] = None
+    error_message: Optional[str] = None
+    rendered_at: datetime
+
+
 class CrawlPageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -33,6 +58,7 @@ class CrawlPageResponse(BaseModel):
     content_hash: Optional[str] = None
     error_message: Optional[str] = None
     fetched_at: datetime
+    render: Optional[CrawlPageRenderResponse] = None
 
 
 class CrawlPagesListResponse(BaseModel):

@@ -1,18 +1,20 @@
-"""Repository handling persistence of crawled pages, links, sitemaps, and worker job leases."""
+"""Repository for persistent crawl page, link, sitemap records, and worker leases."""
 
-from datetime import datetime, timezone, timedelta
-import math
+from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
-
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.database.models import Audit, AuditStatus, CrawlLink, CrawlPage, CrawlSitemap
+from app.database.models import Audit, AuditStatus, CrawlLink, CrawlPage, CrawlPageRender, CrawlSitemap
+
+logger = logging.getLogger("crawl_repository")
 
 
 class CrawlRepository:
-    """Database persistence repository for crawler data and worker leasing."""
+    """Handles database persistence for discovered pages, links, sitemaps, renders, and worker state."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -23,10 +25,13 @@ class CrawlRepository:
         page_data: Dict[str, Any],
         links_data: List[Dict[str, Any]],
     ) -> CrawlPage:
-        """Persist a single CrawlPage and its discovered CrawlLinks atomically."""
+        """Persist a CrawlPage record and its discovered links."""
         if isinstance(audit_id, str):
             audit_id = uuid.UUID(audit_id)
-        page_id = uuid.uuid4()
+        page_id = page_data.get("id") or uuid.uuid4()
+        if isinstance(page_id, str):
+            page_id = uuid.UUID(page_id)
+
         page = CrawlPage(
             id=page_id,
             audit_id=audit_id,
@@ -37,7 +42,7 @@ class CrawlRepository:
             http_status=page_data.get("http_status"),
             content_type=page_data.get("content_type"),
             response_time_ms=page_data.get("response_time_ms", 0),
-            redirect_chain_json=page_data.get("redirect_chain_json"),
+            redirect_chain_json=page_data.get("redirect_chain_json", []),
             title=page_data.get("title"),
             meta_description=page_data.get("meta_description"),
             canonical_url=page_data.get("canonical_url"),
@@ -72,6 +77,49 @@ class CrawlRepository:
         await self.session.refresh(page)
         return page
 
+    async def save_page_render(
+        self,
+        audit_id: uuid.UUID,
+        crawl_page_id: uuid.UUID,
+        render_data: Dict[str, Any],
+    ) -> CrawlPageRender:
+        """Persist a CrawlPageRender record associated with a CrawlPage."""
+        if isinstance(audit_id, str):
+            audit_id = uuid.UUID(audit_id)
+        if isinstance(crawl_page_id, str):
+            crawl_page_id = uuid.UUID(crawl_page_id)
+
+        render_id = render_data.get("id") or uuid.uuid4()
+        if isinstance(render_id, str):
+            render_id = uuid.UUID(render_id)
+
+        render = CrawlPageRender(
+            id=render_id,
+            crawl_page_id=crawl_page_id,
+            audit_id=audit_id,
+            render_status=render_data.get("render_status", "success"),
+            render_strategy=render_data.get("render_strategy", "HTTP_ONLY"),
+            render_reason=render_data.get("render_reason"),
+            evidence_json=render_data.get("evidence_json", {}),
+            rendered_title=render_data.get("rendered_title"),
+            rendered_meta_description=render_data.get("rendered_meta_description"),
+            rendered_canonical_url=render_data.get("rendered_canonical_url"),
+            rendered_meta_robots=render_data.get("rendered_meta_robots"),
+            rendered_headings_json=render_data.get("rendered_headings_json", {}),
+            rendered_image_count=render_data.get("rendered_image_count", 0),
+            rendered_link_count=render_data.get("rendered_link_count", 0),
+            comparison_json=render_data.get("comparison_json", {}),
+            performance_metrics_json=render_data.get("performance_metrics_json", {}),
+            screenshot_desktop_path=render_data.get("screenshot_desktop_path"),
+            screenshot_mobile_path=render_data.get("screenshot_mobile_path"),
+            error_message=render_data.get("error_message"),
+            rendered_at=render_data.get("rendered_at", datetime.now(timezone.utc)),
+        )
+        self.session.add(render)
+        await self.session.commit()
+        await self.session.refresh(render)
+        return render
+
     async def save_sitemap(
         self,
         audit_id: uuid.UUID,
@@ -100,7 +148,7 @@ class CrawlRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[CrawlPage], int]:
-        """Query crawled pages for an audit with pagination."""
+        """Query crawled pages for an audit with pagination and eagerly loaded render relationships."""
         if isinstance(audit_id, str):
             audit_id = uuid.UUID(audit_id)
         offset = (page - 1) * page_size
@@ -111,6 +159,7 @@ class CrawlRepository:
 
         stmt = (
             select(CrawlPage)
+            .options(selectinload(CrawlPage.render))
             .where(CrawlPage.audit_id == audit_id)
             .order_by(CrawlPage.fetched_at.asc())
             .offset(offset)
@@ -142,7 +191,6 @@ class CrawlRepository:
         now = datetime.now(timezone.utc)
         lease_expiration = now + timedelta(seconds=lease_seconds)
 
-        # 1. Look for queued jobs, or crawling jobs whose lease has expired
         stmt = (
             select(Audit)
             .where(
@@ -184,6 +232,8 @@ class CrawlRepository:
         pages_discovered: Optional[int] = None,
     ) -> bool:
         """Renew job lease and persist progress. Returns False if job was cancelled or stolen."""
+        if isinstance(audit_id, str):
+            audit_id = uuid.UUID(audit_id)
         now = datetime.now(timezone.utc)
         stmt = select(Audit).where(Audit.id == audit_id)
         result = await self.session.execute(stmt)
@@ -214,6 +264,8 @@ class CrawlRepository:
 
     async def is_cancelled(self, audit_id: uuid.UUID) -> bool:
         """Check whether the audit was cancelled by the user."""
+        if isinstance(audit_id, str):
+            audit_id = uuid.UUID(audit_id)
         stmt = select(Audit.status).where(Audit.id == audit_id)
         result = await self.session.execute(stmt)
         status = result.scalar_one_or_none()
@@ -228,6 +280,8 @@ class CrawlRepository:
         error_message: Optional[str] = None,
     ) -> bool:
         """Complete or fail a job, ensuring cancelled jobs are not overwritten as completed."""
+        if isinstance(audit_id, str):
+            audit_id = uuid.UUID(audit_id)
         stmt = select(Audit).where(Audit.id == audit_id)
         result = await self.session.execute(stmt)
         audit = result.scalar_one_or_none()

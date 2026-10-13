@@ -1,12 +1,12 @@
-﻿import React, { useEffect, useState, useCallback } from 'react';
-import { Play, Sparkles, PanelRightOpen, Lock, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Play, Sparkles, PanelRightOpen, Lock, ShieldCheck, AlertCircle, RefreshCw, Globe } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { BackendIndicator } from '../../components/common/BackendIndicator';
 import { Badge } from '../../components/common/Badge';
 import { getActiveTab } from '../../services/tab';
-import { checkBackendHealth } from '../../services/api';
+import { checkBackendHealth, createAudit, startAudit } from '../../services/api';
 import { runQuickAudit } from '../../services/auditRunner';
-import { getAuditResultForUrl } from '../../services/storage';
+import { getAuditResultForUrl, saveActiveFullAuditId } from '../../services/storage';
 import type { ActiveTabInfo, QuickAuditResult, BackendHealthResponse } from '../../types/audit';
 
 export default function App() {
@@ -15,9 +15,9 @@ export default function App() {
   const [healthLoading, setHealthLoading] = useState(false);
   const [audit, setAudit] = useState<QuickAuditResult | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
+  const [isFullAuditing, setIsFullAuditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize active tab and health
   const refreshTab = useCallback(async () => {
     setError(null);
     const activeTab = await getActiveTab();
@@ -41,204 +41,209 @@ export default function App() {
   useEffect(() => {
     refreshTab();
     refreshHealth();
-
-    // Listen for tab activation / update changes
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const handleActivated = () => refreshTab();
-      const handleUpdated = (_tabId: number, changeInfo: { status?: string; url?: string }) => {
-        if (changeInfo.status === 'complete' || changeInfo.url) {
-          refreshTab();
-        }
-      };
-
-      chrome.tabs.onActivated.addListener(handleActivated);
-      chrome.tabs.onUpdated.addListener(handleUpdated);
-
-      return () => {
-        chrome.tabs.onActivated.removeListener(handleActivated);
-        chrome.tabs.onUpdated.removeListener(handleUpdated);
-      };
-    }
   }, [refreshTab, refreshHealth]);
 
-  // Execute Quick Audit
-  const handleQuickAudit = async () => {
-    if (!tab?.id || !tab?.url || !tab.isAuditable) return;
+  const handleRunQuickAudit = async () => {
+    if (!tab?.id || !tab.url || !tab.isAuditable) {
+      setError(tab?.unsupportedReason || 'Active tab cannot be audited.');
+      return;
+    }
+
     setIsAuditing(true);
     setError(null);
-
     try {
-      const result = await runQuickAudit(tab.id, tab.url);
-      setAudit(result);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const res = await runQuickAudit(tab.id, tab.url);
+      setAudit(res);
+    } catch (err: any) {
+      setError(err?.message || 'Audit failed to execute on current page.');
     } finally {
       setIsAuditing(false);
     }
   };
 
-  // Open Side Panel
-  const handleOpenSidePanel = async () => {
-    if (typeof chrome !== 'undefined') {
-      try {
-        const currentWindow = await chrome.windows.getCurrent();
-        if (chrome.sidePanel && currentWindow.id) {
-          await chrome.sidePanel.open({ windowId: currentWindow.id });
-          window.close(); // Close popup once side panel opens
-          return;
+  const handleStartFullAudit = async () => {
+    if (!tab?.url || !tab.isAuditable) {
+      setError('Active tab cannot be audited.');
+      return;
+    }
+    if (health?.status !== 'ok') {
+      setError('FastAPI backend service is offline. Please start backend at 127.0.0.1:8000.');
+      return;
+    }
+
+    setIsFullAuditing(true);
+    setError(null);
+
+    try {
+      const created = await createAudit({
+        target_url: tab.url,
+        mode: 'full',
+        configuration: { max_pages: 50, render_javascript: 'auto' },
+      });
+      await startAudit(created.id);
+      await saveActiveFullAuditId(created.id);
+
+      // Open side panel
+      handleOpenSidePanel();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to start full website audit.');
+    } finally {
+      setIsFullAuditing(false);
+    }
+  };
+
+  const handleOpenSidePanel = () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.sidePanel) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.sidePanel.open({ tabId: tabs[0].id }).catch((err) => {
+            console.warn('Failed to open sidepanel from popup:', err);
+          });
         }
-      } catch {
-        // Fallback message to background script
-        chrome.runtime.sendMessage({
-          action: 'OPEN_SIDE_PANEL',
-          payload: { windowId: tab?.id }
-        });
-      }
+      });
     }
   };
 
   return (
-    <div className="flex flex-col w-[380px] min-h-[520px] bg-slate-950 text-slate-100 antialiased font-sans">
-      {/* Header with active website detection */}
-      <Header
-        tab={tab}
-        onOpenSidePanel={handleOpenSidePanel}
-        showSidePanelButton={true}
+    <div className="w-[380px] bg-slate-950 text-slate-100 p-4 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950 flex flex-col space-y-4">
+      {/* Header & Detected Tab */}
+      <Header tab={tab} />
+
+      {/* Backend Status & Health */}
+      <BackendIndicator
+        health={health}
+        loading={healthLoading}
+        onRefresh={refreshHealth}
       />
 
-      {/* Main Content Area */}
-      <div className="flex-1 p-4 space-y-4">
-        {/* Backend Connectivity Indicator */}
-        <BackendIndicator
-          health={health}
-          loading={healthLoading}
-          onRefresh={refreshHealth}
-        />
+      {/* Error Banner */}
+      {error && (
+        <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 flex items-start space-x-2 text-xs text-rose-300">
+          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
 
-        {/* Action Buttons Group */}
-        <div className="space-y-2">
-          {/* 1. Quick Audit Button */}
-          <button
-            onClick={handleQuickAudit}
-            disabled={!tab?.isAuditable || isAuditing}
-            className={`w-full py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 font-semibold text-xs shadow-lg transition-all ${
-              !tab?.isAuditable
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
-                : isAuditing
-                ? 'bg-cyan-600/80 text-white cursor-wait animate-pulse'
-                : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white shadow-cyan-500/20 active:scale-[0.99]'
-            }`}
-          >
-            {isAuditing ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Auditing Page Structure...</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4 fill-white" />
-                <span>Quick Audit</span>
-              </>
-            )}
-          </button>
-
-          {/* 2. Full Website Audit (Disabled / Coming soon) */}
-          <button
-            disabled
-            className="w-full py-2.5 px-4 rounded-xl flex items-center justify-between text-xs font-medium bg-slate-900/60 text-slate-500 border border-slate-800/80 cursor-not-allowed"
-          >
-            <div className="flex items-center space-x-2">
-              <Sparkles className="w-4 h-4 text-slate-600" />
-              <span>Full Website Audit</span>
+      {/* Tier 1: Quick Page Audit (Functional) */}
+      <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400">
+              <Sparkles className="w-4 h-4" />
             </div>
-            <span className="text-[10px] text-slate-600 font-mono">Phase 2</span>
-          </button>
-
-          {/* 3. Verified Owner Audit (Disabled / Coming soon) */}
-          <button
-            disabled
-            className="w-full py-2.5 px-4 rounded-xl flex items-center justify-between text-xs font-medium bg-slate-900/60 text-slate-500 border border-slate-800/80 cursor-not-allowed"
-          >
-            <div className="flex items-center space-x-2">
-              <ShieldCheck className="w-4 h-4 text-slate-600" />
-              <span>Verified Owner Audit</span>
+            <div>
+              <h3 className="text-xs font-semibold text-slate-100">Quick Page Audit</h3>
+              <p className="text-[11px] text-slate-400">Instant DOM analysis (Client-Side)</p>
             </div>
-            <span className="text-[10px] text-slate-600 font-mono">Phase 3</span>
-          </button>
-
-          {/* 4. Open Side Panel Button */}
-          <button
-            onClick={handleOpenSidePanel}
-            className="w-full py-2.5 px-4 rounded-xl flex items-center justify-center space-x-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800/90 text-cyan-300 border border-cyan-500/30 hover:border-cyan-500/50 transition-colors"
-          >
-            <PanelRightOpen className="w-4 h-4 text-cyan-400" />
-            <span>Open Side Panel Dashboard</span>
-          </button>
+          </div>
+          <Badge variant="info">Ready</Badge>
         </div>
 
-        {/* Error State */}
-        {error && (
-          <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-900/60 flex items-start space-x-2 text-xs text-rose-300">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {/* Quick Audit Summary Card (If audit exists) */}
         {audit && (
-          <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                <span className="text-xs font-semibold text-slate-200">Quick Page Audit</span>
-              </div>
-              <span className="text-[10px] text-slate-400 font-mono">
-                {new Date(audit.timestamp).toLocaleTimeString()}
-              </span>
+          <div className="grid grid-cols-3 gap-2 py-2 px-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80 text-center text-xs">
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase block">Headings</span>
+              <span className="font-semibold text-slate-200">{audit.headings.totalCount}</span>
             </div>
-
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="p-2 rounded bg-slate-950 border border-slate-800/60">
-                <span className="text-[10px] text-slate-400">Headings</span>
-                <div className="text-sm font-bold text-slate-200">{audit.headings.totalCount}</div>
-              </div>
-              <div className="p-2 rounded bg-slate-950 border border-slate-800/60">
-                <span className="text-[10px] text-slate-400">Images</span>
-                <div className="text-sm font-bold text-slate-200">{audit.images.totalCount}</div>
-              </div>
-              <div className="p-2 rounded bg-slate-950 border border-slate-800/60">
-                <span className="text-[10px] text-slate-400">Links</span>
-                <div className="text-sm font-bold text-slate-200">{audit.links.totalCount}</div>
-              </div>
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase block">Images</span>
+              <span className="font-semibold text-slate-200">{audit.images.totalCount}</span>
             </div>
-
-            <div className="text-center pt-1">
-              <button
-                onClick={handleOpenSidePanel}
-                className="text-xs text-cyan-400 hover:text-cyan-300 font-medium underline-offset-2 hover:underline"
-              >
-                View full breakdown in side panel &rarr;
-              </button>
+            <div>
+              <span className="text-[10px] text-slate-500 uppercase block">Links</span>
+              <span className="font-semibold text-slate-200">{audit.links.totalCount}</span>
             </div>
           </div>
         )}
 
-        {/* Empty State when no audit has been run */}
-        {!audit && !isAuditing && tab?.isAuditable && (
-          <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/60 text-center space-y-1 text-xs text-slate-400">
-            <p className="font-medium text-slate-300">No audit run yet for this tab.</p>
-            <p className="text-[11px] text-slate-500">
-              Click &quot;Run Quick Page Audit&quot; to inspect title, metadata, headings, images, and links.
-            </p>
-          </div>
-        )}
+        <button
+          onClick={handleRunQuickAudit}
+          disabled={isAuditing || !tab?.isAuditable}
+          className={`w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg text-xs font-semibold transition-all shadow-md ${
+            !tab?.isAuditable
+              ? 'bg-slate-800 text-slate-500 cursor-not-allowed shadow-none'
+              : isAuditing
+              ? 'bg-cyan-500/50 text-slate-950 cursor-wait'
+              : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-cyan-500/20 active:scale-[0.98]'
+          }`}
+        >
+          {isAuditing ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              <span>Analyzing DOM...</span>
+            </>
+          ) : (
+            <>
+              <Play className="w-4 h-4 fill-current" />
+              <span>{audit ? 'Re-run Quick Audit' : 'Run Quick Page Audit'}</span>
+            </>
+          )}
+        </button>
       </div>
 
+      {/* Tier 2: Full Website Audit (FastAPI Crawler) */}
+      <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
+              <Globe className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold text-slate-100">Full Website Audit</h3>
+              <p className="text-[11px] text-slate-400">HTTP crawler & dynamic rendering</p>
+            </div>
+          </div>
+          <Badge variant={health?.status === 'ok' ? 'success' : 'neutral'}>
+            {health?.status === 'ok' ? 'Online' : 'Offline'}
+          </Badge>
+        </div>
+
+        <button
+          onClick={handleStartFullAudit}
+          disabled={isFullAuditing || health?.status !== 'ok' || !tab?.isAuditable}
+          className={`w-full flex items-center justify-center space-x-2 py-2 px-3 rounded-lg text-xs font-medium border transition-all ${
+            health?.status === 'ok' && tab?.isAuditable
+              ? 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border-indigo-500/30'
+              : 'bg-slate-850 text-slate-600 border-slate-800 cursor-not-allowed'
+          }`}
+        >
+          <Play className="w-3.5 h-3.5 fill-current" />
+          <span>{isFullAuditing ? 'Starting Audit...' : 'Start Full Audit (Max 50 Pages)'}</span>
+        </button>
+      </div>
+
+      {/* Tier 3: Verified Owner Audit (Upcoming) */}
+      <div className="p-3.5 rounded-xl bg-slate-900/40 border border-slate-800/60 opacity-60 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="p-1.5 rounded-lg bg-slate-800 text-slate-400">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold text-slate-300">Verified Owner Audit</h3>
+              <p className="text-[11px] text-slate-500">Google Search Console & DNS auth</p>
+            </div>
+          </div>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+            Phase 2
+          </span>
+        </div>
+      </div>
+
+      {/* Open Comprehensive Side Panel Shortcut */}
+      <button
+        onClick={handleOpenSidePanel}
+        className="w-full flex items-center justify-center space-x-2 py-2 px-3 rounded-lg text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 transition-colors"
+      >
+        <PanelRightOpen className="w-4 h-4 text-cyan-400" />
+        <span>Open Audit Dashboard in Side Panel</span>
+      </button>
+
       {/* Footer */}
-      <footer className="px-4 py-2.5 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-        <span>Website Audit Agent v0.1.0</span>
-        <span className="font-mono text-cyan-500/80">Phase 1 &bull; Task 1.2</span>
-      </footer>
+      <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500">
+        <span>SiteAudit AI</span>
+        <span className="font-mono text-cyan-500/80">Phase 1 &bull; MVP</span>
+      </div>
     </div>
   );
 }

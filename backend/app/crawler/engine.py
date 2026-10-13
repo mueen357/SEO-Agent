@@ -124,7 +124,8 @@ class CrawlEngine:
                         "fetch_status": "robots_blocked",
                         "http_status": None,
                         "error_message": "Disallowed by robots.txt",
-                        "fetched_at": datetime.now(timezone.utc),
+                        "raw_html": fetch_res.body.decode("utf-8", errors="replace") if fetch_res.body else "",
+                "fetched_at": datetime.now(timezone.utc),
                     }, [])
                 continue
 
@@ -185,6 +186,7 @@ class CrawlEngine:
                 "external_link_count": parsed.external_link_count,
                 "content_hash": parsed.content_hash,
                 "error_message": fetch_res.error_message,
+                "raw_html": fetch_res.body.decode("utf-8", errors="replace") if fetch_res.body else "",
                 "fetched_at": datetime.now(timezone.utc),
             }
 

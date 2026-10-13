@@ -66,3 +66,32 @@ export async function clearAudits(): Promise<void> {
     // Ignored
   }
 }
+const ACTIVE_FULL_AUDIT_KEY = 'website_audit_active_full_id';
+
+export async function saveActiveFullAuditId(auditId: string): Promise<void> {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+  try {
+    await chrome.storage.local.set({ [ACTIVE_FULL_AUDIT_KEY]: auditId });
+  } catch (err) {
+    console.warn('Failed to save active full audit ID:', err);
+  }
+}
+
+export async function getActiveFullAuditId(): Promise<string | null> {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) return null;
+  try {
+    const data = await chrome.storage.local.get(ACTIVE_FULL_AUDIT_KEY);
+    return (data[ACTIVE_FULL_AUDIT_KEY] as string) || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearActiveFullAuditId(): Promise<void> {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+  try {
+    await chrome.storage.local.remove(ACTIVE_FULL_AUDIT_KEY);
+  } catch {
+    // Ignored
+  }
+}
