@@ -132,6 +132,8 @@ class ScoringEngine:
         max_pages_limit: int = 50,
         has_renders: bool = False,
         audit_mode: str = "full",
+        seed_url: Optional[str] = None,
+        seed_final_url: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """Compute complete scorecard and prioritized remediation items for an audit."""
         # 1. Coverage & state analysis
@@ -249,7 +251,12 @@ class ScoringEngine:
 
         # 8. Group findings and prioritize remediation items
         grouped_items = group_findings_by_rule_and_cause(evaluations)
-        priority_items = compute_priority_items(grouped_items, total_pages=total_pages)
+        priority_items = compute_priority_items(
+            grouped_items,
+            total_pages=total_pages,
+            seed_url=seed_url,
+            seed_final_url=seed_final_url,
+        )
 
         # Attach audit_id to each priority item
         for p in priority_items:
