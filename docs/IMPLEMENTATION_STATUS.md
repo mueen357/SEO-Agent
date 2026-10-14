@@ -266,3 +266,38 @@
      - 45 frontend vitest tests passing (100% pass rate).
      - 0 TypeScript compilation errors (`tsc --noEmit`).
      - Successful extension production build (`wxt build`).
+
+
+---
+
+### Task 2.4B — Scoring Accuracy Corrections, Release Verification, and Continuous GitHub Synchronization
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-14
+- **Working Branch:** `fix/phase2-4-scoring-accuracy` (synced to remote `origin/fix/phase2-4-scoring-accuracy`)
+- **Completed Components:**
+  1. **Corrected Unknown Evidence Handling & Formula:**
+     - Eliminated flawed 0.00 multiplier penalty for `unknown` assessments. Missing evidence is not an observed failure.
+     - Implemented exact formula:
+       $$\text{RuleScore} = 100 \times \frac{\text{pass} \times 1.0 + \text{warning} \times 0.5 + \text{fail} \times 0.0}{\text{known\_applicable\_count}}$$
+     - If $\text{known\_applicable\_count} == 0$, $\text{RuleScore} = \text{null}$. Never assigns 100 to rules with zero known observations.
+     - Unknown assessments correctly reduce evidence coverage ratio and confidence without penalizing health score.
+  2. **Provisional Category Scoring & Disclosure:**
+     - Category scores only aggregate rules with non-null scores.
+     - When categories are missing (e.g., Technical family not executed), overall score is calculated as a provisional partial score with normalized effective weights and explicit disclosure of included/missing categories.
+  3. **Priority Engine Hardening:**
+     - Excluded `unknown` assessments from remediation item grouping, ensuring inconclusive assessments never become false-positive P0/P1 blockers.
+     - Enforced strictly deterministic 6-tier tie-breaking: `(tier, -impact, -page_count, title, rule_id, group_fingerprint)`.
+  4. **Near-Duplicate Clustering Performance & Safety Bounds:**
+     - Bounded Bron-Kerbosch maximal clique enumeration with hard 10,000 recursion limit (`MAX_BRON_KERBOSCH_STEPS = 10_000`).
+     - Added disjoint clique selection to prevent overlapping cliques from double-counting affected pages or inflating priorities.
+     - Benchmark on 500 simulated crawl pages executes in <0.15s (well below 2.0s limit).
+  5. **Deterministic Mathematical Regression Suite (`backend/tests/test_scoring_mathematical_regressions.py`):**
+     - 19 exact-value regression tests covering scenarios A through S (5 passes/5 unknowns, partial crawl, missing categories, row reordering determinism, idempotency, mixed weights).
+  6. **Chrome Dashboard Component Tests (`extension/tests/seoHealthDashboard.test.tsx`):**
+     - 11 component-level tests verifying null scores, not-analyzed state, provisional/stale badges, formula popup, priority filtering, recalculation, backend offline state, and 360px viewport rendering.
+  7. **Comprehensive Verification Metrics:**
+     - 174 backend pytest tests passing (100% pass rate).
+     - 56 frontend vitest tests passing (100% pass rate).
+     - 0 TypeScript compilation errors (`tsc --noEmit`).
+     - Extension production build verified (`wxt build`).
+     - Continuous GitHub synchronization: Checkpoints 1, 2, 3, and 4 pushed and verified via `git ls-remote`.
