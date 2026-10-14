@@ -1,6 +1,6 @@
 """Rule registry for discovering and instantiating audit rules."""
 
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 from app.audit_engine.rules.base import BaseRule
 from app.audit_engine.rules.onpage import ALL_ONPAGE_RULES
@@ -44,6 +44,29 @@ class RuleRegistry:
 
     def get_sitewide_rules(self) -> List[BaseRule]:
         return [r for r in self._rules.values() if r.rule_id.startswith("SITE_") or r.is_sitewide]
+
+    def get_rule_scoring_family(self, rule_id: str) -> Optional[str]:
+        """Return the canonical scoring family for a rule ID."""
+        if rule_id.startswith("ONPAGE_"):
+            return "on_page"
+        if rule_id.startswith("TECH_"):
+            return "technical"
+        if rule_id.startswith("SITE_"):
+            return "sitewide"
+        rule = self._rules.get(rule_id)
+        if rule and getattr(rule, "is_sitewide", False):
+            return "sitewide"
+        return None
+
+    def get_rules_by_scoring_family(self, family: str) -> List[BaseRule]:
+        """Return all rules assigned to a canonical scoring family."""
+        if family == "on_page":
+            return self.get_onpage_rules()
+        if family == "technical":
+            return self.get_technical_rules()
+        if family == "sitewide":
+            return self.get_sitewide_rules()
+        return []
 
     def get_rules_by_category(self, category: str) -> List[BaseRule]:
         if category == "on_page":

@@ -9,6 +9,7 @@ from app.database.models import Audit, CrawlPage, CrawlPageRender, SeoIssue
 from app.repositories.scoring_repository import ScoringRepository
 from app.scoring.engine import ScoringEngine, compute_input_fingerprint
 from app.scoring.policy import DEFAULT_SCORING_POLICY, ScoringPolicy
+from app.scoring.rule_mapping import get_rule_scoring_family
 from app.services.issue_service import IssueService
 
 
@@ -62,6 +63,7 @@ class ScoringService:
             evaluations.append({
                 "rule_id": iss.rule_id,
                 "category": iss.category,
+                "scoring_family": get_rule_scoring_family(iss.rule_id) or "unknown",
                 "severity": iss.severity,
                 "status": iss.status,
                 "title": iss.title,

@@ -13,6 +13,7 @@ from app.scoring.explainability import generate_explanation
 from app.scoring.grouping import group_findings_by_rule_and_cause
 from app.scoring.policy import DEFAULT_SCORING_POLICY, ScoringPolicy
 from app.scoring.priorities import compute_priority_items
+from app.scoring.rule_mapping import get_rule_scoring_family
 
 
 def compute_input_fingerprint(
@@ -66,18 +67,22 @@ class ScoringEngine:
 
         input_fp = compute_input_fingerprint(evaluations, total_pages)
 
-        # 2. Group evaluations by category and rule_id
+        # 2. Group evaluations by authoritative scoring family and rule_id
         evals_by_cat_rule: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
             "on_page": {},
             "technical": {},
             "sitewide": {},
         }
+        unrecognized_rules: List[str] = []
         for e in evaluations:
-            cat = e.get("category", "on_page")
-            if cat not in evals_by_cat_rule:
-                evals_by_cat_rule[cat] = {}
             rid = e.get("rule_id", "UNKNOWN")
-            evals_by_cat_rule[cat].setdefault(rid, []).append(e)
+            fam = get_rule_scoring_family(rid)
+            if not fam:
+                fam = "unrecognized"
+                unrecognized_rules.append(rid)
+            if fam not in evals_by_cat_rule:
+                evals_by_cat_rule[fam] = {}
+            evals_by_cat_rule[fam].setdefault(rid, []).append(e)
 
         # 3. Calculate rule scores
         rule_scores_by_cat: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -126,6 +131,9 @@ class ScoringEngine:
             coverage_ratio=cov_report.coverage_ratio,
             policy=self.policy,
         )
+        if unrecognized_rules:
+            cov_report.details["unrecognized_rules"] = sorted(list(set(unrecognized_rules)))
+            explanation["unrecognized_rules"] = sorted(list(set(unrecognized_rules)))
 
         scorecard_data = {
             "audit_id": audit_id,
