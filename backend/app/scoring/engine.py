@@ -16,23 +16,103 @@ from app.scoring.priorities import compute_priority_items
 from app.scoring.rule_mapping import get_rule_scoring_family
 
 
+def canonicalize_evidence_dict(evidence: Any) -> str:
+    """Deterministically hash bounded evidence data without sensitive content leaks."""
+    if not isinstance(evidence, dict) or not evidence:
+        return "empty"
+    try:
+        raw = json.dumps(evidence, sort_keys=True, default=str, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    except Exception:
+        return "unhashable"
+
+
 def compute_input_fingerprint(
     evaluations: List[Dict[str, Any]],
     pages_count: int,
+    audit_id: Optional[Any] = None,
+    audit_status: str = "completed",
+    max_pages_limit: int = 50,
+    has_renders: bool = False,
+    policy: Optional[ScoringPolicy] = None,
+    page_evidence_summary: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    """Generate deterministic fingerprint of underlying evidence to detect score staleness."""
-    # Sort items deterministically by rule_id, status, and page_url
-    items_to_hash = []
+    """Generate a deterministic, versioned evidence fingerprint to detect score staleness.
+
+    Includes normalized:
+    - Audit scope, crawl state, and limits
+    - Assessment identities, versions, status, severity, and canonicalized evidence
+    - Scoring policy version, category weights, and status multipliers
+    - Registered rule-set identity
+    """
+    pol = policy or DEFAULT_SCORING_POLICY
+
+    # 1. Policy & Rule-Set Metadata
+    policy_spec = {
+        "version": getattr(pol, "version", "2.4.0"),
+        "category_weights": dict(sorted((pol.category_weights or {}).items())),
+        "severity_weights": dict(sorted((pol.severity_weights or {}).items())),
+        "status_multipliers": dict(sorted((pol.status_multipliers or {}).items())),
+    }
+
+    # 2. Scope & Crawl Metadata
+    scope_spec = {
+        "audit_id": str(audit_id) if audit_id else "global",
+        "pages_count": pages_count,
+        "audit_status": audit_status,
+        "max_pages_limit": max_pages_limit,
+        "has_renders": bool(has_renders),
+    }
+
+    # 3. Canonicalized Assessments (lexicographically sorted for order-invariance)
+    eval_tokens = []
     for e in evaluations:
-        items_to_hash.append((
-            e.get("rule_id", ""),
-            e.get("status", ""),
-            e.get("page_url", ""),
-            e.get("severity", ""),
-        ))
-    items_to_hash.sort()
-    raw = json.dumps({"pages": pages_count, "items": items_to_hash}, sort_keys=True)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:64]
+        rid = e.get("rule_id", "")
+        status = e.get("status", "")
+        sev = e.get("severity", "")
+        p_url = e.get("page_url", "")
+        fam = get_rule_scoring_family(rid) or e.get("category", "")
+        rule_ver = e.get("rule_version", "1.0.0")
+
+        # Canonicalize evidence dictionary
+        evid_hash = canonicalize_evidence_dict(e.get("evidence", {}))
+
+        eval_token = (
+            rid,
+            fam,
+            status,
+            sev,
+            p_url,
+            rule_ver,
+            evid_hash,
+        )
+        eval_tokens.append(eval_token)
+
+    # Sort deterministically for order-invariance
+    eval_tokens.sort()
+
+    # 4. Optional Page-level Fetch Evidence Summary
+    page_tokens = []
+    if page_evidence_summary:
+        for p in page_evidence_summary:
+            page_tokens.append((
+                p.get("url", ""),
+                str(p.get("http_status", "")),
+                p.get("fetch_status", ""),
+                p.get("final_url", ""),
+            ))
+        page_tokens.sort()
+
+    payload = {
+        "policy": policy_spec,
+        "scope": scope_spec,
+        "eval_count": len(eval_tokens),
+        "evaluations": eval_tokens,
+        "pages": page_tokens,
+    }
+
+    canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
 class ScoringEngine:
@@ -51,6 +131,7 @@ class ScoringEngine:
         audit_status: str = "completed",
         max_pages_limit: int = 50,
         has_renders: bool = False,
+        audit_mode: str = "full",
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """Compute complete scorecard and prioritized remediation items for an audit."""
         # 1. Coverage & state analysis
@@ -63,9 +144,18 @@ class ScoringEngine:
             max_pages_limit=max_pages_limit,
             has_renders=has_renders,
             policy=self.policy,
+            audit_mode=audit_mode,
         )
 
-        input_fp = compute_input_fingerprint(evaluations, total_pages)
+        input_fp = compute_input_fingerprint(
+            evaluations=evaluations,
+            pages_count=total_pages,
+            audit_id=audit_id,
+            audit_status=audit_status,
+            max_pages_limit=max_pages_limit,
+            has_renders=has_renders,
+            policy=self.policy,
+        )
 
         # 2. Group evaluations by authoritative scoring family and rule_id
         evals_by_cat_rule: Dict[str, Dict[str, List[Dict[str, Any]]]] = {

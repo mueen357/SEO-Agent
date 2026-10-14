@@ -92,7 +92,15 @@ class ScoringService:
 
         # Check idempotency: if scorecard exists and fingerprint matches current evidence
         existing_card = await self.repo.get_scorecard(audit_id)
-        current_fp = compute_input_fingerprint(evals, total_p)
+        current_fp = compute_input_fingerprint(
+            evaluations=evals,
+            pages_count=total_p,
+            audit_id=audit_id,
+            audit_status=audit.status,
+            max_pages_limit=audit.max_pages,
+            has_renders=has_renders,
+            policy=self.policy,
+        )
 
         if existing_card and not force:
             if existing_card.input_fingerprint == current_fp:
@@ -108,21 +116,30 @@ class ScoringService:
             audit_status=audit.status,
             max_pages_limit=audit.max_pages,
             has_renders=has_renders,
+            audit_mode=audit.mode or "full",
         )
 
         return await self.repo.save_scorecard(scorecard_data, priority_items)
 
     async def get_scorecard(self, audit_id: uuid.UUID) -> Any:
         """Fetch scorecard, auto-detecting staleness against latest evidence."""
-        await self.get_audit_or_404(audit_id)
+        audit = await self.get_audit_or_404(audit_id)
         card = await self.repo.get_scorecard(audit_id)
         if not card:
             # Auto-compute if missing
             return await self.compute_score(audit_id)
 
         # Check staleness
-        total_p, _, _, evals, _ = await self._gather_audit_evidence(audit_id)
-        current_fp = compute_input_fingerprint(evals, total_p)
+        total_p, _, _, evals, has_renders = await self._gather_audit_evidence(audit_id)
+        current_fp = compute_input_fingerprint(
+            evaluations=evals,
+            pages_count=total_p,
+            audit_id=audit_id,
+            audit_status=audit.status,
+            max_pages_limit=audit.max_pages,
+            has_renders=has_renders,
+            policy=self.policy,
+        )
         if card.input_fingerprint != current_fp and card.overall_state != "stale":
             card.overall_state = "stale"
             await self.db.commit()
