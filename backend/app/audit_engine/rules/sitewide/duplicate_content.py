@@ -234,7 +234,7 @@ class DuplicateNearContentRule(BaseRule):
                         if len(R) >= 2:
                             cliques.append(sorted(list(R)))
                         return
-                    pivot = next(iter(P | X))
+                    pivot = sorted(list(P | X))[0]
                     for v in sorted(list(P - adj[pivot])):
                         if step_limit_exceeded:
                             break
@@ -259,6 +259,35 @@ class DuplicateNearContentRule(BaseRule):
                         assigned_in_comp.update(unassigned_members)
 
         if not clusters:
+            if incomplete_analysis:
+                assessments.append(
+                    RuleAssessment(
+                        rule_id=self.rule_id,
+                        category=self.category,
+                        subcategory=self.subcategory,
+                        title="Near-duplicate analysis incomplete (safety limit exceeded)",
+                        description=(
+                            f"Candidate similarity graph complexity exceeded safety iteration bounds "
+                            f"({MAX_BRON_KERBOSCH_STEPS:,} steps) before consistent cliques could be fully resolved. "
+                            "Marked inconclusive to avoid false negative clean pass."
+                        ),
+                        severity="medium",
+                        status="unknown",
+                        evidence={
+                            "pages_evaluated": len(rep_pages),
+                            "safety_limit_hit": True,
+                            "incomplete_analysis": True,
+                            "reason": "graph_complexity_limit_exceeded",
+                        },
+                        recommendation="Review pages with high template or link density manually for near-duplicate content.",
+                        source_type="derived_from_crawl",
+                        confidence=0.5,
+                        documentation_url=self.documentation_url,
+                        fingerprint_key="site:incomplete_safety_limit",
+                    )
+                )
+                return assessments
+
             assessments.append(
                 RuleAssessment(
                     rule_id=self.rule_id,
@@ -282,7 +311,7 @@ class DuplicateNearContentRule(BaseRule):
             urls = [p.final_url or p.requested_url for p in cluster]
             root_url = sorted(urls)[0]
             group_key = f"near:{hashlib.sha256(root_url.encode()).hexdigest()[:16]}"
-            desc_suffix = " (Candidate analysis reached safety iteration bound)." if safety_limit_hit else ""
+            desc_suffix = " (Candidate analysis reached safety iteration bound; additional clusters may be unresolved)." if safety_limit_hit else ""
 
             assessments.append(
                 RuleAssessment(
