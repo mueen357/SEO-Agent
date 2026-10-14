@@ -27,29 +27,33 @@ def calculate_rule_score(
     sev_weight = policy.severity_weights.get(default_severity, 0.5)
 
     if not is_sitewide:
-        # Page-level rule aggregation: ratio of passing pages
+        # Page-level rule aggregation: ratio of passing pages among known applicable observations
         total_eligible = len(applicable_evals)
-        earned_points = 0.0
-        pass_count = 0
-        warn_count = 0
-        fail_count = 0
-        unknown_count = 0
+        pass_count = sum(1 for e in applicable_evals if e.get("status") == "pass")
+        warn_count = sum(1 for e in applicable_evals if e.get("status") == "warning")
+        fail_count = sum(1 for e in applicable_evals if e.get("status") == "fail")
+        unknown_count = sum(1 for e in applicable_evals if e.get("status") == "unknown")
 
-        for e in applicable_evals:
-            st = e.get("status", "unknown")
-            mult = policy.status_multipliers.get(st, 0.0)
-            if mult is not None:
-                earned_points += mult
-            if st == "pass":
-                pass_count += 1
-            elif st == "warning":
-                warn_count += 1
-            elif st == "fail":
-                fail_count += 1
-            elif st == "unknown":
-                unknown_count += 1
+        known_applicable_count = pass_count + warn_count + fail_count
 
-        rule_score = round((earned_points / total_eligible) * 100.0, 2)
+        # If no known applicable assessments exist (only unknowns), score is null
+        # Never assign 100 to a rule with no known applicable observations
+        if known_applicable_count == 0:
+            return {
+                "score": None,
+                "deduction": 0.0,
+                "weight": sev_weight,
+                "eligible_count": total_eligible,
+                "known_applicable_count": 0,
+                "pass_count": 0,
+                "warn_count": 0,
+                "fail_count": 0,
+                "unknown_count": unknown_count,
+                "is_sitewide": False,
+            }
+
+        earned_points = (pass_count * 1.0) + (warn_count * 0.5) + (fail_count * 0.0)
+        rule_score = round((earned_points / known_applicable_count) * 100.0, 2)
         deduction = round(100.0 - rule_score, 2)
 
         return {
@@ -57,6 +61,7 @@ def calculate_rule_score(
             "deduction": deduction,
             "weight": sev_weight,
             "eligible_count": total_eligible,
+            "known_applicable_count": known_applicable_count,
             "pass_count": pass_count,
             "warn_count": warn_count,
             "fail_count": fail_count,
@@ -70,16 +75,32 @@ def calculate_rule_score(
         fail_count = sum(1 for e in applicable_evals if e.get("status") == "fail")
         unknown_count = sum(1 for e in applicable_evals if e.get("status") == "unknown")
 
-        if fail_count == 0 and warn_count == 0 and unknown_count == 0:
+        known_applicable_count = pass_count + warn_count + fail_count
+        if known_applicable_count == 0:
+            return {
+                "score": None,
+                "deduction": 0.0,
+                "weight": sev_weight,
+                "eligible_count": len(applicable_evals),
+                "known_applicable_count": 0,
+                "pass_count": 0,
+                "warn_count": 0,
+                "fail_count": 0,
+                "unknown_count": unknown_count,
+                "is_sitewide": True,
+            }
+
+        if fail_count == 0 and warn_count == 0:
             return {
                 "score": 100.0,
                 "deduction": 0.0,
                 "weight": sev_weight,
-                "eligible_count": 1,
+                "eligible_count": len(applicable_evals),
+                "known_applicable_count": known_applicable_count,
                 "pass_count": pass_count,
                 "warn_count": 0,
                 "fail_count": 0,
-                "unknown_count": 0,
+                "unknown_count": unknown_count,
                 "is_sitewide": True,
             }
 
@@ -95,10 +116,8 @@ def calculate_rule_score(
         # Base penalty scaled by severity and affected scope
         if fail_count > 0:
             penalty = 50.0 + (50.0 * scope_ratio)
-        elif warn_count > 0:
-            penalty = 20.0 + (30.0 * scope_ratio)
         else:
-            penalty = 30.0  # unknown evidence
+            penalty = 20.0 + (30.0 * scope_ratio)
 
         rule_score = max(0.0, round(100.0 - penalty, 2))
         deduction = round(100.0 - rule_score, 2)
@@ -107,7 +126,8 @@ def calculate_rule_score(
             "score": rule_score,
             "deduction": deduction,
             "weight": sev_weight,
-            "eligible_count": 1,
+            "eligible_count": len(applicable_evals),
+            "known_applicable_count": known_applicable_count,
             "pass_count": pass_count,
             "warn_count": warn_count,
             "fail_count": fail_count,
@@ -127,13 +147,18 @@ def calculate_category_scores(
 
     for cat in ["on_page", "technical", "sitewide"]:
         rules = rule_scores_by_cat.get(cat, {})
-        if not rules:
+        # Only consider rules with a valid known-evidence score (score is not None)
+        scored_rules = {r_id: r_data for r_id, r_data in rules.items() if r_data.get("score") is not None}
+
+        if not scored_rules:
             cat_scores[cat] = None
             breakdown[cat] = {
                 "score": None,
                 "weight": policy.category_weights.get(cat, 0.0),
-                "rules_evaluated": 0,
+                "rules_evaluated": len(rules),
+                "rules_scored": 0,
                 "deductions": [],
+                "status": "unavailable",
             }
             continue
 
@@ -141,9 +166,9 @@ def calculate_category_scores(
         weight_total = 0.0
         deductions = []
 
-        for rule_id, r_data in rules.items():
+        for rule_id, r_data in scored_rules.items():
             w = r_data.get("weight", 0.5)
-            s = r_data.get("score", 100.0)
+            s = r_data.get("score")
             weighted_sum += w * s
             weight_total += w
 
@@ -173,7 +198,9 @@ def calculate_category_scores(
             "score": final_cat_score,
             "weight": policy.category_weights.get(cat, 0.0),
             "rules_evaluated": len(rules),
+            "rules_scored": len(scored_rules),
             "deductions": deductions,
+            "status": "available",
         }
 
     return cat_scores, breakdown
@@ -185,22 +212,25 @@ def calculate_composite_score(
     policy: ScoringPolicy = DEFAULT_SCORING_POLICY,
 ) -> Tuple[Optional[float], str]:
     """Calculate composite overall score (0-100) or None if evidence is insufficient."""
-    if score_state == "insufficient_evidence" or all(s is None for s in cat_scores.values()):
+    if score_state in ("insufficient_evidence", "not_analyzed") or all(s is None for s in cat_scores.values()):
         return None, "unrated"
 
+    included_categories = [cat for cat in policy.category_weights if cat_scores.get(cat) is not None]
+    if not included_categories:
+        return None, "unrated"
+
+    available_weight_sum = sum(policy.category_weights[c] for c in included_categories)
+    if available_weight_sum < policy.min_coverage_for_provisional:
+        return None, "unrated"
+
+    # Deterministic weighted calculation using proportional effective weights
     composite = 0.0
-    applied_weight = 0.0
-
-    for cat, weight in policy.category_weights.items():
-        score = cat_scores.get(cat)
+    for cat in included_categories:
+        score = cat_scores[cat]
         if score is not None:
-            composite += score * weight
-            applied_weight += weight
+            composite += score * policy.category_weights[cat]
 
-    if applied_weight == 0:
-        return None, "unrated"
-
-    final_score = round(composite / applied_weight, 1)
+    final_score = round(composite / available_weight_sum, 1)
     # Clamp between 0.0 and 100.0
     final_score = max(0.0, min(100.0, final_score))
     label = policy.get_score_label(final_score)

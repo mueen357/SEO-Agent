@@ -30,15 +30,15 @@ class ScoringPolicy:
         }
     )
 
-    # Status multipliers for page-level rule pass ratios
-    # 'unknown' receives 0.0 (NOT a pass)
-    # 'not_applicable' is ignored in the denominator
+    # Status multipliers for page-level rule pass ratios among known applicable observations
+    # 'unknown' reduces evidence coverage and confidence; excluded from direct health penalty
+    # 'not_applicable' is tracked separately and excluded from applicable rule scoring
     status_multipliers: Dict[str, Optional[float]] = field(
         default_factory=lambda: {
             "pass": 1.0,
             "warning": 0.5,
             "fail": 0.0,
-            "unknown": 0.0,
+            "unknown": None,
             "not_applicable": None,
         }
     )

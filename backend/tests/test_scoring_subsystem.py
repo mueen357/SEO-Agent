@@ -31,7 +31,7 @@ def test_scoring_policy_defaults():
     assert policy.category_weights["on_page"] == 0.35
     assert policy.category_weights["technical"] == 0.40
     assert policy.category_weights["sitewide"] == 0.25
-    assert policy.status_multipliers["unknown"] == 0.0  # Unknown is NOT a pass
+    assert policy.status_multipliers["unknown"] is None  # Excluded from direct health penalties
     assert policy.status_multipliers["not_applicable"] is None
 
 
@@ -52,19 +52,26 @@ def test_rule_score_exact_formula():
     assert r["pass_count"] == 2
     assert r["warn_count"] == 1
     assert r["fail_count"] == 1
+    assert r["known_applicable_count"] == 4
 
 
-def test_unknown_status_does_not_award_points():
+def test_unknown_status_does_not_penalize_known_checks():
     policy = ScoringPolicy()
-    # 2 pages: 1 pass, 1 unknown -> (1.0 + 0.0) / 2 = 50.0%
-    evals = [
-        {"status": "pass", "is_sitewide": False},
-        {"status": "unknown", "is_sitewide": False},
-    ]
+    # Example: 5 passes, 5 unknowns -> Known-check health = 100.0, unknown_count = 5
+    evals = [{"status": "pass", "is_sitewide": False}] * 5 + [{"status": "unknown", "is_sitewide": False}] * 5
     r = calculate_rule_score(evals, default_severity="medium", policy=policy)
     assert r is not None
-    assert r["score"] == 50.0  # NOT 100!
-    assert r["unknown_count"] == 1
+    assert r["score"] == 100.0  # Known-check health is 100.0
+    assert r["known_applicable_count"] == 5
+    assert r["unknown_count"] == 5
+    assert r["eligible_count"] == 10
+
+    # If all assessments are unknown, known_applicable_count == 0 -> score is None (never 100!)
+    evals_all_unknown = [{"status": "unknown", "is_sitewide": False}] * 5
+    r_unknown = calculate_rule_score(evals_all_unknown, default_severity="medium", policy=policy)
+    assert r_unknown is not None
+    assert r_unknown["score"] is None
+    assert r_unknown["known_applicable_count"] == 0
 
 
 def test_not_applicable_excluded_from_denominator():

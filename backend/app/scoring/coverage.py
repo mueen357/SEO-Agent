@@ -87,7 +87,7 @@ def calculate_coverage(
     crawl_limit_hit = total_pages >= max_pages_limit
 
     # Determine score state
-    if evaluated_pages == 0 or total_evals == 0 or coverage_ratio < policy.min_coverage_for_provisional:
+    if evaluated_pages == 0 or total_evals == 0 or known_evals == 0 or coverage_ratio < policy.min_coverage_for_provisional:
         if total_pages == 0 and audit_status in ("created", "queued"):
             score_state = "not_analyzed"
         else:

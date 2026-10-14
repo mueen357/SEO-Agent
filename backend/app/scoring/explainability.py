@@ -46,12 +46,27 @@ def generate_explanation(
         if sc is not None and sc >= 90.0:
             strengths.append(f"{cat.replace('_', ' ').title()} Health is strong ({sc}/100)")
 
+    # Category inclusion and effective weights transparency
+    included_categories = [cat for cat in policy.category_weights if cat_scores.get(cat) is not None]
+    missing_categories = [cat for cat in policy.category_weights if cat_scores.get(cat) is None]
+    avail_weight_sum = sum(policy.category_weights[c] for c in included_categories)
+    effective_weights = {
+        c: round(policy.category_weights[c] / avail_weight_sum, 4)
+        for c in included_categories
+    } if avail_weight_sum > 0 else {}
+
+    is_provisional_partial = len(missing_categories) > 0 and len(included_categories) > 0
+
     return {
         "policy_version": policy.version,
         "score_label": score_label,
         "score_state": score_state,
         "formula": "35% On-Page Health + 40% Technical Health + 25% Site-Wide Health",
         "category_weights": policy.category_weights,
+        "effective_weights": effective_weights,
+        "included_categories": included_categories,
+        "missing_categories": missing_categories,
+        "is_provisional_partial": is_provisional_partial,
         "coverage_ratio": coverage_ratio,
         "top_deductions": top_deductions,
         "top_strengths": strengths,
