@@ -6,6 +6,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit_engine.registry import default_registry
 from app.audit_engine.result import RuleAssessment
 from app.database.models import Audit, AuditMode, AuditStatus, CrawlPage, SeoIssue
 from app.scoring.calculator import (
@@ -300,7 +301,28 @@ async def test_scoring_api_lifecycle(client: AsyncClient, test_db_session: Async
         evidence_json={"page_url": page1.final_url},
         recommendation="None.",
     )
-    test_db_session.add_all([issue1, issue2])
+    all_issues = [issue1, issue2]
+    # Add other 15 on-page rules as pass to complete the required on_page family for quick audit
+    for r in default_registry.get_onpage_rules():
+        if r.rule_id != "ONPAGE_TITLE_PRESENT":
+            all_issues.append(
+                SeoIssue(
+                    id=uuid.uuid4(),
+                    audit_id=audit.id,
+                    crawl_page_id=page1.id,
+                    rule_id=r.rule_id,
+                    category="on_page",
+                    subcategory=getattr(r, "subcategory", "general"),
+                    title=f"{r.rule_id} Passed",
+                    description="Passing check",
+                    severity="medium",
+                    status="pass",
+                    fingerprint=f"fp_{r.rule_id}_pass",
+                    evidence_json={"page_url": page1.final_url},
+                    recommendation="None.",
+                )
+            )
+    test_db_session.add_all(all_issues)
     await test_db_session.commit()
 
     # 4. POST /api/v1/audits/{id}/score
@@ -310,7 +332,7 @@ async def test_scoring_api_lifecycle(client: AsyncClient, test_db_session: Async
     assert card_data["audit_id"] == str(audit.id)
     assert card_data["overall_score"] is not None
     assert card_data["overall_state"] == "available"
-    assert card_data["on_page_score"] == 50.0  # 1 pass + 1 fail = 50.0%
+    assert card_data["on_page_score"] == 95.2  # 15 pass rules + 1 rule at 50% = 95.2%
 
     # 5. GET /api/v1/audits/{id}/score
     res_get = await client.get(f"/api/v1/audits/{audit.id}/score")

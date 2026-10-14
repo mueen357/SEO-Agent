@@ -31,6 +31,12 @@ class CoverageReport:
     score_state: str = "insufficient_evidence"
     has_rendering_evidence: bool = False
     crawl_limit_hit: bool = False
+    expected_rule_ids: List[str] = field(default_factory=list)
+    executed_rule_ids: List[str] = field(default_factory=list)
+    missing_rule_ids: List[str] = field(default_factory=list)
+    rule_evaluations_known: int = 0
+    rule_evaluations_failed: int = 0
+    crawl_completeness: Dict[str, Any] = field(default_factory=dict)
     details: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -50,8 +56,17 @@ def calculate_coverage(
 ) -> CoverageReport:
     """Calculate evidence coverage metrics, registered-rule execution provenance, and score state.
 
-    Builds coverage strictly by comparing executed evaluations against the 51 expected registered SEO rules.
-    Prevents a single passing rule from claiming 100% completion when other registered rules were unexecuted.
+    Enforces explicit eligibility gates:
+    - Every expected rule belongs to exactly one scoring family.
+    - Full audits expect all 51 registered rules across on_page (16), technical (22), and sitewide (13).
+    - An incomplete required rule family must not yield an unqualified 'available' overall score.
+    - Missing assessments are not treated as passes.
+    - Not-applicable assessments do not reduce health.
+    - Unknown evidence affects confidence/coverage, not counting as confirmed failures.
+    - Partial scores are explicitly identified as 'provisional'.
+    - No known applicable evidence yields 'insufficient_evidence' (numeric score = null).
+    - Quick audits expect only on_page (16 rules).
+    - Does not claim 100% website coverage when crawl budget or full population is bounded.
     """
     pass_cnt = sum(1 for e in evaluations if e.get("status") == "pass")
     warn_cnt = sum(1 for e in evaluations if e.get("status") == "warning")
@@ -73,12 +88,12 @@ def calculate_coverage(
     has_explicit_rule_ids = any(bool(e.get("rule_id")) for e in evaluations)
 
     if audit_mode == "quick":
-        # Quick audits target on-page rules specifically
+        # Quick audits target on-page rules specifically (16 registered rules)
         expected_by_family = {
             "on_page": {r.rule_id for r in default_registry.get_onpage_rules()},
         }
     else:
-        # Full audits expect all registered rules across all 3 families
+        # Full audits expect all registered rules across all 3 families (51 registered rules)
         expected_by_family = {
             "on_page": {r.rule_id for r in default_registry.get_onpage_rules()},
             "technical": {r.rule_id for r in default_registry.get_technical_rules()},
@@ -93,14 +108,21 @@ def calculate_coverage(
         executed_rules_all: Set[str] = {
             e.get("rule_id") for e in evaluations if e.get("rule_id") and e.get("rule_id") in all_expected_rules
         }
+        missing_rules_set: Set[str] = all_expected_rules - executed_rules_all
         executed_rules_count = len(executed_rules_all)
-        missing_rules_count = total_expected_count - executed_rules_count
+        missing_rules_count = len(missing_rules_set)
         rule_execution_coverage = round(executed_rules_count / total_expected_count, 3) if total_expected_count > 0 else 0.0
+        expected_rule_ids = sorted(list(all_expected_rules))
+        executed_rule_ids = sorted(list(executed_rules_all))
+        missing_rule_ids = sorted(list(missing_rules_set))
     else:
         # Synthetic / legacy evaluations without explicit rule_id
         executed_rules_count = total_evals
         missing_rules_count = 0
         rule_execution_coverage = eval_known_ratio
+        expected_rule_ids = sorted(list(all_expected_rules))
+        executed_rule_ids = []
+        missing_rule_ids = []
 
     # Rule family execution and completion breakdown
     rule_family_completion: Dict[str, float] = {}
@@ -183,30 +205,56 @@ def calculate_coverage(
 
     crawl_limit_hit = total_pages >= max_pages_limit
 
-    # Determine score state
-    # Never display confident 'available' 100/100 based on a single rule or missing family in full audit
-    if has_explicit_rule_ids:
-        families_not_evaluated = [
-            fam for fam, data in rule_family_execution.items()
-            if data["status"] == "not_evaluated" and fam in expected_by_family
-        ]
-    else:
-        families_not_evaluated = []
+    # Crawl completeness tracking
+    crawl_completeness = {
+        "total_pages_crawled": total_pages,
+        "pages_evaluated": evaluated_pages,
+        "pages_failed": failed_pages,
+        "page_success_ratio": round(page_ratio, 3),
+        "crawl_limit_hit": crawl_limit_hit,
+        "scope_known": not crawl_limit_hit,
+        "disclaimer": (
+            "Coverage metrics represent evaluated pages within the configured crawl budget. "
+            "Full website URL population cannot be definitively known without server sitemap/log verification."
+            if crawl_limit_hit else "All discovered in-scope pages evaluated within crawl limit."
+        ),
+    }
 
-    if evaluated_pages == 0 or total_evals == 0 or known_evals == 0:
+    # =========================================================================
+    # EXPLICIT ELIGIBILITY GATES
+    # =========================================================================
+    # Incomplete required rule-family execution must NEVER yield an unqualified 'available' score.
+
+    incomplete_families: List[str] = []
+    if has_explicit_rule_ids:
+        incomplete_families = [
+            fam for fam in expected_by_family
+            if rule_family_execution.get(fam, {}).get("status") != "complete"
+        ]
+        has_incomplete_family = len(incomplete_families) > 0
+        has_missing_rules = missing_rules_count > 0
+    else:
+        has_incomplete_family = False
+        has_missing_rules = False
+
+    # 1. Check for insufficient evidence or unanalyzed state
+    if evaluated_pages == 0 or total_evals == 0 or known_evals == 0 or applicable_evals == 0:
         if total_pages == 0 and audit_status in ("created", "queued"):
             score_state = "not_analyzed"
         else:
             score_state = "insufficient_evidence"
-    elif (
-        audit_status in ("crawling", "analyzing", "partially_completed")
-        or coverage_ratio < policy.min_coverage_for_available
-        or len(families_not_evaluated) > 0
-        or (has_explicit_rule_ids and audit_mode == "full" and rule_execution_coverage < 0.60)
-    ):
-        score_state = "provisional"
     else:
-        score_state = "available"
+        # 2. Check family-level and execution-level requirements
+        if (
+            audit_status in ("crawling", "analyzing", "partially_completed")
+            or coverage_ratio < policy.min_coverage_for_available
+            or has_incomplete_family
+            or has_missing_rules
+            or failed_pages > 0
+        ):
+            score_state = "provisional"
+        else:
+            score_state = "available"
 
     return CoverageReport(
         total_pages_crawled=total_pages,
@@ -229,10 +277,16 @@ def calculate_coverage(
         score_state=score_state,
         has_rendering_evidence=has_renders,
         crawl_limit_hit=crawl_limit_hit,
+        expected_rule_ids=expected_rule_ids,
+        executed_rule_ids=executed_rule_ids,
+        missing_rule_ids=missing_rule_ids,
+        rule_evaluations_known=known_evals,
+        rule_evaluations_failed=fail_cnt,
+        crawl_completeness=crawl_completeness,
         details={
             "audit_mode": audit_mode,
             "has_explicit_rule_ids": has_explicit_rule_ids,
-            "families_not_evaluated": families_not_evaluated,
+            "incomplete_families": incomplete_families if has_explicit_rule_ids else [],
             "page_success_ratio": round(page_ratio, 3),
             "eval_known_ratio": round(eval_known_ratio, 3),
         },
