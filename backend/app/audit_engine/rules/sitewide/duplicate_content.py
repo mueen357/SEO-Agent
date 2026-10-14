@@ -188,11 +188,17 @@ class DuplicateNearContentRule(BaseRule):
 
         # Validate each connected component: ensure all pairs satisfy cluster criteria
         clusters = []
-        for comp in groups_by_root.values():
-            if len(comp) < 2:
-                continue
+        incomplete_analysis = False
+        safety_limit_hit = False
+        MAX_BRON_KERBOSCH_STEPS = 10_000
 
-            # Check if component is already a fully consistent clique
+        # Sort connected components deterministically
+        sorted_components = sorted(
+            [comp for comp in groups_by_root.values() if len(comp) >= 2],
+            key=lambda c: (-len(c), sorted(str(p.id) for p in c)),
+        )
+
+        for comp in sorted_components:
             comp_ids = [str(p.id) for p in comp]
             is_full_clique = True
             for i in range(len(comp_ids)):
@@ -215,22 +221,42 @@ class DuplicateNearContentRule(BaseRule):
                             adj[pid1].add(pid2)
 
                 cliques = []
+                steps = 0
+                step_limit_exceeded = False
+
                 def bron_kerbosch(R, P, X):
+                    nonlocal steps, step_limit_exceeded
+                    steps += 1
+                    if steps > MAX_BRON_KERBOSCH_STEPS:
+                        step_limit_exceeded = True
+                        return
                     if not P and not X:
                         if len(R) >= 2:
                             cliques.append(sorted(list(R)))
                         return
                     pivot = next(iter(P | X))
-                    for v in list(P - adj[pivot]):
+                    for v in sorted(list(P - adj[pivot])):
+                        if step_limit_exceeded:
+                            break
                         bron_kerbosch(R | {v}, P & adj[v], X & adj[v])
                         P.remove(v)
                         X.add(v)
 
                 bron_kerbosch(set(), set(comp_ids), set())
-                # Sort cliques deterministically and map back to page objects
-                cliques.sort(key=lambda c: (len(c), c), reverse=True)
+                if step_limit_exceeded:
+                    safety_limit_hit = True
+                    incomplete_analysis = True
+
+                # Sort cliques deterministically: largest size first, then sorted member IDs
+                cliques.sort(key=lambda c: (-len(c), c))
+
+                # Greedy disjoint selection to prevent overlapping cliques from double-counting pages
+                assigned_in_comp = set()
                 for c in cliques:
-                    clusters.append([page_by_id[pid] for pid in c])
+                    unassigned_members = [pid for pid in c if pid not in assigned_in_comp]
+                    if len(unassigned_members) >= 2:
+                        clusters.append([page_by_id[pid] for pid in unassigned_members])
+                        assigned_in_comp.update(unassigned_members)
 
         if not clusters:
             assessments.append(
@@ -256,6 +282,7 @@ class DuplicateNearContentRule(BaseRule):
             urls = [p.final_url or p.requested_url for p in cluster]
             root_url = sorted(urls)[0]
             group_key = f"near:{hashlib.sha256(root_url.encode()).hexdigest()[:16]}"
+            desc_suffix = " (Candidate analysis reached safety iteration bound)." if safety_limit_hit else ""
 
             assessments.append(
                 RuleAssessment(
@@ -265,7 +292,7 @@ class DuplicateNearContentRule(BaseRule):
                     title=f"Near-duplicate main content candidate group ({len(cluster)} pages)",
                     description=(
                         f"{len(cluster)} pages share very high textual similarity based on SimHash-64 fingerprinting "
-                        "(Hamming distance <= 3, >= 95.3% feature similarity). Review whether these pages should be differentiated or consolidated."
+                        f"(Hamming distance <= 3, >= 95.3% feature similarity). Review whether these pages should be differentiated or consolidated.{desc_suffix}"
                     ),
                     severity="medium",
                     status="warning",
@@ -276,6 +303,8 @@ class DuplicateNearContentRule(BaseRule):
                         "all_urls": urls,
                         "page_ids": [str(p.id) for p in cluster],
                         "method": "SimHash-64 Hamming Distance <= 3 (token 1-grams & 2-grams)",
+                        "incomplete_analysis": incomplete_analysis,
+                        "safety_limit_hit": safety_limit_hit,
                     },
                     recommendation=(
                         "Inspect near-duplicate pages for unique value. If pages serve the same intent, "

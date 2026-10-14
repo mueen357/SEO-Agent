@@ -351,3 +351,96 @@ async def test_scoring_api_lifecycle(client: AsyncClient, test_db_session: Async
     res_empty_tier = await client.get(f"/api/v1/audits/{audit.id}/priorities?priority_tier=P0")
     assert res_empty_tier.status_code == 200
     assert len(res_empty_tier.json()["items"]) == 0
+
+
+def test_unknown_status_excluded_from_priority_blockers():
+    """Verify that inconclusive unknown assessments never become confirmed P0/P1 blockers."""
+    issues = [
+        {"rule_id": "TECH_HTTP_5XX", "category": "technical", "severity": "critical", "status": "unknown", "page_url": "https://example.com/p1"},
+        {"rule_id": "ONPAGE_TITLE_PRESENT", "category": "on_page", "severity": "high", "status": "unknown", "page_url": "https://example.com/p2"},
+        {"rule_id": "TECH_REDIRECT_LOOP", "category": "technical", "severity": "critical", "status": "fail", "page_url": "https://example.com/p3"},
+    ]
+    grouped = group_findings_by_rule_and_cause(issues)
+    # Only the confirmed failure (TECH_REDIRECT_LOOP) should be grouped as a remediation blocker
+    assert len(grouped) == 1
+    assert grouped[0]["rule_id"] == "TECH_REDIRECT_LOOP"
+    prio_items = compute_priority_items(grouped, total_pages=3)
+    assert len(prio_items) == 1
+    assert prio_items[0]["priority_tier"] == "P0"
+
+
+def test_near_duplicate_clustering_performance_500_pages():
+    """Benchmark clustering performance on 500 simulated crawl pages."""
+    import time
+    from unittest.mock import MagicMock
+    from app.audit_engine.context import SiteWideAuditContext
+    from app.audit_engine.rules.sitewide.duplicate_content import DuplicateNearContentRule
+
+    rule = DuplicateNearContentRule()
+    pages = []
+    # Generate 500 pages with SimHash values: 5 distinct clusters of 5 pages, rest unique
+    for i in range(500):
+        p = MagicMock()
+        p.id = uuid.uuid4()
+        p.fetch_status = "success"
+        p.http_status = 200
+        p.content_quality_status = "usable"
+        p.main_text_word_count = 100
+        p.final_url = f"https://example.com/page_{i}"
+        p.requested_url = f"https://example.com/page_{i}"
+        p.normalized_main_text_hash = f"hash_{i}"
+        # For first 25 pages, group every 5 pages into 5 distinct clusters
+        # Use sha256 prefix so unique pages have high Hamming distance (>20 bits)
+        import hashlib
+        if i < 25:
+            cluster_idx = i // 5
+            p.main_text_simhash = hashlib.sha256(f"cluster_{cluster_idx}".encode()).hexdigest()[:16]
+        else:
+            p.main_text_simhash = hashlib.sha256(f"unique_page_{i}".encode()).hexdigest()[:16]
+        pages.append(p)
+
+    ctx = SiteWideAuditContext(audit_id=uuid.uuid4(), pages=pages)
+    t0 = time.time()
+    assessments = rule.evaluate_site(ctx)
+    duration = time.time() - t0
+
+    assert duration < 2.0, f"Clustering took too long: {duration:.2f}s"
+    warn_assessments = [a for a in assessments if a.status == "warning"]
+    assert len(warn_assessments) == 5
+    for a in warn_assessments:
+        assert a.evidence["page_count"] == 5
+
+
+def test_near_duplicate_overlapping_clique_disjoint_selection():
+    """Ensure maximal cliques do not double count pages or inflate priorities across overlaps."""
+    from unittest.mock import MagicMock
+    from app.audit_engine.context import SiteWideAuditContext
+    from app.audit_engine.rules.sitewide.duplicate_content import DuplicateNearContentRule
+
+    rule = DuplicateNearContentRule()
+    # A-B-C bridge where A~B and B~C, but A!~C
+    pA = MagicMock(id=uuid.uuid4(), fetch_status="success", http_status=200, content_quality_status="usable",
+                   main_text_word_count=100, final_url="https://example.com/a", requested_url="https://example.com/a",
+                   normalized_main_text_hash="hA", main_text_simhash="0000000000000000")
+    # pB has Hamming distance 2 from pA (bits 0,1 flipped)
+    pB = MagicMock(id=uuid.uuid4(), fetch_status="success", http_status=200, content_quality_status="usable",
+                   main_text_word_count=100, final_url="https://example.com/b", requested_url="https://example.com/b",
+                   normalized_main_text_hash="hB", main_text_simhash="0000000000000003")
+    # pC has Hamming distance 2 from pB (bits 2,3 flipped), but distance 4 from pA (> 3, not similar)
+    pC = MagicMock(id=uuid.uuid4(), fetch_status="success", http_status=200, content_quality_status="usable",
+                   main_text_word_count=100, final_url="https://example.com/c", requested_url="https://example.com/c",
+                   normalized_main_text_hash="hC", main_text_simhash="000000000000000f")
+
+    ctx = SiteWideAuditContext(audit_id=uuid.uuid4(), pages=[pA, pB, pC])
+    assessments = rule.evaluate_site(ctx)
+    warn_assessments = [a for a in assessments if a.status == "warning"]
+
+    # Must NOT group A, B, C together into a 3-page cluster
+    for a in warn_assessments:
+        assert a.evidence["page_count"] < 3
+
+    # All affected page URLs reported across all clusters should be distinct (no double-counting)
+    all_urls = []
+    for a in warn_assessments:
+        all_urls.extend(a.evidence["all_urls"])
+    assert len(all_urls) == len(set(all_urls)), "Pages were double-counted across overlapping clusters!"

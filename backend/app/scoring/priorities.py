@@ -83,12 +83,16 @@ def compute_priority_items(
     # 2. Score impact descending
     # 3. Affected page count descending
     # 4. Title alphabetically
+    # 5. Rule ID alphabetically
+    # 6. Group fingerprint alphabetically (stable unique tie-breaking)
     items.sort(
         key=lambda x: (
             tier_order.get(x["priority_tier"], 99),
             -x["score_impact"],
             -x["affected_page_count"],
             x["title"],
+            x["rule_id"],
+            x.get("group_fingerprint", ""),
         )
     )
 

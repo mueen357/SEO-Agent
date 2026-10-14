@@ -19,7 +19,8 @@ def group_findings_by_rule_and_cause(
     for issue in issues:
         rule_id = issue.get("rule_id", "UNKNOWN_RULE")
         status = issue.get("status", "unknown")
-        if status in ("pass", "not_applicable"):
+        # Exclude passes, not_applicable, and inconclusive unknown assessments from confirmed blockers
+        if status in ("pass", "not_applicable", "unknown"):
             continue
 
         category = issue.get("category", "on_page")
