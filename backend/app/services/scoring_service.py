@@ -38,9 +38,9 @@ class ScoringService:
     async def _gather_audit_evidence(
         self,
         audit_id: uuid.UUID,
-    ) -> Tuple[int, int, int, List[Dict[str, Any]], bool]:
+    ) -> Tuple[int, int, int, List[Dict[str, Any]], bool, List[Dict[str, Any]], Optional[str]]:
         """Fetch pages and evaluated issue assessments for scoring."""
-        # 1. Pages counts
+        # 1. Pages counts and canonical evidence summaries
         pages_stmt = select(CrawlPage).where(CrawlPage.audit_id == audit_id)
         pages_res = await self.db.execute(pages_stmt)
         all_pages = pages_res.scalars().all()
@@ -48,6 +48,22 @@ class ScoringService:
         total_pages = len(all_pages)
         evaluated_pages = sum(1 for p in all_pages if p.fetch_status == "success" and p.http_status == 200)
         failed_pages = sum(1 for p in all_pages if p.fetch_status != "success" or (p.http_status and p.http_status >= 400))
+
+        pages_summary: List[Dict[str, Any]] = []
+        seed_final_url: Optional[str] = None
+        for p in all_pages:
+            pages_summary.append({
+                "page_id": str(p.id),
+                "requested_url": p.requested_url,
+                "final_url": p.final_url,
+                "http_status": p.http_status,
+                "fetch_status": p.fetch_status,
+                "canonical_url": p.canonical_url or "",
+                "redirect_chain": p.redirect_chain_json or [],
+                "depth": p.depth,
+            })
+            if p.depth == 0:
+                seed_final_url = p.final_url
 
         # Check renders
         renders_stmt = select(CrawlPageRender.id).where(CrawlPageRender.audit_id == audit_id).limit(1)
@@ -69,11 +85,34 @@ class ScoringService:
                 "title": iss.title,
                 "recommendation": iss.recommendation,
                 "evidence": iss.evidence_json or {},
-                "page_url": (iss.evidence_json or {}).get("page_url", ""), "crawl_page_id": iss.crawl_page_id,
+                "page_url": (iss.evidence_json or {}).get("page_url", ""),
+                "crawl_page_id": iss.crawl_page_id,
                 "is_sitewide": iss.category == "sitewide" or iss.rule_id.startswith("SITE_"),
             })
 
-        return total_pages, evaluated_pages, failed_pages, evaluations, has_renders
+        return total_pages, evaluated_pages, failed_pages, evaluations, has_renders, pages_summary, seed_final_url
+
+    def _build_fingerprint(
+        self,
+        audit: Audit,
+        total_p: int,
+        pages_summary: List[Dict[str, Any]],
+        evaluations: List[Dict[str, Any]],
+        has_renders: bool,
+    ) -> str:
+        """Shared canonical fingerprint builder used identically for calculation, reuse, and staleness detection."""
+        return compute_input_fingerprint(
+            evaluations=evaluations,
+            pages_count=total_p,
+            audit_id=audit.id,
+            audit_status=audit.status,
+            max_pages_limit=audit.max_pages,
+            has_renders=has_renders,
+            policy=self.policy,
+            page_evidence_summary=pages_summary,
+            seed_url=audit.normalized_url or audit.target_url,
+            audit_mode=audit.mode or "full",
+        )
 
     async def compute_score(
         self,
@@ -84,23 +123,15 @@ class ScoringService:
         audit = await self.get_audit_or_404(audit_id)
 
         # If audit has not been analyzed yet but has crawled pages, trigger analysis first
-        total_p, eval_p, fail_p, evals, has_renders = await self._gather_audit_evidence(audit_id)
+        total_p, eval_p, fail_p, evals, has_renders, pages_summary, seed_final_url = await self._gather_audit_evidence(audit_id)
         if total_p > 0 and len(evals) == 0 and audit.status in ("completed", "analyzing", "partially_completed"):
             issue_svc = IssueService(self.db)
             await issue_svc.analyze_audit(audit_id)
-            total_p, eval_p, fail_p, evals, has_renders = await self._gather_audit_evidence(audit_id)
+            total_p, eval_p, fail_p, evals, has_renders, pages_summary, seed_final_url = await self._gather_audit_evidence(audit_id)
 
         # Check idempotency: if scorecard exists and fingerprint matches current evidence
         existing_card = await self.repo.get_scorecard(audit_id)
-        current_fp = compute_input_fingerprint(
-            evaluations=evals,
-            pages_count=total_p,
-            audit_id=audit_id,
-            audit_status=audit.status,
-            max_pages_limit=audit.max_pages,
-            has_renders=has_renders,
-            policy=self.policy,
-        )
+        current_fp = self._build_fingerprint(audit, total_p, pages_summary, evals, has_renders)
 
         if existing_card and not force:
             if existing_card.input_fingerprint == current_fp:
@@ -117,6 +148,9 @@ class ScoringService:
             max_pages_limit=audit.max_pages,
             has_renders=has_renders,
             audit_mode=audit.mode or "full",
+            page_evidence_summary=pages_summary,
+            seed_url=audit.normalized_url or audit.target_url,
+            seed_final_url=seed_final_url,
         )
 
         return await self.repo.save_scorecard(scorecard_data, priority_items)
@@ -130,16 +164,8 @@ class ScoringService:
             return await self.compute_score(audit_id)
 
         # Check staleness
-        total_p, _, _, evals, has_renders = await self._gather_audit_evidence(audit_id)
-        current_fp = compute_input_fingerprint(
-            evaluations=evals,
-            pages_count=total_p,
-            audit_id=audit_id,
-            audit_status=audit.status,
-            max_pages_limit=audit.max_pages,
-            has_renders=has_renders,
-            policy=self.policy,
-        )
+        total_p, _, _, evals, has_renders, pages_summary, _ = await self._gather_audit_evidence(audit_id)
+        current_fp = self._build_fingerprint(audit, total_p, pages_summary, evals, has_renders)
         if card.input_fingerprint != current_fp and card.overall_state != "stale":
             card.overall_state = "stale"
             await self.db.commit()

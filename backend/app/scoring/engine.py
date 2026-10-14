@@ -27,6 +27,9 @@ def canonicalize_evidence_dict(evidence: Any) -> str:
         return "unhashable"
 
 
+FINGERPRINT_VERSION = "v2.4d"
+
+
 def compute_input_fingerprint(
     evaluations: List[Dict[str, Any]],
     pages_count: int,
@@ -36,14 +39,17 @@ def compute_input_fingerprint(
     has_renders: bool = False,
     policy: Optional[ScoringPolicy] = None,
     page_evidence_summary: Optional[List[Dict[str, Any]]] = None,
+    seed_url: Optional[str] = None,
+    audit_mode: str = "full",
 ) -> str:
     """Generate a deterministic, versioned evidence fingerprint to detect score staleness.
 
     Includes normalized:
-    - Audit scope, crawl state, and limits
+    - Fingerprint schema version
+    - Audit ID, crawl seed, mode, and scope limits
+    - Page identities, fetch states, HTTP codes, redirects, and canonical targets
     - Assessment identities, versions, status, severity, and canonicalized evidence
     - Scoring policy version, category weights, and status multipliers
-    - Registered rule-set identity
     """
     pol = policy or DEFAULT_SCORING_POLICY
 
@@ -57,9 +63,12 @@ def compute_input_fingerprint(
 
     # 2. Scope & Crawl Metadata
     scope_spec = {
+        "fingerprint_version": FINGERPRINT_VERSION,
         "audit_id": str(audit_id) if audit_id else "global",
-        "pages_count": pages_count,
+        "audit_mode": audit_mode,
         "audit_status": audit_status,
+        "seed_url": seed_url or "",
+        "pages_count": pages_count,
         "max_pages_limit": max_pages_limit,
         "has_renders": bool(has_renders),
     }
@@ -88,27 +97,32 @@ def compute_input_fingerprint(
         )
         eval_tokens.append(eval_token)
 
-    # Sort deterministically for order-invariance
     eval_tokens.sort()
 
-    # 4. Optional Page-level Fetch Evidence Summary
+    # 4. Canonical Page-level Fetch Evidence Summary (sorted for order-invariance)
     page_tokens = []
     if page_evidence_summary:
         for p in page_evidence_summary:
             page_tokens.append((
-                p.get("url", ""),
-                str(p.get("http_status", "")),
-                p.get("fetch_status", ""),
-                p.get("final_url", ""),
+                str(p.get("page_id") or p.get("id") or ""),
+                str(p.get("requested_url") or p.get("url") or ""),
+                str(p.get("final_url") or ""),
+                str(p.get("http_status") if p.get("http_status") is not None else ""),
+                str(p.get("fetch_status") or ""),
+                str(p.get("canonical_url") or ""),
+                int(len(p.get("redirect_chain") or p.get("redirect_chain_json") or [])),
+                bool(p.get("has_render", False)),
             ))
         page_tokens.sort()
 
     payload = {
+        "version": FINGERPRINT_VERSION,
         "policy": policy_spec,
         "scope": scope_spec,
+        "page_count": len(page_tokens),
+        "pages": page_tokens,
         "eval_count": len(eval_tokens),
         "evaluations": eval_tokens,
-        "pages": page_tokens,
     }
 
     canonical_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -132,6 +146,7 @@ class ScoringEngine:
         max_pages_limit: int = 50,
         has_renders: bool = False,
         audit_mode: str = "full",
+        page_evidence_summary: Optional[List[Dict[str, Any]]] = None,
         seed_url: Optional[str] = None,
         seed_final_url: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
@@ -157,6 +172,9 @@ class ScoringEngine:
             max_pages_limit=max_pages_limit,
             has_renders=has_renders,
             policy=self.policy,
+            page_evidence_summary=page_evidence_summary,
+            seed_url=seed_url,
+            audit_mode=audit_mode,
         )
 
         # 2. Group evaluations by authoritative scoring family and rule_id
