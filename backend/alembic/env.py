@@ -24,9 +24,11 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# Override sqlalchemy.url from app settings
-settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.sync_database_url)
+# Override sqlalchemy.url from app settings if not explicitly configured (e.g., isolated test DB)
+current_url = config.get_main_option("sqlalchemy.url")
+if not current_url or current_url.strip() in ("", "sqlite:///./siteaudit.db"):
+    settings = get_settings()
+    config.set_main_option("sqlalchemy.url", settings.sync_database_url)
 
 
 def run_migrations_offline() -> None:

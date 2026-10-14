@@ -1,9 +1,16 @@
 """Application configuration using Pydantic Settings."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Canonical backend directory path for centralized SQLite resolution
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_SQLITE_PATH = BACKEND_DIR / "siteaudit.db"
+DEFAULT_ASYNC_SQLITE_URL = f"sqlite+aiosqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
+DEFAULT_SYNC_SQLITE_URL = f"sqlite:///{DEFAULT_SQLITE_PATH.as_posix()}"
 
 
 class Settings(BaseSettings):
@@ -24,8 +31,19 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # Database URLs (supports SQLite local dev and future PostgreSQL)
-    database_url: str = "sqlite+aiosqlite:///./siteaudit.db"
-    sync_database_url: str = "sqlite:///./siteaudit.db"
+    database_url: str = Field(default=DEFAULT_ASYNC_SQLITE_URL)
+    sync_database_url: str = Field(default=DEFAULT_SYNC_SQLITE_URL)
+
+    @model_validator(mode="after")
+    def resolve_database_urls(self) -> "Settings":
+        """Ensure relative SQLite paths are anchored to BACKEND_DIR regardless of process working directory."""
+        for attr in ["database_url", "sync_database_url"]:
+            val = getattr(self, attr)
+            if isinstance(val, str) and "///./" in val:
+                prefix, rel_part = val.split("///./", 1)
+                abs_path = (BACKEND_DIR / rel_part).resolve().as_posix()
+                setattr(self, attr, f"{prefix}///{abs_path}")
+        return self
 
     # CORS configuration
     cors_allowed_origins: List[str] = [
@@ -57,7 +75,6 @@ class Settings(BaseSettings):
     render_max_concurrent_contexts: int = 2
     enable_screenshots: bool = False
     screenshot_storage_dir: str = "./storage/screenshots"
-
 
 
 @lru_cache
