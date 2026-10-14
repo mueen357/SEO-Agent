@@ -14,6 +14,11 @@ import type {
   PaginatedFindingGroupsResponse,
   LinkGraphSummaryResponse,
   AuditRecord,
+  AuditScorecardData,
+  PriorityActionItem,
+  PrioritiesResponse,
+  ScoreBreakdownData,
+  ScoreCoverageData,
   BackendHealthResponse,
   CreateAuditRequest,
   ListAuditsParams,
@@ -440,6 +445,111 @@ export async function getSitewideLinkGraph(
     const errorBody = await response.json().catch(() => ({}));
     const message = errorBody?.error?.message || `Failed to fetch link graph (HTTP ${response.status})`;
     throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function calculateAuditScore(
+  auditId: string,
+  force: boolean = false,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditScorecardData> {
+  const url = `${baseUrl}/api/v1/audits/${auditId}/score?force=${force}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to calculate audit score (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function getAuditScore(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AuditScorecardData> {
+  const url = `${baseUrl}/api/v1/audits/${auditId}/score`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch audit score (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function getAuditScoreBreakdown(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<ScoreBreakdownData> {
+  const url = `${baseUrl}/api/v1/audits/${auditId}/score/breakdown`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch score breakdown (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function getAuditScoreCoverage(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<ScoreCoverageData> {
+  const url = `${baseUrl}/api/v1/audits/${auditId}/score/coverage`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch score coverage (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function getAuditPriorities(
+  auditId: string,
+  params: {
+    priority_tier?: string;
+    category?: string;
+    rule_id?: string;
+    page?: number;
+    page_size?: number;
+  } = {},
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<PrioritiesResponse> {
+  const query = new URLSearchParams();
+  if (params.priority_tier) query.set('priority_tier', params.priority_tier);
+  if (params.category) query.set('category', params.category);
+  if (params.rule_id) query.set('rule_id', params.rule_id);
+  if (params.page) query.set('page', params.page.toString());
+  if (params.page_size) query.set('page_size', params.page_size.toString());
+
+  const url = `${baseUrl}/api/v1/audits/${auditId}/priorities?${query.toString()}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch audit priorities (HTTP ${response.status})`);
   }
 
   return response.json();

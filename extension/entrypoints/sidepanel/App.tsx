@@ -31,6 +31,7 @@ import { FullAuditPagesTable } from '../../components/audit/FullAuditPagesTable'
 import { PageDetailsModal } from '../../components/audit/PageDetailsModal';
 import { SeoFindingsView } from '../../components/audit/SeoFindingsView';
 import { SiteWideIntelligenceView } from '../../components/audit/SiteWideIntelligenceView';
+import { SeoHealthDashboard } from '../../components/audit/SeoHealthDashboard';
 
 import { getActiveTab } from '../../services/tab';
 import {
@@ -90,7 +91,7 @@ export default function App() {
   const [pagesCurrentPage, setPagesCurrentPage] = useState(1);
   const [pagesTotalPages, setPagesTotalPages] = useState(0);
   const [selectedPage, setSelectedPage] = useState<CrawlPageItem | null>(null);
-  const [fullAuditSubView, setFullAuditSubView] = useState<'pages' | 'findings' | 'sitewide'>('pages');
+  const [fullAuditSubView, setFullAuditSubView] = useState<'health' | 'pages' | 'findings' | 'sitewide'>('health');
   const [isFullAuditing, setIsFullAuditing] = useState(false);
 
   const pollingRef = useRef<number | null>(null);
@@ -324,8 +325,18 @@ export default function App() {
             isBackendOnline={health?.status === 'ok'}
           />
 
-          {/* Sub-view switcher between Pages and SEO Findings */}
-          <div className="flex items-center space-x-2 border-b border-slate-800 pb-2">
+          {/* Sub-view switcher between Health, Pages, SEO Findings, and Sitewide */}
+          <div className="flex items-center space-x-2 border-b border-slate-800 pb-2 overflow-x-auto">
+            <button
+              onClick={() => setFullAuditSubView('health')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                fullAuditSubView === 'health'
+                  ? 'bg-slate-800 text-cyan-400 border border-slate-700'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              SEO Health & Score
+            </button>
             <button
               onClick={() => setFullAuditSubView('pages')}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
@@ -358,7 +369,15 @@ export default function App() {
             </button>
           </div>
 
-          {fullAuditSubView === 'pages' ? (
+          {fullAuditSubView === 'health' ? (
+            <SeoHealthDashboard
+              auditId={fullAudit?.id || null}
+              isBackendOnline={health?.status === 'ok'}
+              isAuditRunning={isFullAuditing}
+              onNavigateToFindings={() => setFullAuditSubView('findings')}
+              onNavigateToPages={() => setFullAuditSubView('pages')}
+            />
+          ) : fullAuditSubView === 'pages' ? (
             <FullAuditPagesTable
               pages={pages}
               total={pagesTotal}

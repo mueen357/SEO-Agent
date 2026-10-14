@@ -140,3 +140,10 @@ Executes:
 cd backend
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
+
+### Evidence-Based SEO Health Scoring & Prioritization (Phase 2.4)
+- **Audit Health Score Engine (`backend/app/scoring/`):** Pure deterministic, versioned (`2026.1`), and evidence-grounded scoring subsystem producing a bounded score $[0.0, 100.0]$ across On-Page (35%), Technical (40%), and Site-Wide (25%) health without network calls or LLM dependencies.
+- **Evidence Coverage & State Lifecycle:** Evaluates evidence completeness, crawl limits, rendering availability, and confidence ratios across 6 distinct score states (`available`, `provisional`, `insufficient_evidence`, `not_analyzed`, `stale`, `error`). Empty audits return `null` and never score 100.
+- **Prioritization Backlog (P0â€“P3):** Deduplicates findings by root cause into stable SHA-256 fingerprints, classifying issues into P0 (Confirmed blocker), P1 (High), P2 (Medium), and P3 (Lower) tiers with deterministic priority ranking.
+- **Explainability & Transparency:** Mathematical score attribution showing formula, category weights, and top point deductions with explicit disclaimer that Audit Health Score is an internal diagnostic metric, not Google's actual ranking algorithm.
+- **SEO Health Dashboard (`extension/components/audit/SeoHealthDashboard.tsx`):** Interactive Chrome extension side panel dashboard featuring Overall Audit Health Score, category breakdown bars, coverage indicators, P0-P3 prioritized remediation backlog, top deductions, and recalculation triggers.

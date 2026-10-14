@@ -223,3 +223,46 @@
      - 39 frontend vitest tests passing (100% pass rate).
      - 0 TypeScript compilation errors (`tsc --noEmit`).
      - Successful production extension build (`wxt build`).
+
+---
+
+### Task 2.4 â€” Evidence-Based SEO Health Scoring, Prioritization, and Audit Health Dashboard
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-14
+- **Completed Components:**
+  1. **Scoring Subsystem (`backend/app/scoring/`):**
+     - Modular scoring engine with pure deterministic logic, zero network calls, and zero LLM dependencies:
+       - `policy.py`: Policy `2026.1` with weighted composite formula (35% On-Page, 40% Technical, 25% Site-Wide), severity weights (Critical=4, High=3, Medium=2, Low=1), and status multipliers (Pass=1.0, Warn=0.5, Fail=0.0, Unknown=0.0, Not Applicable excluded).
+       - `coverage.py`: Multi-faceted evidence coverage (pages crawled, eligible, failed, unknown count, rule family completion ratios) and score state evaluation (`available`, `provisional`, `insufficient_evidence`, `not_analyzed`, `stale`, `error`).
+       - `calculator.py`: Mathematically bounded $[0.0, 100.0]$ rule, category, and composite score computation.
+       - `grouping.py`: Root-cause deduplication and clustering generating deterministic `SHA-256(audit_id:rule_id:root_cause)` fingerprints.
+       - `priorities.py`: Actionable remediation backlog classifying issues into P0 (Confirmed blocker), P1 (High), P2 (Medium), and P3 (Lower) tiers with deterministic priority scoring.
+       - `explainability.py`: Transparent deduction attribution and official Google ranking algorithm disclaimer.
+       - `engine.py`: High-level evaluation coordinator.
+  2. **Accuracy & Regression Hardening (Step 7):**
+     - **Near-Duplicate Content Clustering:** Complete-linkage / Bron-Kerbosch maximal clique consistency validation eliminating transitive A-B-C similarity bridges where A and C do not satisfy Hamming distance $\le 3$ and length ratio $\ge 0.8$.
+     - **Canonical URL Handling:** Fully normalizes relative canonical URLs (`urljoin`) before self-referencing check and target lookup; never marks syntactically valid relative canonicals as malformed solely due to missing leading slashes.
+  3. **Database Models & Alembic Migration 0007:**
+     - Created `AuditScorecard` and `AuditPriorityItem` models in `backend/app/database/models.py`.
+     - Generated and verified migration `0007_add_scoring_and_priorities.py` with full upgrade/downgrade roundtrip compatibility.
+     - Upgraded canonical database `D:\Website-Audit-Agent\backend\siteaudit.db` to head revision 0007 (11 total tables, foreign key integrity verified).
+  4. **REST API Endpoints:**
+     - `POST /api/v1/audits/{id}/score`: Idempotent score calculation/recalculation.
+     - `GET /api/v1/audits/{id}/score`: Retrieve current scorecard with staleness checks.
+     - `GET /api/v1/audits/{id}/score/breakdown`: Category and rule-level deduction breakdown.
+     - `GET /api/v1/audits/{id}/score/coverage`: Crawl completeness and confidence telemetry.
+     - `GET /api/v1/audits/{id}/priorities`: Paginated priority items with tier, category, and rule filtering.
+  5. **Chrome Extension UI Integration (`SeoHealthDashboard.tsx`):**
+     - Modern dark dashboard optimized for narrow Chrome side panel.
+     - Prominent Overall Audit Health Score KPI card with status badges (`available`, `provisional`, `stale`, etc.).
+     - Category breakdown bars for On-Page Health, Technical Health, and Site-Wide Health.
+     - Evidence coverage badge, crawl stats, and confidence indicator.
+     - Prioritized remediation action backlog with P0-P3 filter tabs, affected URLs, and actionable advice.
+     - Top deduction explainability cards showing exact points lost and rule names.
+     - Action buttons: "Calculate Score", "Recalculate", "View Findings", and "View Crawled Pages".
+     - Prominent Google Ranking Algorithm disclaimer.
+  6. **Comprehensive Verification:**
+     - 152 backend pytest tests passing (100% pass rate).
+     - 45 frontend vitest tests passing (100% pass rate).
+     - 0 TypeScript compilation errors (`tsc --noEmit`).
+     - Successful extension production build (`wxt build`).

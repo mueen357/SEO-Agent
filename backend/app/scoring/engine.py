@@ -1,0 +1,160 @@
+"""Main scoring engine orchestrating policy, coverage, calculation, and prioritization."""
+
+import hashlib
+import json
+from typing import Any, Dict, List, Optional, Tuple
+from app.scoring.calculator import (
+    calculate_category_scores,
+    calculate_composite_score,
+    calculate_rule_score,
+)
+from app.scoring.coverage import CoverageReport, calculate_coverage
+from app.scoring.explainability import generate_explanation
+from app.scoring.grouping import group_findings_by_rule_and_cause
+from app.scoring.policy import DEFAULT_SCORING_POLICY, ScoringPolicy
+from app.scoring.priorities import compute_priority_items
+
+
+def compute_input_fingerprint(
+    evaluations: List[Dict[str, Any]],
+    pages_count: int,
+) -> str:
+    """Generate deterministic fingerprint of underlying evidence to detect score staleness."""
+    # Sort items deterministically by rule_id, status, and page_url
+    items_to_hash = []
+    for e in evaluations:
+        items_to_hash.append((
+            e.get("rule_id", ""),
+            e.get("status", ""),
+            e.get("page_url", ""),
+            e.get("severity", ""),
+        ))
+    items_to_hash.sort()
+    raw = json.dumps({"pages": pages_count, "items": items_to_hash}, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:64]
+
+
+class ScoringEngine:
+    """Evidence-based SEO Health Scoring and Prioritization Engine."""
+
+    def __init__(self, policy: ScoringPolicy = DEFAULT_SCORING_POLICY) -> None:
+        self.policy = policy
+
+    def evaluate_audit(
+        self,
+        audit_id: Any,
+        total_pages: int,
+        evaluated_pages: int,
+        failed_pages: int,
+        evaluations: List[Dict[str, Any]],
+        audit_status: str = "completed",
+        max_pages_limit: int = 50,
+        has_renders: bool = False,
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Compute complete scorecard and prioritized remediation items for an audit."""
+        # 1. Coverage & state analysis
+        cov_report = calculate_coverage(
+            total_pages=total_pages,
+            evaluated_pages=evaluated_pages,
+            failed_pages=failed_pages,
+            evaluations=evaluations,
+            audit_status=audit_status,
+            max_pages_limit=max_pages_limit,
+            has_renders=has_renders,
+            policy=self.policy,
+        )
+
+        input_fp = compute_input_fingerprint(evaluations, total_pages)
+
+        # 2. Group evaluations by category and rule_id
+        evals_by_cat_rule: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
+            "on_page": {},
+            "technical": {},
+            "sitewide": {},
+        }
+        for e in evaluations:
+            cat = e.get("category", "on_page")
+            if cat not in evals_by_cat_rule:
+                evals_by_cat_rule[cat] = {}
+            rid = e.get("rule_id", "UNKNOWN")
+            evals_by_cat_rule[cat].setdefault(rid, []).append(e)
+
+        # 3. Calculate rule scores
+        rule_scores_by_cat: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        rules_evaluated_count = 0
+        for cat, rules in evals_by_cat_rule.items():
+            rule_scores_by_cat[cat] = {}
+            for rid, ev_list in rules.items():
+                sev = ev_list[0].get("severity", "medium") if ev_list else "medium"
+                r_score = calculate_rule_score(
+                    evaluations=ev_list,
+                    default_severity=sev,
+                    total_site_pages=total_pages,
+                    policy=self.policy,
+                )
+                if r_score is not None:
+                    rule_scores_by_cat[cat][rid] = r_score
+                    rules_evaluated_count += 1
+
+        # 4. Calculate category scores
+        cat_scores, category_breakdown = calculate_category_scores(
+            rule_scores_by_cat=rule_scores_by_cat,
+            policy=self.policy,
+        )
+
+        # 5. Composite overall score
+        overall_score, score_label = calculate_composite_score(
+            cat_scores=cat_scores,
+            score_state=cov_report.score_state,
+            policy=self.policy,
+        )
+
+        # 6. Issue counts snapshot
+        critical_count = sum(1 for e in evaluations if e.get("severity") == "critical" and e.get("status") == "fail")
+        high_count = sum(1 for e in evaluations if e.get("severity") == "high" and e.get("status") == "fail")
+        medium_count = sum(1 for e in evaluations if e.get("severity") == "medium" and e.get("status") in ("fail", "warning"))
+        low_count = sum(1 for e in evaluations if e.get("severity") == "low" and e.get("status") in ("fail", "warning"))
+        pass_count = cov_report.rule_evaluations_pass
+
+        # 7. Explainability
+        explanation = generate_explanation(
+            overall_score=overall_score,
+            score_label=score_label,
+            score_state=cov_report.score_state,
+            cat_scores=cat_scores,
+            category_breakdown=category_breakdown,
+            coverage_ratio=cov_report.coverage_ratio,
+            policy=self.policy,
+        )
+
+        scorecard_data = {
+            "audit_id": audit_id,
+            "policy_version": self.policy.version,
+            "input_fingerprint": input_fp,
+            "overall_score": overall_score,
+            "score_label": score_label,
+            "overall_state": cov_report.score_state,
+            "on_page_score": cat_scores.get("on_page"),
+            "technical_score": cat_scores.get("technical"),
+            "sitewide_score": cat_scores.get("sitewide"),
+            "category_scores_json": category_breakdown,
+            "coverage_json": cov_report.to_dict(),
+            "explanation_json": explanation,
+            "pages_evaluated": evaluated_pages,
+            "rules_evaluated": rules_evaluated_count,
+            "critical_count": critical_count,
+            "high_count": high_count,
+            "medium_count": medium_count,
+            "low_count": low_count,
+            "pass_count": pass_count,
+        }
+
+        # 8. Group findings and prioritize remediation items
+        grouped_items = group_findings_by_rule_and_cause(evaluations)
+        priority_items = compute_priority_items(grouped_items, total_pages=total_pages)
+
+        # Attach audit_id to each priority item
+        for p in priority_items:
+            p["audit_id"] = audit_id
+
+        return scorecard_data, priority_items

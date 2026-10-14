@@ -92,6 +92,8 @@ class Audit(Base):
     renders: Mapped[List["CrawlPageRender"]] = relationship("CrawlPageRender", back_populates="audit", cascade="all, delete-orphan")
     issues: Mapped[List["SeoIssue"]] = relationship("SeoIssue", back_populates="audit", cascade="all, delete-orphan")
     site_finding_groups: Mapped[List["SiteFindingGroup"]] = relationship("SiteFindingGroup", back_populates="audit", cascade="all, delete-orphan")
+    scorecard: Mapped[Optional["AuditScorecard"]] = relationship("AuditScorecard", back_populates="audit", uselist=False, cascade="all, delete-orphan")
+    priority_items: Mapped[List["AuditPriorityItem"]] = relationship("AuditPriorityItem", back_populates="audit", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_audits_status_created_at", "status", "created_at"),
@@ -354,4 +356,101 @@ class SiteFindingGroup(Base):
     __table_args__ = (
         Index("ix_site_finding_groups_audit_rule", "audit_id", "rule_id"),
         Index("ix_site_finding_groups_fingerprint", "audit_id", "group_fingerprint", unique=True),
+    )
+
+
+class AuditScorecard(Base):
+    """Evidence-based SEO health scorecard (0-100) computed after analysis."""
+
+    __tablename__ = "audit_scorecards"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    audit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("audits.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+
+    policy_version: Mapped[str] = mapped_column(String(20), nullable=False, default="2.4.0")
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # Top-level composite score (nullable: None when evidence is insufficient)
+    overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score_label: Mapped[str] = mapped_column(String(20), nullable=False, default="unrated")
+    overall_state: Mapped[str] = mapped_column(String(30), nullable=False, default="available")
+
+    # Category sub-scores (0-100 each, nullable if category has insufficient evidence)
+    on_page_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    technical_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sitewide_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # JSON structures for full transparency and explainability
+    category_scores_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    coverage_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    explanation_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    # Summary metrics
+    pages_evaluated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rules_evaluated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    critical_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    high_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    medium_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    low_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pass_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    audit: Mapped["Audit"] = relationship("Audit", back_populates="scorecard")
+    priority_items: Mapped[List["AuditPriorityItem"]] = relationship("AuditPriorityItem", back_populates="scorecard", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_audit_scorecards_audit_id", "audit_id", unique=True),
+        Index("ix_audit_scorecards_overall_state", "overall_state"),
+        Index("ix_audit_scorecards_fingerprint", "input_fingerprint"),
+    )
+
+
+class AuditPriorityItem(Base):
+    """Prioritized remediation action item derived from verified findings (P0–P3)."""
+
+    __tablename__ = "audit_priority_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    audit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("audits.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    scorecard_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("audit_scorecards.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+
+    priority_tier: Mapped[str] = mapped_column(String(5), nullable=False)  # P0, P1, P2, P3
+    priority_rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    group_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    rule_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    recommendation: Mapped[str] = mapped_column(Text, nullable=False)
+
+    affected_page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    affected_urls_json: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    rule_ids_json: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    evidence_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    score_impact: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    audit: Mapped["Audit"] = relationship("Audit", back_populates="priority_items")
+    scorecard: Mapped[Optional["AuditScorecard"]] = relationship("AuditScorecard", back_populates="priority_items")
+
+    __table_args__ = (
+        Index("ix_audit_priority_items_audit_tier", "audit_id", "priority_tier"),
+        Index("ix_audit_priority_items_audit_rank", "audit_id", "priority_rank"),
+        Index("ix_audit_priority_items_group_fingerprint", "audit_id", "group_fingerprint", unique=True),
     )

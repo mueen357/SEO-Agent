@@ -423,3 +423,90 @@ export interface SiteWideSummaryResponse {
   evidence_coverage: string;
   rules_executed_count: number;
 }
+
+
+export type ScoreState = 'available' | 'provisional' | 'insufficient_evidence' | 'not_analyzed' | 'stale' | 'error';
+export type PriorityTier = 'P0' | 'P1' | 'P2' | 'P3';
+
+export interface AuditScorecardData {
+  id: string;
+  audit_id: string;
+  policy_version: string;
+  overall_score: number | null;
+  score_label: string;
+  overall_state: ScoreState;
+  on_page_score: number | null;
+  technical_score: number | null;
+  sitewide_score: number | null;
+  pages_evaluated: number;
+  rules_evaluated: number;
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  pass_count: number;
+  category_scores: Record<string, any>;
+  coverage: Record<string, any>;
+  explanation: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PriorityActionItem {
+  id: string;
+  audit_id: string;
+  scorecard_id?: string | null;
+  priority_tier: PriorityTier;
+  priority_rank: number;
+  group_fingerprint: string;
+  rule_id: string;
+  category: string;
+  title: string;
+  description: string;
+  recommendation: string;
+  affected_page_count: number;
+  affected_urls: string[];
+  score_impact: number;
+  created_at: string;
+}
+
+export interface PrioritiesResponse {
+  items: PriorityActionItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  tier_counts: Record<string, number>;
+}
+
+export interface ScoreBreakdownData {
+  audit_id: string;
+  overall_score: number | null;
+  overall_state: ScoreState;
+  score_label: string;
+  category_scores: Record<string, any>;
+  top_deductions: Array<{
+    category: string;
+    rule_id: string;
+    points_lost: number;
+    raw_deduction: number;
+    fail_count: number;
+    warn_count: number;
+  }>;
+  formula: string;
+  disclaimer: string;
+}
+
+export interface ScoreCoverageData {
+  audit_id: string;
+  score_state: ScoreState;
+  coverage_ratio: number;
+  coverage_label: string;
+  total_pages_crawled: number;
+  pages_evaluated: number;
+  pages_failed: number;
+  rule_evaluations_total: number;
+  rule_family_completion: Record<string, number>;
+  has_rendering_evidence: boolean;
+  crawl_limit_hit: boolean;
+  details: Record<string, any>;
+}

@@ -1,3 +1,11 @@
+from app.schemas.scoring import (
+    PrioritiesListResponse,
+    PriorityItemResponse,
+    ScoreBreakdownResponse,
+    ScoreCoverageResponse,
+    ScorecardResponse,
+)
+from app.services.scoring_service import ScoringService
 """Audit lifecycle endpoints including start, pagination, pages, and sitemaps."""
 
 import math
@@ -336,3 +344,99 @@ async def get_sitewide_link_graph(
 ) -> LinkGraphSummaryResponse:
     service = IssueService(db)
     return await service.get_sitewide_link_graph(audit_id)
+
+
+@router.post(
+    "/{audit_id}/score",
+    response_model=ScorecardResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Calculate or Recalculate SEO Health Scorecard",
+    description="Computes evidence-based SEO health scores (0-100), category breakdowns, and priority actions idempotently."
+)
+async def compute_audit_score(
+    audit_id: uuid.UUID,
+    force: bool = Query(False, description="Force recalculation even if evidence has not changed"),
+    db: AsyncSession = Depends(get_db)
+) -> ScorecardResponse:
+    service = ScoringService(db)
+    card = await service.compute_score(audit_id=audit_id, force=force)
+    return ScorecardResponse.model_validate(card)
+
+
+@router.get(
+    "/{audit_id}/score",
+    response_model=ScorecardResponse,
+    summary="Get Audit Health Scorecard",
+    description="Returns the SEO Health Scorecard for an audit, detecting staleness if underlying evidence changed."
+)
+async def get_audit_score(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> ScorecardResponse:
+    service = ScoringService(db)
+    card = await service.get_scorecard(audit_id=audit_id)
+    return ScorecardResponse.model_validate(card)
+
+
+@router.get(
+    "/{audit_id}/score/breakdown",
+    response_model=ScoreBreakdownResponse,
+    summary="Get Audit Health Score Breakdown",
+    description="Returns category health scores, rule contribution points, and top deductions."
+)
+async def get_audit_score_breakdown(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> ScoreBreakdownResponse:
+    service = ScoringService(db)
+    data = await service.get_breakdown(audit_id=audit_id)
+    return ScoreBreakdownResponse(**data)
+
+
+@router.get(
+    "/{audit_id}/score/coverage",
+    response_model=ScoreCoverageResponse,
+    summary="Get Evidence Coverage & Confidence",
+    description="Returns coverage ratio, completeness label, and audit state."
+)
+async def get_audit_score_coverage(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> ScoreCoverageResponse:
+    service = ScoringService(db)
+    data = await service.get_coverage(audit_id=audit_id)
+    return ScoreCoverageResponse(**data)
+
+
+@router.get(
+    "/{audit_id}/priorities",
+    response_model=PrioritiesListResponse,
+    summary="Get Prioritized Remediation Actions",
+    description="Returns ordered, actionable SEO remediation items categorized into P0-P3 priority tiers."
+)
+async def get_audit_priorities(
+    audit_id: uuid.UUID,
+    priority_tier: Optional[str] = Query(None, description="Filter by tier: P0, P1, P2, P3"),
+    category: Optional[str] = Query(None, description="Filter by category: on_page, technical, sitewide"),
+    rule_id: Optional[str] = Query(None, description="Filter by rule ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: AsyncSession = Depends(get_db)
+) -> PrioritiesListResponse:
+    service = ScoringService(db)
+    offset = (page - 1) * page_size
+    items, total, tier_counts = await service.get_priorities(
+        audit_id=audit_id,
+        priority_tier=priority_tier,
+        category=category,
+        rule_id=rule_id,
+        limit=page_size,
+        offset=offset,
+    )
+    return PrioritiesListResponse(
+        items=[PriorityItemResponse.model_validate(it) for it in items],
+        total=total,
+        limit=page_size,
+        offset=offset,
+        tier_counts=tier_counts,
+    )

@@ -32,9 +32,14 @@ class CanonicalTargetStatusRule(BaseRule):
                 documentation_url=self.documentation_url,
             )
 
+        from urllib.parse import urljoin
+
+        # Resolve relative canonical URLs against page URL (supports /path, ./path, path)
+        resolved_canonical = urljoin(ctx.url, canonical)
+
         # If self-referencing, status matches page status
         norm_page = ctx.url.rstrip("/")
-        norm_can = canonical.rstrip("/")
+        norm_can = resolved_canonical.rstrip("/")
         if norm_page == norm_can:
             return RuleAssessment(
                 rule_id=self.rule_id,
@@ -44,14 +49,14 @@ class CanonicalTargetStatusRule(BaseRule):
                 description="Canonical URL references the page itself.",
                 severity="info",
                 status="pass",
-                evidence={"page_url": ctx.url, "canonical_url": canonical},
+                evidence={"page_url": ctx.url, "canonical_url": canonical, "resolved_canonical": resolved_canonical},
                 recommendation="No action needed.",
                 source_type=ctx.source_type,
                 confidence=1.0,
                 documentation_url=self.documentation_url,
             )
 
-        target_page = ctx.lookup_page(canonical)
+        target_page = ctx.lookup_page(resolved_canonical) or ctx.lookup_page(canonical)
         if target_page is None:
             return RuleAssessment(
                 rule_id=self.rule_id,
@@ -142,7 +147,9 @@ class CanonicalConflictRule(BaseRule):
                 documentation_url=self.documentation_url,
             )
 
-        target_page = ctx.lookup_page(canonical)
+        from urllib.parse import urljoin
+        resolved_canonical = urljoin(ctx.url, canonical)
+        target_page = ctx.lookup_page(resolved_canonical) or ctx.lookup_page(canonical)
         if target_page:
             t_robots = (target_page.meta_robots or "").lower()
             t_headers = target_page.headers_json or {}

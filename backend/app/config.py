@@ -37,12 +37,20 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def resolve_database_urls(self) -> "Settings":
         """Ensure relative SQLite paths are anchored to BACKEND_DIR regardless of process working directory."""
+        import re
         for attr in ["database_url", "sync_database_url"]:
             val = getattr(self, attr)
-            if isinstance(val, str) and "///./" in val:
-                prefix, rel_part = val.split("///./", 1)
-                abs_path = (BACKEND_DIR / rel_part).resolve().as_posix()
-                setattr(self, attr, f"{prefix}///{abs_path}")
+            if isinstance(val, str):
+                for prefix in ["sqlite+aiosqlite:///", "sqlite:///"]:
+                    if val.startswith(prefix):
+                        path_part = val[len(prefix):]
+                        if not (re.match(r"^[a-zA-Z]:[/\\]", path_part) or path_part.startswith("/")):
+                            rel_path = path_part
+                            if rel_path.startswith("./") or rel_path.startswith(".\\"):
+                                rel_path = rel_path[2:]
+                            abs_path = (BACKEND_DIR / rel_path).resolve().as_posix()
+                            setattr(self, attr, f"{prefix}{abs_path}")
+                        break
         return self
 
     # CORS configuration

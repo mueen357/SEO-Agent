@@ -172,14 +172,65 @@ class DuplicateNearContentRule(BaseRule):
                     union(str(p1.id), str(p2.id))
                     near_pairs.append((p1, p2, dist, sim))
 
-        # Group pages by connected component root
+        # Conservative cluster-consistency validation: prevent A-B-C similarity bridge chaining
+        # Build near pair lookup
+        near_pair_set = {
+            frozenset({str(p1.id), str(p2.id)})
+            for p1, p2, dist, sim in near_pairs
+        }
+        page_by_id = {str(p.id): p for p in rep_pages}
+
+        # Initial connected components from DSU
         groups_by_root = {}
         for p in rep_pages:
             root = find(str(p.id))
             groups_by_root.setdefault(root, []).append(p)
 
-        # Filter clusters with >= 2 pages
-        clusters = [cluster for cluster in groups_by_root.values() if len(cluster) >= 2]
+        # Validate each connected component: ensure all pairs satisfy cluster criteria
+        clusters = []
+        for comp in groups_by_root.values():
+            if len(comp) < 2:
+                continue
+
+            # Check if component is already a fully consistent clique
+            comp_ids = [str(p.id) for p in comp]
+            is_full_clique = True
+            for i in range(len(comp_ids)):
+                for j in range(i + 1, len(comp_ids)):
+                    if frozenset({comp_ids[i], comp_ids[j]}) not in near_pair_set:
+                        is_full_clique = False
+                        break
+                if not is_full_clique:
+                    break
+
+            if is_full_clique:
+                clusters.append(comp)
+            else:
+                # Component contains an A-B-C bridge; decompose into maximal consistent cliques
+                # to prevent dissimilar endpoints from being reported in the same group
+                adj = {pid: set() for pid in comp_ids}
+                for pid1 in comp_ids:
+                    for pid2 in comp_ids:
+                        if pid1 != pid2 and frozenset({pid1, pid2}) in near_pair_set:
+                            adj[pid1].add(pid2)
+
+                cliques = []
+                def bron_kerbosch(R, P, X):
+                    if not P and not X:
+                        if len(R) >= 2:
+                            cliques.append(sorted(list(R)))
+                        return
+                    pivot = next(iter(P | X))
+                    for v in list(P - adj[pivot]):
+                        bron_kerbosch(R | {v}, P & adj[v], X & adj[v])
+                        P.remove(v)
+                        X.add(v)
+
+                bron_kerbosch(set(), set(comp_ids), set())
+                # Sort cliques deterministically and map back to page objects
+                cliques.sort(key=lambda c: (len(c), c), reverse=True)
+                for c in cliques:
+                    clusters.append([page_by_id[pid] for pid in c])
 
         if not clusters:
             assessments.append(
