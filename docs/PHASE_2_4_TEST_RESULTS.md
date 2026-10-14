@@ -1,14 +1,14 @@
-# Phase 2 Task 2.4 / 2.4B — Test Results & Verification Report
+# Phase 2 Task 2.4 / 2.4B / 2.4C — Test Results & Verification Report
 
 ## 1. Test Suite Summary
-| Suite | Task 2.4 Baseline | Task 2.4B Verified | Status | Pass Rate |
-| :--- | :---: | :---: | :---: | :---: |
-| **Backend (pytest)** | 152 | **174** | **PASSED** | **100% (174/174)** |
-| **Frontend (vitest)** | 45 | **56** | **PASSED** | **100% (56/56)** |
-| **TypeScript (`tsc --noEmit`)** | Clean | **0 errors** | **PASSED** | **100%** |
-| **Extension Production Build** | Passing | **Built in 3.04s (`.output/chrome-mv3`)** | **PASSED** | **100%** |
-| **Alembic Migrations** | 0001–0007 | **0001–0007 (verified head)** | **PASSED** | **100%** |
-| **Canonical Database** | ok | **11 tables, integrity ok** | **PASSED** | **100%** |
+| Suite | Task 2.4 Baseline | Task 2.4B Verified | Task 2.4C Final | Status | Pass Rate |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Backend (pytest)** | 152 | 174 | **220** | **PASSED** | **100% (220/220)** |
+| **Frontend (vitest)** | 45 | 56 | **56** | **PASSED** | **100% (56/56)** |
+| **TypeScript (`tsc --noEmit`)** | Clean | 0 errors | **0 errors** | **PASSED** | **100%** |
+| **Extension Production Build** | Passing | Built (3.04s) | **Built (5.64s, 427 kB)** | **PASSED** | **100%** |
+| **Alembic Migrations** | 0001–0007 | 0001–0007 | **0001–0007 (verified head)** | **PASSED** | **100%** |
+| **Canonical Database** | ok | ok | **11 tables, integrity ok** | **PASSED** | **100%** |
 
 ---
 

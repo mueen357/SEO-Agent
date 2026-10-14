@@ -301,3 +301,40 @@
      - 0 TypeScript compilation errors (`tsc --noEmit`).
      - Extension production build verified (`wxt build`).
      - Continuous GitHub synchronization: Checkpoints 1, 2, 3, and 4 pushed and verified via `git ls-remote`.
+
+---
+
+### Task 2.4C — Scoring Integration Integrity, Evidence Freshness, Priority Accuracy, and Final Release Hardening
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-14
+- **Working Branch:** `fix/phase2-4c-integrity` (synced to remote `origin/fix/phase2-4c-integrity`)
+- **Completed Components:**
+  1. **Scoring Family Mapping Authority (`backend/app/scoring/rule_mapping.py`):**
+     - Canonical rule family resolver mapping all 51 registered SEO rules authoritatively by rule ID prefix:
+       - `ONPAGE_*` $\rightarrow$ `on_page` (16 rules)
+       - `TECH_*` $\rightarrow$ `technical` (22 rules)
+       - `SITE_*` $\rightarrow$ `sitewide` (13 rules)
+     - Preserves descriptive rule categories (`images`, `links`, `content`, `canonical`, etc.) for user interface display, filtering, and finding summaries without corrupting family score calculations.
+     - Central registry `REGISTERED_RULE_FAMILIES` providing authoritative expectations across the entire scoring pipeline.
+  2. **Coverage Provenance & Staleness Fingerprint Hardening:**
+     - Overhauled `calculate_coverage` (`backend/app/scoring/coverage.py`) to measure registered rule expectations vs executed rules per family (`on_page`: 16, `technical`: 22, `sitewide`: 13).
+     - Prevents single passing rules from yielding a 100% category completion ratio when remaining family rules are unexecuted.
+     - Hardened `compute_input_fingerprint` (`backend/app/scoring/engine.py`): tracks policy version, family weights, crawl scope, page limits, and canonicalized evidence dictionaries (`canonicalize_evidence_dict`) with deterministic SHA-256 hashes to guarantee immediate invalidation upon data mutation.
+  3. **Priority Engine & Cluster Safety Bounds:**
+     - Hardened `classify_priority_tier` and `compute_priority_items` (`backend/app/scoring/priorities.py`):
+       - Eliminated naive `severity == 'critical'` $\implies$ P0 classification. P0 strictly requires confirmed indexation or crawl blockers with site-wide impact.
+       - Disallowed `unknown` findings from entering P0 or P1 tiers.
+       - Categorized intentional directives (such as canonicalizing duplicate pages to a preferred target) as P2 review items rather than severe blockers.
+       - Demoted isolated 500 errors on deep non-seed pages to P1.
+     - Hardened near-duplicate clustering algorithm (`backend/app/audit_engine/rules/sitewide/duplicate_content.py`):
+       - Deterministic pivot selection (`sorted(list(P | X))[0]`).
+       - If the 10,000 recursion step safety limit is reached before maximal cliques resolve, the rule evaluates to `status="unknown"` with an explicit algorithmic warning, never fabricating a false-clean PASS.
+  4. **Comprehensive Verification & Final Release Hardening:**
+     - Unified regression test suite created: `backend/tests/test_phase2_4c_integrity.py` (15/15 passing).
+     - **Backend Pytest:** 220 tests passed out of 220 (100% pass rate, 0 failures, 0 errors, 128.79s execution).
+     - **Frontend Vitest:** 56 tests passed out of 56 (100% pass rate, 5 test files, 10.26s execution).
+     - **TypeScript Typecheck:** `tsc --noEmit` exited 0 (clean, 0 errors).
+     - **Extension Build:** `wxt build` succeeded in 5.64s (bundle size: 427.07 kB).
+     - **Alembic Head:** Confirmed at revision `0007_add_scoring_and_priorities` (head). Migration 0008 was not needed or created.
+     - **Database Integrity:** SQLite `PRAGMA integrity_check` verified clean (`[('ok',)]`).
+     - **Continuous GitHub Synchronization:** Checkpoints 1, 2, 3, and 4 committed, pushed, and verified via `git ls-remote`.

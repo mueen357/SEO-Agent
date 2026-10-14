@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Canonical scoring families
 SCORING_FAMILIES: Tuple[str, ...] = ("on_page", "technical", "sitewide")
+ALL_SCORING_FAMILIES = SCORING_FAMILIES
 
 # Authoritative prefix-to-family mapping
 PREFIX_FAMILY_MAP: Dict[str, str] = {
@@ -16,6 +17,7 @@ PREFIX_FAMILY_MAP: Dict[str, str] = {
     "TECH_": "technical",
     "SITE_": "sitewide",
 }
+RULE_FAMILY_PREFIXES = PREFIX_FAMILY_MAP
 
 
 def get_rule_scoring_family(rule_id: str) -> Optional[str]:
@@ -104,3 +106,39 @@ def validate_rule_families_integrity() -> Dict[str, Any]:
         "families": by_family,
         "duplicated_ids": list(duplicated_ids),
     }
+
+
+def validate_rule_family_mapping(rules: Optional[List[Any]] = None) -> Dict[str, Any]:
+    """Validate mapping for a provided list of rules or all registered rules."""
+    from app.audit_engine.registry import RuleRegistry
+
+    if rules is None:
+        reg = RuleRegistry()
+        rules = reg.get_all_rules()
+
+    family_counts: Dict[str, int] = {fam: 0 for fam in SCORING_FAMILIES}
+    unmapped: List[str] = []
+
+    for r in rules:
+        rid = getattr(r, "rule_id", str(r))
+        fam = get_rule_scoring_family(rid)
+        if fam in family_counts:
+            family_counts[fam] += 1
+        else:
+            unmapped.append(rid)
+
+    return {
+        "total_rules": len(rules),
+        "family_counts": family_counts,
+        "unmapped_count": len(unmapped),
+        "unmapped_rules": unmapped,
+        "is_valid": len(unmapped) == 0,
+    }
+
+
+def get_rules_for_family(family: str) -> List[Any]:
+    """Return all registered rules for a given scoring family."""
+    from app.audit_engine.registry import RuleRegistry
+
+    reg = RuleRegistry()
+    return reg.get_rules_by_scoring_family(family)

@@ -67,12 +67,31 @@ $$S_{\text{audit}} = \frac{\sum_{c \in \text{IncludedCategories}} (C_c \times W_
 
 ---
 
-## 5. Priority Classification Engine (P0–P3)
-Remediation items are prioritized deterministically into 4 tiers:
-- **P0 (Critical Blockers):** Verified server 5xx errors, crawl blockers, robots.txt blocks, and catastrophic indexability failures affecting critical landing pages.
-- **P1 (High Priority):** Broken internal links, missing canonicals, duplicate title tags, and missing metadata on indexable pages.
-- **P2 (Medium Priority):** Near-duplicate content clusters, suboptimal meta descriptions, missing alt text on content images.
+## 5. Authoritative Scoring-Family Mapping & Display Category Retention
+To prevent silent omission of rules whose descriptive display category differs from the canonical scoring families, Task 2.4C establishes authoritative prefix-to-family mapping:
+- `ONPAGE_*` $\rightarrow$ `on_page` (16 rules)
+- `TECH_*` $\rightarrow$ `technical` (22 rules)
+- `SITE_*` $\rightarrow$ `sitewide` (13 rules)
+
+Original descriptive categories (`images`, `links`, `content`, `canonical`, `security`, `http`, `redirects`, `crawlability`, `sitemaps`, `indexability`) are strictly preserved for UI and finding display, while scoring calculations strictly group by canonical scoring family.
+
+---
+
+## 6. Priority Classification Engine (P0–P3)
+Remediation items are prioritized deterministically into 4 tiers with evidence awareness:
+- **P0 (Critical Blockers):** Confirmed, actionable blockers with catastrophic consequences:
+  - Confirmed redirect loops (`TECH_REDIRECT_LOOP`).
+  - Widespread server failure (`TECH_HTTP_5XX` affecting $\ge 3$ pages or $\ge 20\%$ of site) or homepage/entrance 500 outage.
+  - Confirmed canonical conflict loops on core landing pages.
+  - Isolated 500 errors on single deep pages are classified as **P1**, not P0.
+- **P1 (High Priority):** Broken internal links (`SITE_INTERNAL_LINK_TO_4XX`, `SITE_INTERNAL_LINK_TO_5XX`), missing canonicals, duplicate exact content, multiple conflicting canonicals, isolated 500 errors, and missing titles/H1s on indexable pages.
+- **P2 (Medium Priority):** Near-duplicate content clusters, suboptimal meta descriptions, missing alt text on content images, and intentional configuration directives (`noindex`, `disallow`).
 - **P3 (Low / Advisory):** Minor heading hierarchy warnings, cosmetic URL structure warnings.
+
+### Critical Safety Guardrails:
+1. `severity == "critical"` alone **cannot prove a P0 blocker** without confirmed technical consequence and verified response evidence.
+2. Inconclusive or `unknown` assessments are strictly barred from P0 and P1 tiers.
+3. Intentional directives (`noindex`, `disallow`) are classified as P2/P3 and never escalate to P0/P1.
 
 ### Priority Tie-Breaking Order:
 1. Priority tier ascending (`P0` < `P1` < `P2` < `P3`)
@@ -82,12 +101,12 @@ Remediation items are prioritized deterministically into 4 tiers:
 5. Rule ID alphabetically
 6. Group fingerprint alphabetically (stable unique tie-breaking)
 
-Inconclusive `unknown` assessments are strictly excluded from remediation grouping to prevent unverified findings from becoming false-positive P0/P1 blockers.
-
 ---
 
-## 6. Near-Duplicate Content Clustering Performance Limits
+## 7. Near-Duplicate Content Clustering Performance & Safety Bounds
 - **Algorithm:** Bounded Bron-Kerbosch maximal clique enumeration over SimHash-64 Hamming distance graphs (threshold $\le 3$ bits, $\ge 95.3\%$ similarity).
+- **Deterministic Pivot Selection:** Pivots are chosen deterministically via `sorted(list(P | X))[0]`.
 - **Iteration Bound:** Hard safety limit of 10,000 steps (`MAX_BRON_KERBOSCH_STEPS = 10_000`) prevents exponential worst-case performance on dense adversarial graphs.
+- **No False Clean PASS:** If iteration bounds are exceeded before complete cliques are formed, the rule returns `status = "unknown"` with explicit incomplete analysis warnings. It **never reports a false clean PASS**.
 - **Overlap Prevention:** Greedy disjoint clique selection prevents overlapping cliques from double-counting affected pages or inflating score impact.
 - **Transparency:** If limits are hit, `safety_limit_hit = True` and `incomplete_analysis = True` are explicitly recorded in evidence metadata.
