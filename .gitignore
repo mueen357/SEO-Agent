@@ -68,3 +68,6 @@ build_*
 # Screenshots and storage (Phase 1.4B)
 backend/storage/
 storage/
+
+# Local preserved reference materials (from prototype)
+local_references/
