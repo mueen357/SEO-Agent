@@ -126,7 +126,7 @@ class ScoringService:
         total_p, eval_p, fail_p, evals, has_renders, pages_summary, seed_final_url = await self._gather_audit_evidence(audit_id)
         if total_p > 0 and len(evals) == 0 and audit.status in ("completed", "analyzing", "partially_completed"):
             issue_svc = IssueService(self.db)
-            await issue_svc.analyze_audit(audit_id)
+            await issue_svc.run_analysis(audit_id)
             total_p, eval_p, fail_p, evals, has_renders, pages_summary, seed_final_url = await self._gather_audit_evidence(audit_id)
 
         # Check idempotency: if scorecard exists and fingerprint matches current evidence

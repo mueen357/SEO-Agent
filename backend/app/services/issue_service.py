@@ -567,3 +567,6 @@ class IssueService:
             by_status=data.get("by_status", {}),
             rules_executed_count=data.get("rules_executed_count", 0),
         )
+
+    # Backward-compatible alias for audit analysis
+    analyze_audit = run_analysis

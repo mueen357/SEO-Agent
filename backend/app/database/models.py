@@ -60,7 +60,6 @@ class Audit(Base):
     pages_crawled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     configuration_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
     # Worker lease & progress tracking
     worker_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -132,7 +131,7 @@ class CrawlPage(Base):
     fetch_status: Mapped[str] = mapped_column(String(50), nullable=False, default="success", index=True)
     http_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    response_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     redirect_chain_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     headers_json: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True, default=dict)
 
@@ -166,7 +165,6 @@ class CrawlPage(Base):
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     technology_evidence_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="pages")
@@ -185,7 +183,7 @@ class CrawlLink(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     audit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("audits.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_page_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("crawl_pages.id", ondelete="CASCADE"), nullable=True, index=True)
+    source_page_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("crawl_pages.id", ondelete="CASCADE"), nullable=False, index=True)
 
     destination_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     link_text: Mapped[str] = mapped_column(String(500), nullable=False, default="")
@@ -193,7 +191,7 @@ class CrawlLink(Base):
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="links")
-    source_page: Mapped[Optional["CrawlPage"]] = relationship("CrawlPage", back_populates="links")
+    source_page: Mapped["CrawlPage"] = relationship("CrawlPage", back_populates="links")
 
     __table_args__ = (
         Index("ix_crawl_links_dest", "audit_id", "destination_url"),
@@ -241,7 +239,6 @@ class CrawlPageRender(Base):
     rendered_title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     rendered_meta_description: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     rendered_canonical_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
-    canonical_tag_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     rendered_meta_robots: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     rendered_headings_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -257,7 +254,6 @@ class CrawlPageRender(Base):
     screenshot_mobile_path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     rendered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     page: Mapped["CrawlPage"] = relationship("CrawlPage", back_populates="render")
