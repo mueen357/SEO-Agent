@@ -159,3 +159,24 @@ tests/test_migrations.py::test_reversible_alembic_migrations PASSED [100%]
 2. **Credential Safety:** Verified header extractor strips cookies containing sensitive keywords (`auth`, `token`, `secret`, `jwt`).
 3. **Deterministic Results:** Verified that rerunning detection on identical crawl evidence produces identical SHA-256 evidence digests and identical confidence scores.
 4. **False Positive Guarding:** Verified synthetic test with text "We specialize in WordPress and React" does NOT detect WordPress or React.
+
+---
+
+## 6. GitHub Continuous Synchronization
+
+All 4 development checkpoints have been committed, pushed, and verified on GitHub remote branch `origin/feature/phase3-1-technology-detection`:
+
+| Checkpoint | Scope | Commit SHA | Remote Status |
+|---|---|---|---|
+| **CP1** | Passive technology detection architecture and extractors | `ae04340de40e3e5efe63aa03bb74cf10ccde79d0` | Verified on `origin` |
+| **CP2** | CMS and framework classifiers with multi-page aggregator | `3746e2f1fb432b32b685438e26a0d70390728a7f` | Verified on `origin` |
+| **CP3** | WordPress theme and plugin detection engine | `709a51b590a1a1f3c8985d1ca83ded03033b6548` | Verified on `origin` |
+| **CP4** | Persistence, API endpoints, regression tests, and docs | `444068b3f027bff18e8f6b3b2c935b1952ec50fc` | Verified on `origin` |
+
+- **Remote Verification Output:**
+  ```
+  git ls-remote --heads origin feature/phase3-1-technology-detection
+  444068b3f027bff18e8f6b3b2c935b1952ec50fc	refs/heads/feature/phase3-1-technology-detection
+  ```
+- **Local / Remote Synchronization:** 100% synchronized, working tree clean.
+
