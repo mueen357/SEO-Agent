@@ -220,10 +220,12 @@ def classify_priority_tier(
             return "P2" if severity in ("critical", "high", "medium") else "P3"
 
         # Check scope and page importance for confirmed 5xx
+        # A single isolated non-seed, non-homepage page failure (affected_pages <= 1)
+        # cannot receive P0 based on percentage alone.
         scope_ratio = affected_pages / max(1, total_pages)
-        is_substantial_scope = (affected_pages >= 3) or (scope_ratio >= 0.20)
+        is_multi_page_outage = (affected_pages >= 3) or (affected_pages >= 2 and scope_ratio >= 0.20)
 
-        if is_important_page or is_substantial_scope:
+        if is_important_page or is_multi_page_outage:
             return "P0"
         else:
             # Isolated single deep page HTTP 500

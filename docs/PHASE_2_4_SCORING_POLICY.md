@@ -130,8 +130,8 @@ Remediation items are prioritized deterministically into 4 tiers with evidence a
 ### 8.3 HTTP 5xx Priority Gating
 - Confirmed 5xx classification strictly requires real response evidence where `500 <= http_status <= 599`.
 - Missing HTTP evidence or HTTP 200 mislabeled as 500 is demoted to `P2`.
-- Isolated deep page 500 errors are classified as `P1`.
-- `P0` classification strictly requires confirmed entrance outage (root homepage or seed URL 500) or site-wide impact ($\ge 3$ affected pages).
+- A single isolated non-seed, non-homepage HTTP 500 cannot receive `P0` based on percentage alone (e.g., 1 out of 2 pages or 1 out of 5 pages is strictly `P1`).
+- `P0` classification strictly requires confirmed entrance outage (root homepage or seed URL 500) or substantiated multi-page serious outage ($\ge 3$ affected pages, or $\ge 2$ pages with $\ge 20\%$ scope ratio).
 
 ### 8.4 Canonical Scoring Fingerprint Schema (`v2.4d`)
 - Shared canonical fingerprint builder incorporates audit metadata, policy version, category weights, page-level fetch statuses, HTTP status codes, canonical targets, redirect counts, render statuses, and canonicalized rule assessments.

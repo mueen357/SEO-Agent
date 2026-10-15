@@ -7,7 +7,7 @@
 - **Working Branch:** `fix/phase2-4d-release-reliability`
 - **Task Status:** **COMPLETED (PASS)** (Local commits CP1–CP4 verified, test suites 100% passing, push blocked pending interactive terminal credential entry)
 - **Baseline Test Counts:**
-  - Backend: **261 passed** out of 261 (increased from 220 baseline in Task 2.4C; +41 new regression & E2E tests)
+  - Backend: **267 passed** out of 267 (increased from 220 baseline in Task 2.4C; +47 new regression & E2E tests, including 6 P0 scope hotfix tests)
   - Frontend: **56 passed** out of 56 (Vitest)
   - TypeScript: **0 errors** (`npx tsc --noEmit`)
   - Extension Build: **427.07 kB** clean production bundle (`npm run build`)
@@ -50,13 +50,13 @@
 - **Implementation Fix (`backend/app/scoring/priorities.py`):**
   1. **Evidence Verification:** Confirmed HTTP 5xx classification strictly requires real response status evidence where `500 <= http_status <= 599`.
   2. **Demotion of Missing / False Evidence:** Missing HTTP status evidence or HTTP 200 mislabeled as 500 is immediately demoted to `P2`.
-  3. **Scope & Impact Gating:**
+  3. **Scope & Impact Gating (Hardened in P0 Scope Hotfix):**
      - Root homepage 500 $\rightarrow$ **P0** (entrance blocker).
      - Seed URL 500 $\rightarrow$ **P0** (crawl entry blocker).
      - Redirected seed final URL 500 $\rightarrow$ **P0** (crawl entry blocker).
-     - Widespread 500 errors ($\ge 3$ affected pages) $\rightarrow$ **P0** (site-wide infrastructure failure).
-     - Isolated deep page 500 (e.g. `/contact` or `/products/item`) $\rightarrow$ **P1** (high priority page failure, but not catastrophic site-wide outage).
-  4. **Regression Tests (`backend/tests/test_seed_and_5xx_priorities.py`):** 15 tests covering homepage 500, deep contact 500, product item 500, seed 500, redirected seed 500, 3+ pages 500, missing HTTP evidence, HTTP 200, invalid URLs, and canonical conflict emergency prevention.
+     - Substantiated multi-page serious outage ($\ge 3$ affected pages, or $\ge 2$ pages with $\ge 20\%$ scope ratio) $\rightarrow$ **P0** (site-wide infrastructure failure).
+     - Isolated non-seed, non-homepage deep page 500 (e.g. 1 out of 2 pages or 1 out of 5 pages) $\rightarrow$ **P1** (a single isolated page failure cannot receive P0 based on percentage alone).
+  4. **Regression Tests (`backend/tests/test_seed_and_5xx_priorities.py`):** 21 tests covering homepage 500, deep contact 500, product item 500, seed 500, redirected seed 500, 3+ pages 500, 1 out of 2 pages -> P1, 1 out of 5 pages -> P1, missing HTTP evidence, HTTP 200, invalid URLs, and canonical conflict emergency prevention.
 
 ---
 
@@ -95,7 +95,8 @@
 | **CP1** | `32f4dc22c2a0562e15bc9571be9b85c150337bfe` | `fix(scoring): implement strict eligibility gates and rule family coverage tracking (CP1)` |
 | **CP2** | `1e3f7f4bfd192ca181cb2aa0ea2277d0137d6dd6` | `fix(scoring): harden seed/homepage resolution and HTTP 5xx priority classification (CP2)` |
 | **CP3** | `ef8ff1f9e2bf404ec90924aa96dfd280e2f5b61b` | `fix(scoring): canonicalize scoring fingerprint inputs across service and engine (CP3)` |
-| **CP4** | *(Pending)* | `docs(release): document Phase 2 Task 2.4D reliability fixes, test evidence, and release verification (CP4)` |
+| **CP4** | `bb7c5aab196bb12d9dec1501760a9781109a4d0d` | `docs(release): document Phase 2 Task 2.4D reliability fixes, test evidence, and release verification (CP4)` |
+| **CP5** | *(Pending)* | `fix(scoring): prevent isolated deep 500 from triggering P0 on percentage alone (CP5)` |
 
 ---
 

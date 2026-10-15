@@ -373,10 +373,10 @@
      - Zero credential helper bridges, custom askpass scripts, or credential-manager dumps created or executed.
      - Safe non-interactive git authentication verification without disclosing secrets or tokens.
   7. **Full Verification Metrics:**
-     - **Backend Pytest:** **261 passed** out of 261 (100% pass rate, 56.27s execution).
+     - **Backend Pytest:** **267 passed** out of 267 (100% pass rate, 74.36s execution; includes 6 dedicated P0 HTTP 5xx scope hotfix regression tests).
      - **Frontend Vitest:** **56 passed** out of 56 (100% pass rate, 5 test files, 6.18s execution).
      - **TypeScript Typecheck:** `tsc --noEmit` exited 0 (clean, 0 errors).
      - **Extension Build:** `wxt build` clean in 3.06s (total bundle: 427.07 kB).
      - **Alembic Head:** Confirmed at revision `0007_add_scoring_and_priorities` (head). Migration 0008 not needed or created.
      - **Canonical Database:** `backend/siteaudit.db` preserved intact.
-     - **Checkpoints Committed:** CP1 (`32f4dc2`), CP2 (`1e3f7f4`), CP3 (`ef8ff1f`), CP4 (Documentation & release verification).
+     - **Checkpoints Committed:** CP1 (`32f4dc2`), CP2 (`1e3f7f4`), CP3 (`ef8ff1f`), CP4 (`bb7c5aa`), CP5 (P0 HTTP 5xx scope hotfix & regression suite).

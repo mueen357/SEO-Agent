@@ -261,3 +261,93 @@ def test_compute_priority_items_deterministic_ranking():
     # Missing Title is also P1
     title_item = next(it for it in items if it["title"] == "Missing Title")
     assert title_item["priority_tier"] == "P1"
+
+
+# =========================================================================
+# REGRESSION SUITE: ISOLATED 500 SCOPE HOTFIX
+# =========================================================================
+
+def test_one_deep_500_out_of_two_pages_is_p1():
+    """One isolated deep 500 out of two pages (50% scope) must NOT receive P0 based on percentage alone."""
+    tier = classify_priority_tier(
+        rule_id="TECH_HTTP_5XX",
+        severity="critical",
+        affected_pages=1,
+        total_pages=2,
+        evidence={"http_status": 500, "page_url": "https://example.com/deep/page"},
+        is_root_homepage=False,
+        is_seed_page=False,
+    )
+    assert tier == "P1"
+
+
+def test_one_deep_500_out_of_five_pages_is_p1():
+    """One isolated deep 500 out of five pages (20% scope) must NOT receive P0 based on percentage alone."""
+    tier = classify_priority_tier(
+        rule_id="TECH_HTTP_5XX",
+        severity="critical",
+        affected_pages=1,
+        total_pages=5,
+        evidence={"http_status": 500, "page_url": "https://example.com/deep/page"},
+        is_root_homepage=False,
+        is_seed_page=False,
+    )
+    assert tier == "P1"
+
+
+def test_confirmed_homepage_500_is_p0():
+    """Confirmed HTTP 500 on homepage is P0 even if only 1 page is affected."""
+    tier = classify_priority_tier(
+        rule_id="TECH_HTTP_5XX",
+        severity="critical",
+        affected_pages=1,
+        total_pages=2,
+        evidence={"http_status": 500, "page_url": "https://example.com/"},
+        is_root_homepage=True,
+        is_seed_page=False,
+    )
+    assert tier == "P0"
+
+
+def test_confirmed_seed_500_is_p0():
+    """Confirmed HTTP 500 on seed URL is P0 even if seed is a deep URL."""
+    tier = classify_priority_tier(
+        rule_id="TECH_HTTP_5XX",
+        severity="critical",
+        affected_pages=1,
+        total_pages=2,
+        evidence={"http_status": 500, "page_url": "https://example.com/contact"},
+        is_root_homepage=False,
+        is_seed_page=True,
+    )
+    assert tier == "P0"
+
+
+def test_widespread_confirmed_5xx_is_p0():
+    """Widespread confirmed 5xx (>= 3 pages) escalates to P0."""
+    tier = classify_priority_tier(
+        rule_id="TECH_HTTP_5XX",
+        severity="high",
+        affected_pages=3,
+        total_pages=100,
+        evidence={"http_status": 502},
+        is_root_homepage=False,
+        is_seed_page=False,
+    )
+    assert tier == "P0"
+
+
+def test_missing_http_evidence_not_p0_p1():
+    """Missing HTTP status evidence is strictly excluded from P0 and P1."""
+    tier = classify_priority_tier(
+        rule_id="TECH_HTTP_5XX",
+        severity="critical",
+        affected_pages=5,
+        total_pages=5,
+        evidence={},
+        is_root_homepage=True,
+        is_seed_page=True,
+    )
+    assert tier not in ("P0", "P1")
+    assert tier == "P2"
+

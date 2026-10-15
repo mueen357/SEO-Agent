@@ -3,7 +3,7 @@
 ## 1. Test Suite Summary
 | Suite | Task 2.4 Baseline | Task 2.4B Verified | Task 2.4C Final | Task 2.4D Released | Status | Pass Rate |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Backend (pytest)** | 152 | 174 | 220 | **261** | **PASSED** | **100% (261/261)** |
+| **Backend (pytest)** | 152 | 174 | 220 | **267** | **PASSED** | **100% (267/267)** |
 | **Frontend (vitest)** | 45 | 56 | 56 | **56** | **PASSED** | **100% (56/56)** |
 | **TypeScript (`tsc --noEmit`)** | Clean | 0 errors | 0 errors | **0 errors** | **PASSED** | **100%** |
 | **Extension Production Build** | Passing | Built (3.04s) | Built (5.64s, 427 kB) | **Built (3.06s, 427 kB)** | **PASSED** | **100%** |
@@ -75,7 +75,7 @@ The Task 2.4D release introduces 4 new test modules expanding backend coverage f
    - Unknown-only evidence -> null score, insufficient_evidence
    - N/A-only assessments -> null score, insufficient_evidence
    - Quick Page Audit vs Complete Full Audit requirements
-2. **Seed & HTTP 5xx Prioritization (`backend/tests/test_seed_and_5xx_priorities.py` - 15 tests):**
+2. **Seed & HTTP 5xx Prioritization (`backend/tests/test_seed_and_5xx_priorities.py` - 21 tests):**
    - Root homepage detection (`normalize_priority_url` and `resolve_page_importance`)
    - Deep `/contact` page identified as deep page, never domain homepage
    - Deep seed URL identified as seed, not domain homepage
@@ -91,6 +91,13 @@ The Task 2.4D release introduces 4 new test modules expanding backend coverage f
    - HTTP 200 mislabeled as 500 demoted to P2
    - Canonical conflicts not automatically treated as emergencies
    - Deterministic ranking and tie-breaking order
+   - **Hotfix Regression Suite (Isolated 500 Scope Gating):**
+     - One deep 500 out of two pages (50% scope) -> P1 (percentage alone cannot trigger P0)
+     - One deep 500 out of five pages (20% scope) -> P1
+     - Confirmed homepage 500 -> P0
+     - Confirmed seed 500 -> P0
+     - Widespread confirmed 5xx (>= 3 pages) -> P0
+     - Missing HTTP status evidence -> strictly excluded from P0/P1 (demoted to P2)
 3. **Canonical Scoring Fingerprint Consistency (`backend/tests/test_scoring_fingerprint_consistency.py` - 12 tests):**
    - Identical evidence produces identical SHA-256 hash
    - Database row reordering produces identical hash

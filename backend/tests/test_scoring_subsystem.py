@@ -149,7 +149,9 @@ def test_coverage_state_transitions():
 
 def test_priority_tier_classification():
     assert classify_priority_tier("TECH_REDIRECT_LOOP", "high") == "P0"
-    assert classify_priority_tier("TECH_HTTP_5XX", "high", evidence={"http_status": 500}) == "P0"
+    assert classify_priority_tier("TECH_HTTP_5XX", "high", evidence={"http_status": 500}, is_root_homepage=True) == "P0"
+    assert classify_priority_tier("TECH_HTTP_5XX", "high", affected_pages=3, evidence={"http_status": 500}) == "P0"
+    assert classify_priority_tier("TECH_HTTP_5XX", "high", evidence={"http_status": 500}) == "P1"  # Isolated non-seed deep 500 is P1
     assert classify_priority_tier("TECH_HTTP_5XX", "high", evidence={}) == "P2"  # Missing evidence demotes to P2
     assert classify_priority_tier("ONPAGE_TITLE_PRESENT", "high") == "P1"
     assert classify_priority_tier("SITE_INTERNAL_LINK_TO_4XX", "high") == "P1"
