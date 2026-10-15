@@ -75,6 +75,22 @@ export async function checkBackendHealth(baseUrl: string = DEFAULT_API_BASE): Pr
 }
 
 /**
+ * Safely extracts human-readable error messages from diverse API response formats.
+ */
+export function extractApiErrorMessage(errorBody: any, defaultFallback: string): string {
+  if (errorBody?.error?.message && typeof errorBody.error.message === 'string') {
+    return errorBody.error.message;
+  }
+  if (typeof errorBody?.detail === 'string') {
+    return errorBody.detail;
+  }
+  if (typeof errorBody?.message === 'string') {
+    return errorBody.message;
+  }
+  return defaultFallback;
+}
+
+/**
  * Create a persistent audit record (POST /api/v1/audits)
  */
 export async function createAudit(
@@ -98,7 +114,7 @@ export async function createAudit(
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
-    const message = errorBody?.error?.message || `Failed to create audit (HTTP ${response.status})`;
+    const message = extractApiErrorMessage(errorBody, `Failed to create audit (HTTP ${response.status})`);
     throw new Error(message);
   }
 
@@ -119,7 +135,7 @@ export async function getAudit(
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
-    const message = errorBody?.error?.message || `Failed to retrieve audit (HTTP ${response.status})`;
+    const message = extractApiErrorMessage(errorBody, `Failed to retrieve audit (HTTP ${response.status})`);
     throw new Error(message);
   }
 
@@ -218,7 +234,7 @@ export async function startAudit(
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
-    const message = errorBody?.error?.message || `Failed to start audit (HTTP ${response.status})`;
+    const message = extractApiErrorMessage(errorBody, `Failed to start audit (HTTP ${response.status})`);
     throw new Error(message);
   }
 

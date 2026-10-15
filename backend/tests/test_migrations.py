@@ -27,3 +27,22 @@ def test_reversible_alembic_migrations():
 
         # 3. Upgrade to head again
         command.upgrade(alembic_cfg, "head")
+
+        # 4. Assert model-schema parity across all tables and columns
+        import sqlite3
+        from app.database.base import Base
+        import app.database.models
+
+        conn = sqlite3.connect(test_db)
+        cursor = conn.cursor()
+        for table_name, table in Base.metadata.tables.items():
+            cursor.execute(f"PRAGMA table_info({table_name});")
+            db_cols = {row[1] for row in cursor.fetchall()}
+            assert db_cols, f"Table {table_name} missing from migrated database"
+            for col in table.columns:
+                assert col.name in db_cols, (
+                    f"Column '{col.name}' of table '{table_name}' missing from migrated database schema. "
+                    f"Did you forget an Alembic migration?"
+                )
+        conn.close()
+

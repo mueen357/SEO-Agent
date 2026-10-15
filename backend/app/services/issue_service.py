@@ -567,3 +567,7 @@ class IssueService:
             by_status=data.get("by_status", {}),
             rules_executed_count=data.get("rules_executed_count", 0),
         )
+
+    # Convenience alias for run_analysis
+    analyze_audit = run_analysis
+
