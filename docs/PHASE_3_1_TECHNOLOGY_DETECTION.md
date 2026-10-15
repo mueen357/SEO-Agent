@@ -8,7 +8,7 @@ The Technology & CMS Detection Engine is a modular, deterministic, passive finge
 1. **Zero Active Probing / 100% Passive Classification:** The engine strictly classifies technologies using evidence already collected and persisted by the crawl pipeline (`CrawlPage.technology_evidence_json`, `CrawlPage.response_headers`). It never initiates unvalidated HTTP requests, never attempts admin logins, never performs directory brute-forcing, and preserves existing Server-Side Request Forgery (SSRF) protections.
 2. **Deterministic, Evidence-Based Confidence Scoring:** Every finding is grounded in explicit evidence items with verified weights. Confidence is computed through a mathematically bounded saturation formula with multi-signal dampening and cross-page corroboration.
 3. **Technology Coexistence Support:** Modern websites frequently compose layered technology stacks (e.g., WordPress + PHP, Next.js + React, Shopify + custom frontend). The engine detects multiple concurrent technologies without forcing an arbitrary single-winner classification.
-4. **Honest Version & Status Reporting:** Versions are only reported when verified from explicit generator metadata, asset query parameters (e.g., `?ver=`), or structured comments. The engine never guesses versions (`version_or_null = None`). Status tiers explicitly distinguish `detected` ($\ge 0.55$), `possible` ($0.30 - 0.54$), and `unknown` ($< 0.30$).
+4. **Honest Version & Status Reporting:** Versions are only reported when verified from explicit generator metadata, asset query parameters (e.g., `?ver=`), or structured comments. The engine never guesses versions (`version_or_null = None`). Status tiers explicitly distinguish `detected` ($\ge 0.70$), `possible` ($0.40 \le \text{confidence} < 0.70$), and `unknown` ($< 0.40$). Confidence levels follow: `high` ($\ge 0.85$), `medium` ($0.50 \le \text{confidence} < 0.85$), and `low` ($< 0.50$).
 5. **Bounded Storage & Deduplication:** Evidence items and affected URLs are deduplicated across multiple crawled pages. Payloads in the relational database are strictly bounded.
 
 ---
@@ -118,7 +118,7 @@ $$\text{combined} = 1.0 - \prod_{i=1}^n (1.0 - w_i)$$
 
 Where:
 - Single weak signals ($w \le 0.25$) are capped at maximum confidence $0.25$ and status `unknown`.
-- Multiple weak signals require corroboration to reach status `possible` ($0.30 - 0.54$).
+- Multiple weak signals require corroboration to reach status `possible` ($0.40 \le \text{confidence} < 0.70$).
 - Confirmed single authoritative signals (e.g. `meta generator="WordPress 6.4"`) yield confidence $\ge 0.70$ and status `detected`.
 - Multi-page observation adds up to $+0.15$ cross-page corroboration boost.
 - Maximum confidence is mathematically clamped to $[0.0, 1.0]$.
@@ -126,9 +126,9 @@ Where:
 ### 4.2 Status & Confidence Tiers
 | Confidence Score | Confidence Level | Status | Meaning |
 |---|---|---|---|
-| $\ge 0.55$ | `high` / `medium` | `detected` | Definite presence supported by strong or corroborated evidence. |
-| $0.30 - 0.54$ | `medium` / `low` | `possible` | Indicative signals present; plausible but unconfirmed. |
-| $< 0.30$ | `low` | `unknown` | Weak or solitary hint; insufficient for confirmation. |
+| $\ge 0.70$ | `high` ($\ge 0.85$) / `medium` ($0.70 - 0.84$) | `detected` | Definite presence supported by strong or corroborated evidence. |
+| $0.40 - 0.69$ | `medium` ($0.50 - 0.69$) / `low` ($0.40 - 0.49$) | `possible` | Indicative signals present; plausible but unconfirmed. |
+| $< 0.40$ | `low` | `unknown` | Weak or solitary hint; insufficient for confirmation. |
 
 ### 4.3 Evidence Item Model
 Every finding records the granular evidence trail:

@@ -405,7 +405,8 @@
      - Strictly passive: zero login probing, zero admin enumeration, zero directory brute forcing.
   4. **Confidence Saturation & Status Tiers (`backend/app/technology/models.py` & `detector.py`):**
      - Mathematically bounded saturation formula with dampening and cross-page corroboration boost.
-     - Status tiers: `detected` (>= 0.55), `possible` (0.30 - 0.54), and `unknown` (< 0.30).
+     - Authoritative status tiers: `detected` (>= 0.70), `possible` (0.40 <= conf < 0.70), and `unknown` (< 0.40).
+      - Confidence levels: `high` (>= 0.85), `medium` (0.50 - 0.84), and `low` (< 0.50).
   5. **Persistence & Alembic Migration 0008:**
      - Created reversible Alembic migration `0008_add_technology_detection_tables.py` adding `technology_evidence_json` to `crawl_pages`, and creating `audit_technologies` and `audit_technology_summaries` tables.
      - Tested full upgrade -> downgrade -> upgrade lifecycle on disposable test database.
@@ -422,4 +423,48 @@
      - **Extension Build:** `wxt build` succeeded in 2.92s (bundle size: 427.07 kB).
      - **SEO Rules Registry:** 51 registered SEO rules verified intact.
      - **Chrome Smoke Test:** GUI TEST PENDING (headless environment).
+
+---
+
+### Task 3.2 — Technology & CMS Detection Dashboard
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-15
+- **Working Branch:** `feature/phase3-2-technology-dashboard` (branched from verified Task 3.1 HEAD `71be80441ce79c40433305da328fa5a9c7173e8e`)
+- **Completed Components:**
+  1. **Preflight Accuracy & Security Hardening:**
+     - Reconciled documentation mismatch: confirmed authoritative backend thresholds (`detected >= 0.70`, `possible 0.40 - 0.69`, `unknown < 0.40`).
+     - Conservative WordPress asset version treatment: query parameter `?ver=` displayed as unverified asset hint (`Asset hint: v{ver} (Unverified release)`). Never fabricated as verified installed releases.
+     - Safe cookie signal handling: crawler engine only extracts known cookie names (`HeaderTechnologyExtractor.KNOWN_COOKIE_NAMES`) with dummy placeholder values (`name=1`), ensuring sensitive credentials and authentication tokens are never stored, logged, or displayed.
+     - Zero-page audit guard: `analyze_audit` rejects audits with 0 crawled pages (`HTTPException 400`) to prevent false-positive site determinations.
+  2. **Production TechnologyDashboard Component (`extension/components/audit/TechnologyDashboard.tsx`):**
+     - React 19 + TypeScript, Tailwind CSS, dark navy / cyan aesthetic, and Lucide icons.
+     - Section A (Overview): Primary CMS, total count, detected vs possible badges, confidence distribution (high, med, low), and WP component summary.
+     - Section B (CMS & Site Builders): Evidence-backed findings for WordPress, Shopify, Wix, Webflow, Squarespace.
+     - Section C (Frontend Frameworks): Accurate concurrent coexistence (e.g. Next.js + React).
+     - Section D (Backend Runtimes): Observed vs inferred runtimes (PHP, Node.js, Laravel, Django).
+     - Section E (WordPress Themes): Active vs referenced theme disambiguation and unverified version disclaimer.
+     - Section F (WordPress Plugins): Public observable asset paths and HTML comment detection with explicit detection boundary disclosure.
+  3. **Evidence Inspector:**
+     - Accessible disclosure controls (`role="button"`, `tabIndex={0}`, keyboard navigation on Enter/Space).
+     - Strict string escaping with standard text nodes (0 instances of `dangerouslySetInnerHTML`).
+     - Monospace bounding, break-all, and scrollable containers for long URLs and signal provenance items.
+  4. **Filtering, Search, and Pagination UX:**
+     - Text search across technology name, category, and evidence summary.
+     - Category, status, and confidence level filters with clear filter action.
+     - Pagination at 20 items per page with page indicator and controls.
+     - Re-analyze and refresh actions with loading spinners and disabled state protections.
+  5. **10 Distinct UI States Handled Gracefully:**
+     - `NO AUDIT SELECTED`, `BACKEND OFFLINE`, `AUDIT RUNNING`, `INSUFFICIENT EVIDENCE (0 pages)`, `AUDIT NOT ANALYZED (404 from summary handled gracefully)`, `LOADING/ANALYZING SPINNER`, `EMPTY / NO TECH DETECTED`, `SUCCESS`, and `API ERROR / RETRY`.
+  6. **Side Panel Integration (`extension/entrypoints/sidepanel/App.tsx`):**
+     - Added fifth full audit subview: `Technology & CMS` (`setFullAuditSubView('technologies')`).
+     - Preserved all 4 prior subviews: `health`, `pages`, `findings`, and `sitewide`.
+     - Updated Quick Page Audit placeholder with direct call-to-action button to switch to Full Website Audit mode.
+  7. **Comprehensive Verification Suite:**
+     - **Backend Pytest:** **307 passed** out of 307 (100% pass rate, 81.16s execution; +2 new preflight regression tests).
+     - **Frontend Vitest:** **79 passed** out of 79 across 7 test files (100% pass rate, 6.92s execution; +23 new tests in `technologyDashboard.test.tsx` and `technologyApi.test.ts`).
+     - **TypeScript Typecheck:** `tsc --noEmit` exited 0 (clean, 0 errors).
+     - **Extension Production Build:** `wxt build` succeeded in 2.072s (bundle size: 463.81 kB).
+     - **SEO Rules Registry:** 51 registered SEO rules verified intact.
+     - **Database Migrations:** Alembic revision 0008 (head) intact.
+     - **GUI Validation:** GUI TEST PENDING (headless execution environment).
 
