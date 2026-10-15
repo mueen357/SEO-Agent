@@ -50,6 +50,12 @@ class TechnologyService:
         pages_res = await self.db.execute(pages_stmt)
         pages = pages_res.scalars().all()
 
+        if not pages:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Audit '{audit_id}' has 0 crawled pages. Cannot perform technology detection without crawl evidence.",
+            )
+
         page_findings_list: List[List[TechnologyFinding]] = []
         page_themes_list = []
         page_plugins_list = []

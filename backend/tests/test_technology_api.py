@@ -278,3 +278,24 @@ async def test_technology_audit_isolation(client: AsyncClient, test_db_session: 
     techs_b = {t["technology_id"] for t in res_b.json()["items"]}
     assert "django" in techs_b
     assert "webflow" not in techs_b
+
+
+@pytest.mark.asyncio
+async def test_technology_analyze_zero_pages(client: AsyncClient, test_db_session: AsyncSession):
+    """Verify analyze returns 400 Bad Request when audit has 0 crawled pages."""
+    audit = Audit(
+        target_url="https://empty-crawl.com",
+        normalized_url="https://empty-crawl.com/",
+        hostname="empty-crawl.com",
+        mode=AuditMode.full,
+        status=AuditStatus.completed,
+    )
+    test_db_session.add(audit)
+    await test_db_session.commit()
+
+    # Attempt to analyze audit with no pages crawled
+    res = await client.post(f"/api/v1/audits/{audit.id}/technologies/analyze")
+    assert res.status_code == 400
+    assert "0 crawled pages" in res.json()["detail"]
+    assert "Cannot perform technology detection without crawl evidence" in res.json()["detail"]
+

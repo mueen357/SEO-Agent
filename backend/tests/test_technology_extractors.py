@@ -156,3 +156,24 @@ def test_header_extractor_security_and_signals():
         assert "super_secret_session_token_12345" not in item.evidence_summary
         assert "sensitive_token" not in item.evidence_summary
         assert "Authorization" not in item.evidence_source
+
+
+def test_crawler_safe_cookie_name_capture():
+    """Verify crawler safe cookie extraction extracts known names only and drops secret values."""
+    import re
+    raw_cookie = "laravel_session=eyJpdiI6Inh4eCIsInZhbHVlIjoieXl5In0%3D; expires=Thu, 15 Oct 2026; path=/; HttpOnly; api_token=SECRET123; connect.sid=s%3A12345678"
+    cookie_names = [
+        m.group(1).lower()
+        for m in re.finditer(r"([a-zA-Z0-9_\-\.]+)\s*=", raw_cookie)
+    ]
+    safe_names = [c for c in set(cookie_names) if c in HeaderTechnologyExtractor.KNOWN_COOKIE_NAMES]
+    
+    assert "laravel_session" in safe_names
+    assert "connect.sid" in safe_names
+    assert "api_token" not in safe_names  # Untracked/sensitive cookie dropped
+
+    sanitized_header = "; ".join(f"{c}=1" for c in sorted(safe_names))
+    assert sanitized_header == "connect.sid=1; laravel_session=1"
+    assert "SECRET123" not in sanitized_header
+    assert "eyJpdiI" not in sanitized_header
+

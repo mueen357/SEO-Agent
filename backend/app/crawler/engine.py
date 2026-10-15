@@ -7,6 +7,7 @@ rate limiting, cancellation, progress updates, and persistence callbacks.
 import asyncio
 from datetime import datetime, timezone
 import logging
+import re
 import time
 from typing import Any, Callable, Coroutine
 
@@ -18,6 +19,7 @@ from app.crawler.policies import CrawlConfig, FetchResult
 from app.crawler.robots import RobotsChecker
 from app.crawler.scope import CrawlScope
 from app.crawler.sitemap import SitemapParser, SitemapResult
+from app.technology.extractors.header_extractor import HeaderTechnologyExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +178,16 @@ class CrawlEngine:
                 for k, v in fetch_res.headers.items()
                 if k.lower() in SAFE_HEADERS
             }
+            # Safe cookie-name-only extraction (names only, values/tokens strictly discarded for security)
+            raw_set_cookie = fetch_res.headers.get("set-cookie") or fetch_res.headers.get("Set-Cookie")
+            if raw_set_cookie:
+                cookie_names = [
+                    m.group(1).lower()
+                    for m in re.finditer(r"([a-zA-Z0-9_\-\.]+)\s*=", str(raw_set_cookie))
+                ]
+                safe_names = [c for c in set(cookie_names) if c in HeaderTechnologyExtractor.KNOWN_COOKIE_NAMES]
+                if safe_names:
+                    safe_headers["set-cookie"] = "; ".join(f"{c}=1" for c in sorted(safe_names))
             page_data = {
                 "requested_url": fetch_res.requested_url,
                 "headers_json": safe_headers,

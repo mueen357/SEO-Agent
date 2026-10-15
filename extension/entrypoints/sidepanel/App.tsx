@@ -32,6 +32,7 @@ import { PageDetailsModal } from '../../components/audit/PageDetailsModal';
 import { SeoFindingsView } from '../../components/audit/SeoFindingsView';
 import { SiteWideIntelligenceView } from '../../components/audit/SiteWideIntelligenceView';
 import { SeoHealthDashboard } from '../../components/audit/SeoHealthDashboard';
+import { TechnologyDashboard } from '../../components/audit/TechnologyDashboard';
 
 import { getActiveTab } from '../../services/tab';
 import {
@@ -91,7 +92,7 @@ export default function App() {
   const [pagesCurrentPage, setPagesCurrentPage] = useState(1);
   const [pagesTotalPages, setPagesTotalPages] = useState(0);
   const [selectedPage, setSelectedPage] = useState<CrawlPageItem | null>(null);
-  const [fullAuditSubView, setFullAuditSubView] = useState<'health' | 'pages' | 'findings' | 'sitewide'>('health');
+  const [fullAuditSubView, setFullAuditSubView] = useState<'health' | 'pages' | 'findings' | 'sitewide' | 'technologies'>('health');
   const [isFullAuditing, setIsFullAuditing] = useState(false);
 
   const pollingRef = useRef<number | null>(null);
@@ -367,6 +368,16 @@ export default function App() {
             >
               Site-Wide Intelligence
             </button>
+            <button
+              onClick={() => setFullAuditSubView('technologies')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                fullAuditSubView === 'technologies'
+                  ? 'bg-slate-800 text-cyan-400 border border-slate-700'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              Technology & CMS
+            </button>
           </div>
 
           {fullAuditSubView === 'health' ? (
@@ -394,11 +405,21 @@ export default function App() {
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}
             />
-          ) : (
+          ) : fullAuditSubView === 'sitewide' ? (
             <SiteWideIntelligenceView
               auditId={fullAudit?.id || null}
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}
+            />
+          ) : (
+            <TechnologyDashboard
+              auditId={fullAudit?.id || null}
+              isBackendOnline={health?.status === 'ok'}
+              isAuditRunning={isFullAuditing}
+              onSwitchToFullAudit={() => {
+                setAuditMode('full');
+                setFullAuditSubView('technologies');
+              }}
             />
           )}
         </main>
@@ -523,20 +544,34 @@ export default function App() {
               </div>
             )}
 
-            {/* Placeholders for Future Phases */}
+            {/* Quick Mode Technology Navigation: Prompts Full Website Audit */}
             {activeNav === 'technology' && (
-              <PlaceholderSection
-                title="Technology & CMS Detection"
-                phase="Phase 3"
-                description="Automatic detection of CMS platforms (WordPress, Shopify, Webflow), JavaScript frameworks, server technology, and third-party tracking scripts."
-                icon={Cpu}
-                features={[
-                  'CMS and Theme Fingerprinting',
-                  'Active Plugins and Version Detection',
-                  'Analytics and Tag Manager Auditing',
-                  'Server Header and CDN Inspection'
-                ]}
-              />
+              <div className="p-4 space-y-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-center">
+                  <div className="w-12 h-12 bg-cyan-950/60 border border-cyan-800/60 rounded-xl flex items-center justify-center mx-auto mb-3 text-cyan-400">
+                    <Cpu className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-base font-semibold text-slate-100">Technology & CMS Detection</h3>
+                  <p className="text-xs text-slate-400 mt-2 max-w-sm mx-auto leading-relaxed">
+                    Technology fingerprinting analyzes multi-page crawl headers, DOM signatures, WordPress themes, plugins, and frontend/backend frameworks across your entire site.
+                  </p>
+                  <div className="mt-4 pt-4 border-t border-slate-800 flex flex-col items-center">
+                    <p className="text-xs text-slate-400 mb-3">
+                      To run technology detection with full evidence, switch to a <strong className="text-slate-200">Full Website Audit</strong>.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setAuditMode('full');
+                        setFullAuditSubView('technologies');
+                      }}
+                      className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <Cpu className="w-3.5 h-3.5" />
+                      <span>Switch to Full Website Audit</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {activeNav === 'technical_seo' && (
