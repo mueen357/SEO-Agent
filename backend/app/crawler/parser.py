@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from app.content import MainContentExtractor
 from app.crawler.normalizer import normalize_url
 from app.crawler.scope import CrawlScope
+from app.technology.extractors import HTMLTechnologyExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,9 @@ class ParsedPageData:
     extraction_source: str = "empty"
     extraction_version: str = "1.0.0"
     content_quality_status: str = "empty"
+
+    # Technology detection passive evidence
+    technology_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 class HTMLPageParser:
@@ -202,6 +206,9 @@ class HTMLPageParser:
                     )
                 )
 
+        # 9. Passive technology evidence
+        tech_evidence = HTMLTechnologyExtractor.extract(html_input=html_bytes, soup=soup).to_dict()
+
         return ParsedPageData(
             title=title,
             meta_description=meta_desc,
@@ -225,4 +232,5 @@ class HTMLPageParser:
             extraction_source=content_res.extraction_source,
             extraction_version=content_res.extraction_version,
             content_quality_status=content_res.content_quality_status,
+            technology_evidence=tech_evidence,
         )

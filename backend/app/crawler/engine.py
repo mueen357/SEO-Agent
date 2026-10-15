@@ -167,6 +167,9 @@ class CrawlEngine:
             SAFE_HEADERS = {
                 "x-robots-tag", "content-type", "location", "strict-transport-security",
                 "cache-control", "etag", "last-modified", "server",
+                "x-powered-by", "x-generator", "x-aspnet-version", "x-aspnetmvc-version",
+                "x-drupal-cache", "x-shopify-stage", "x-wix-request-id", "x-wix-published-version",
+                "x-nextjs-cache", "x-nextjs-matched-path", "x-varnish", "x-ghost-cache-status",
             }
             safe_headers = {
                 k.lower(): str(v)[:500]
@@ -176,6 +179,7 @@ class CrawlEngine:
             page_data = {
                 "requested_url": fetch_res.requested_url,
                 "headers_json": safe_headers,
+                "technology_evidence_json": getattr(parsed, "technology_evidence", {}),
                 "canonical_tag_count": getattr(parsed, "canonical_tag_count", None),
                 "canonical_hrefs_json": getattr(parsed, "canonical_hrefs", []),
                 "normalized_main_text_hash": getattr(parsed, "normalized_main_text_hash", None),
