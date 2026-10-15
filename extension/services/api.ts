@@ -19,6 +19,9 @@ import type {
   PrioritiesResponse,
   ScoreBreakdownData,
   ScoreCoverageData,
+  AnalyzeTechnologiesResponse,
+  TechnologyListResponse,
+  TechnologySummaryResponse,
   BackendHealthResponse,
   CreateAuditRequest,
   ListAuditsParams,
@@ -554,3 +557,82 @@ export async function getAuditPriorities(
 
   return response.json();
 }
+
+/**
+ * Trigger technology and CMS analysis (POST /api/v1/audits/{id}/technologies/analyze)
+ */
+export async function analyzeTechnologies(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AnalyzeTechnologiesResponse> {
+  const url = `${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/technologies/analyze`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to analyze technologies (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve detected technologies list (GET /api/v1/audits/{id}/technologies)
+ */
+export async function getAuditTechnologies(
+  auditId: string,
+  params: {
+    category?: string;
+    status?: string;
+    min_confidence?: number;
+    page?: number;
+    page_size?: number;
+  } = {},
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<TechnologyListResponse> {
+  const query = new URLSearchParams();
+  if (params.category) query.set('category', params.category);
+  if (params.status) query.set('status', params.status);
+  if (params.min_confidence !== undefined) query.set('min_confidence', params.min_confidence.toString());
+  if (params.page) query.set('page', params.page.toString());
+  if (params.page_size) query.set('page_size', params.page_size.toString());
+
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  const url = `${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/technologies${qs}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch technologies (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Retrieve technology summary (GET /api/v1/audits/{id}/technologies/summary)
+ */
+export async function getAuditTechnologySummary(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<TechnologySummaryResponse> {
+  const url = `${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/technologies/summary`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch technology summary (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+

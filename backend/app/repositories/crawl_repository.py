@@ -65,6 +65,7 @@ class CrawlRepository:
             internal_link_count=page_data.get("internal_link_count", 0),
             external_link_count=page_data.get("external_link_count", 0),
             content_hash=page_data.get("content_hash"),
+            technology_evidence_json=page_data.get("technology_evidence_json", {}),
             error_message=page_data.get("error_message"),
             fetched_at=page_data.get("fetched_at", datetime.now(timezone.utc)),
         )

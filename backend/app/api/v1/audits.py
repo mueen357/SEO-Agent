@@ -6,6 +6,15 @@ from app.schemas.scoring import (
     ScorecardResponse,
 )
 from app.services.scoring_service import ScoringService
+from app.schemas.technology import (
+    AnalyzeTechnologiesResponse,
+    TechnologyFindingResponse,
+    TechnologyListResponse,
+    TechnologySummaryResponse,
+    WordPressPluginResponse,
+    WordPressThemeResponse,
+)
+from app.services.technology_service import TechnologyService
 """Audit lifecycle endpoints including start, pagination, pages, and sitemaps."""
 
 import math
@@ -440,3 +449,77 @@ async def get_audit_priorities(
         offset=offset,
         tier_counts=tier_counts,
     )
+
+
+@router.post(
+    "/{audit_id}/technologies/analyze",
+    response_model=AnalyzeTechnologiesResponse,
+    summary="Analyze Technologies & CMS",
+    description="Executes deterministic, passive technology detection across all crawled pages of an audit."
+)
+async def analyze_audit_technologies(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> AnalyzeTechnologiesResponse:
+    service = TechnologyService(db)
+    technologies, summary = await service.analyze_audit(audit_id)
+    return AnalyzeTechnologiesResponse(
+        message=f"Successfully analyzed technologies for audit '{audit_id}'. Found {len(technologies)} technologies.",
+        audit_id=audit_id,
+        technologies_detected=summary.total_detected,
+        primary_cms=summary.primary_cms,
+        technologies=[TechnologyFindingResponse.model_validate(t) for t in technologies],
+        wordpress_themes=[WordPressThemeResponse.model_validate(t) for t in summary.wordpress_themes_json],
+        wordpress_plugins=[WordPressPluginResponse.model_validate(p) for p in summary.wordpress_plugins_json],
+    )
+
+
+@router.get(
+    "/{audit_id}/technologies",
+    response_model=TechnologyListResponse,
+    summary="Get Detected Technologies",
+    description="Returns ordered, evidence-backed technologies observed across the audit."
+)
+async def get_audit_technologies(
+    audit_id: uuid.UUID,
+    category: Optional[str] = Query(None, description="Filter by category: cms, frontend, backend"),
+    status: Optional[str] = Query(None, description="Filter by status: detected, possible, unknown"),
+    min_confidence: Optional[float] = Query(None, ge=0.0, le=1.0, description="Minimum confidence threshold"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: AsyncSession = Depends(get_db)
+) -> TechnologyListResponse:
+    service = TechnologyService(db)
+    offset = (page - 1) * page_size
+    items, total, themes, plugins = await service.get_technologies(
+        audit_id=audit_id,
+        category=category,
+        status_filter=status,
+        min_confidence=min_confidence,
+        limit=page_size,
+        offset=offset,
+    )
+    return TechnologyListResponse(
+        items=[TechnologyFindingResponse.model_validate(it) for it in items],
+        total=total,
+        limit=page_size,
+        offset=offset,
+        wordpress_themes=[WordPressThemeResponse.model_validate(t) for t in themes],
+        wordpress_plugins=[WordPressPluginResponse.model_validate(p) for p in plugins],
+    )
+
+
+@router.get(
+    "/{audit_id}/technologies/summary",
+    response_model=TechnologySummaryResponse,
+    summary="Get Technology Executive Summary",
+    description="Returns executive summary of detected CMS, frontend frameworks, backend runtimes, themes, and plugins."
+)
+async def get_audit_technology_summary(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> TechnologySummaryResponse:
+    service = TechnologyService(db)
+    summary = await service.get_summary(audit_id=audit_id)
+    return TechnologySummaryResponse.model_validate(summary)
+

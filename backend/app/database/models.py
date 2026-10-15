@@ -94,6 +94,8 @@ class Audit(Base):
     site_finding_groups: Mapped[List["SiteFindingGroup"]] = relationship("SiteFindingGroup", back_populates="audit", cascade="all, delete-orphan")
     scorecard: Mapped[Optional["AuditScorecard"]] = relationship("AuditScorecard", back_populates="audit", uselist=False, cascade="all, delete-orphan")
     priority_items: Mapped[List["AuditPriorityItem"]] = relationship("AuditPriorityItem", back_populates="audit", cascade="all, delete-orphan")
+    technologies: Mapped[List["AuditTechnology"]] = relationship("AuditTechnology", back_populates="audit", cascade="all, delete-orphan")
+    technology_summary: Mapped[Optional["AuditTechnologySummary"]] = relationship("AuditTechnologySummary", back_populates="audit", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_audits_status_created_at", "status", "created_at"),
@@ -162,6 +164,7 @@ class CrawlPage(Base):
     external_link_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    technology_evidence_json: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     urls_json: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -453,4 +456,79 @@ class AuditPriorityItem(Base):
         Index("ix_audit_priority_items_audit_tier", "audit_id", "priority_tier"),
         Index("ix_audit_priority_items_audit_rank", "audit_id", "priority_rank"),
         Index("ix_audit_priority_items_group_fingerprint", "audit_id", "group_fingerprint", unique=True),
+    )
+
+
+class AuditTechnology(Base):
+    """Persisted evidence-backed technology determination for an audit."""
+
+    __tablename__ = "audit_technologies"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    audit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("audits.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    technology_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    technology_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    technology_category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence_level: Mapped[str] = mapped_column(String(20), nullable=False, default="low")
+    version_or_null: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    evidence_source: Mapped[str] = mapped_column(String(255), nullable=False)
+    evidence_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    observed_page_or_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    detection_method: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    affected_urls_json: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    evidence_items_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    audit: Mapped["Audit"] = relationship("Audit", back_populates="technologies")
+
+    __table_args__ = (
+        Index("ix_audit_technologies_audit_tech", "audit_id", "technology_id", unique=True),
+        Index("ix_audit_technologies_audit_category", "audit_id", "technology_category"),
+        Index("ix_audit_technologies_audit_status", "audit_id", "status"),
+    )
+
+
+class AuditTechnologySummary(Base):
+    """Executive summary of technologies, WordPress themes and plugins for an audit."""
+
+    __tablename__ = "audit_technology_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    audit_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("audits.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    primary_cms: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    frontend_frameworks_json: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    backend_runtimes_json: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+
+    total_detected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    detected_technologies_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    possible_technologies_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confidence_distribution_json: Mapped[Dict[str, int]] = mapped_column(JSON, nullable=False, default=dict)
+
+    wordpress_themes_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    wordpress_plugins_json: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    audit: Mapped["Audit"] = relationship("Audit", back_populates="technology_summary")
+
+    __table_args__ = (
+        Index("ix_audit_technology_summaries_audit_id", "audit_id", unique=True),
     )

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Website Audit Agent - Audit Data Models & Types
  */
 
@@ -510,3 +510,87 @@ export interface ScoreCoverageData {
   crawl_limit_hit: boolean;
   details: Record<string, any>;
 }
+
+export interface TechnologyFindingItem {
+  id: string;
+  audit_id: string;
+  technology_id: string;
+  technology_name: string;
+  technology_category: 'cms' | 'frontend' | 'backend' | 'ecommerce' | 'hosting' | 'other';
+  status: 'detected' | 'possible' | 'unknown';
+  confidence: number;
+  confidence_level: 'high' | 'medium' | 'low';
+  version_or_null: string | null;
+  evidence_type: string;
+  evidence_source: string;
+  evidence_summary: string;
+  observed_page_or_url: string;
+  detection_method: string;
+  page_count: number;
+  affected_urls: string[];
+  evidence_items: Array<{
+    evidence_type: string;
+    evidence_source: string;
+    evidence_summary: string;
+    observed_page_or_url: string;
+    detection_method: string;
+    raw_signal?: string | null;
+    weight: number;
+  }>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WordPressThemeItem {
+  slug: string;
+  name: string | null;
+  version: string | null;
+  status: 'active' | 'referenced' | 'unknown';
+  evidence_source: string;
+  confidence: number;
+  confidence_level: string;
+}
+
+export interface WordPressPluginItem {
+  slug: string;
+  name: string | null;
+  version: string | null;
+  evidence_source: string;
+  confidence: number;
+  confidence_level: string;
+}
+
+export interface TechnologyListResponse {
+  items: TechnologyFindingItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  wordpress_themes: WordPressThemeItem[];
+  wordpress_plugins: WordPressPluginItem[];
+}
+
+export interface TechnologySummaryResponse {
+  audit_id: string;
+  primary_cms: string | null;
+  frontend_frameworks: string[];
+  backend_runtimes: string[];
+  total_detected: number;
+  detected_technologies_count: number;
+  possible_technologies_count: number;
+  confidence_distribution: Record<string, number>;
+  wordpress_themes: WordPressThemeItem[];
+  wordpress_plugins: WordPressPluginItem[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnalyzeTechnologiesResponse {
+  message: string;
+  audit_id: string;
+  technologies_detected: number;
+  primary_cms: string | null;
+  technologies: TechnologyFindingItem[];
+  wordpress_themes: WordPressThemeItem[];
+  wordpress_plugins: WordPressPluginItem[];
+}
+

@@ -380,3 +380,46 @@
      - **Alembic Head:** Confirmed at revision `0007_add_scoring_and_priorities` (head). Migration 0008 not needed or created.
      - **Canonical Database:** `backend/siteaudit.db` preserved intact.
      - **Checkpoints Committed:** CP1 (`32f4dc2`), CP2 (`1e3f7f4`), CP3 (`ef8ff1f`), CP4 (`bb7c5aa`), CP5 (P0 HTTP 5xx scope hotfix & regression suite).
+
+---
+
+## Phase 3: Advanced Intelligence & Specialized Detection
+
+### Task 3.1 — Technology & CMS Detection Engine
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-15
+- **Working Branch:** `feature/phase3-1-technology-detection` (branched from verified Task 2.4D HEAD `32096712224d7e6bcfa57aa1082b44dc8d450e93`)
+- **Completed Components:**
+  1. **Passive Evidence Collection Architecture (`backend/app/technology/extractors/`):**
+     - `HTMLTechnologyExtractor`: High-performance parser extracting meta generator tags, script src URLs, stylesheet href URLs, DOM marker attributes (`id`, `data-*`, `ng-*`), inline bootstrap signatures (`__NEXT_DATA__`, `window.__NUXT__`), and structured HTML comments.
+     - `HeaderTechnologyExtractor`: Safe HTTP response header parser extracting `X-Powered-By`, `Server`, `X-Generator`, and cookie indicators while stripping sensitive authentication tokens, session secrets, and credentials.
+  2. **Rule-Based Classifiers & Coexistence Support (`backend/app/technology/classifiers/`):**
+     - CMS: WordPress, Shopify, Wix, Webflow, Squarespace, unknown/custom.
+     - Frontend: React, Next.js, Vue, Nuxt, Angular.
+     - Backend: PHP, Node.js, Laravel, Django.
+     - Supports concurrent coexistence (e.g., WordPress + PHP, Next.js + React) without forcing single-label classification.
+  3. **WordPress Theme & Plugin Subsystem (`backend/app/technology/wordpress.py`):**
+     - Theme detection with disambiguation between `active` (main stylesheet `style.css` / body class) vs `referenced` (secondary assets).
+     - Plugin detection from `/wp-content/plugins/{slug}/` paths and HTML comments.
+     - Honest version extraction via query parameter `?ver=` or comment regex. Unverified versions reported as `None`, never guessed.
+     - Strictly passive: zero login probing, zero admin enumeration, zero directory brute forcing.
+  4. **Confidence Saturation & Status Tiers (`backend/app/technology/models.py` & `detector.py`):**
+     - Mathematically bounded saturation formula with dampening and cross-page corroboration boost.
+     - Status tiers: `detected` (>= 0.55), `possible` (0.30 - 0.54), and `unknown` (< 0.30).
+  5. **Persistence & Alembic Migration 0008:**
+     - Created reversible Alembic migration `0008_add_technology_detection_tables.py` adding `technology_evidence_json` to `crawl_pages`, and creating `audit_technologies` and `audit_technology_summaries` tables.
+     - Tested full upgrade -> downgrade -> upgrade lifecycle on disposable test database.
+  6. **FastAPI Endpoints (`backend/app/api/v1/audits.py`):**
+     - `POST /api/v1/audits/{id}/technologies/analyze` (idempotent passive detection).
+     - `GET /api/v1/audits/{id}/technologies` (paginated list with category and status filters).
+     - `GET /api/v1/audits/{id}/technologies/summary` (executive technology summary).
+  7. **Extension Integration Types & API Client (`extension/types/audit.ts` & `extension/services/api.ts`):**
+     - Fully typed TypeScript response models and client service methods ready for Task 3.2 UI.
+  8. **Comprehensive Regression & Verification Suite:**
+     - **Backend Pytest:** **305 passed** out of 305 (100% pass rate, 98.05s execution; 38 new dedicated tests across 4 test suites).
+     - **Frontend Vitest:** **56 passed** out of 56 (100% pass rate, 5 test files, 6.09s execution).
+     - **TypeScript Typecheck:** `tsc --noEmit` exited 0 (clean, 0 errors).
+     - **Extension Build:** `wxt build` succeeded in 2.92s (bundle size: 427.07 kB).
+     - **SEO Rules Registry:** 51 registered SEO rules verified intact.
+     - **Chrome Smoke Test:** GUI TEST PENDING (headless environment).
+
