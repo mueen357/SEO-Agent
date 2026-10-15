@@ -110,3 +110,29 @@ Remediation items are prioritized deterministically into 4 tiers with evidence a
 - **No False Clean PASS:** If iteration bounds are exceeded before complete cliques are formed, the rule returns `status = "unknown"` with explicit incomplete analysis warnings. It **never reports a false clean PASS**.
 - **Overlap Prevention:** Greedy disjoint clique selection prevents overlapping cliques from double-counting affected pages or inflating score impact.
 - **Transparency:** If limits are hit, `safety_limit_hit = True` and `incomplete_analysis = True` are explicitly recorded in evidence metadata.
+
+---
+
+## 8. Task 2.4D Scoring Reliability & Evidence Gating Enhancements
+
+### 8.1 Availability State Eligibility Gates
+- A full audit with incomplete required rule families (`status != 'complete'` or `missing_count > 0`) cannot yield an unqualified `"available"` overall score; it is strictly gated as `"provisional"`.
+- In Quick Audit mode, only On-Page rules (16) are required; in Full Audit mode, all 51 registered rules across all 3 families are required.
+- If zero pages were evaluated, known evaluations == 0, or all assessments are not-applicable/unknown, overall score is `None` with state `"insufficient_evidence"`.
+- Partial crawls (`crawl_status in ('partial', 'failed')`) or audits with failed page fetches are strictly gated as `"provisional"`.
+
+### 8.2 Seed vs Homepage Identity Resolution
+- Entrance page importance is determined by safe URL parsing (`urllib.parse.urlsplit`), checking scheme, host, normalized path, and matching against persisted audit `seed_url` and verified redirected `seed_final_url`.
+- Root domain homepage is strictly identified by path in `('', '/')` with empty query string.
+- Deep seed URLs (e.g., `/contact`) are identified as `is_seed = True`, but `is_homepage = False`.
+- URL slash-counting and file-suffix heuristics are strictly prohibited.
+
+### 8.3 HTTP 5xx Priority Gating
+- Confirmed 5xx classification strictly requires real response evidence where `500 <= http_status <= 599`.
+- Missing HTTP evidence or HTTP 200 mislabeled as 500 is demoted to `P2`.
+- Isolated deep page 500 errors are classified as `P1`.
+- `P0` classification strictly requires confirmed entrance outage (root homepage or seed URL 500) or site-wide impact ($\ge 3$ affected pages).
+
+### 8.4 Canonical Scoring Fingerprint Schema (`v2.4d`)
+- Shared canonical fingerprint builder incorporates audit metadata, policy version, category weights, page-level fetch statuses, HTTP status codes, canonical targets, redirect counts, render statuses, and canonicalized rule assessments.
+- Ensures identical fingerprints across calculation, reuse, recalculation, and GET staleness detection, guaranteeing that any crawl evidence mutation invalidates stale scorecards immediately.

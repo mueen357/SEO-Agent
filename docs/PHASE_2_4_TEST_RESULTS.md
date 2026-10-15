@@ -1,14 +1,14 @@
-# Phase 2 Task 2.4 / 2.4B / 2.4C — Test Results & Verification Report
+# Phase 2 Task 2.4 / 2.4B / 2.4C / 2.4D — Test Results & Verification Report
 
 ## 1. Test Suite Summary
-| Suite | Task 2.4 Baseline | Task 2.4B Verified | Task 2.4C Final | Status | Pass Rate |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Backend (pytest)** | 152 | 174 | **220** | **PASSED** | **100% (220/220)** |
-| **Frontend (vitest)** | 45 | 56 | **56** | **PASSED** | **100% (56/56)** |
-| **TypeScript (`tsc --noEmit`)** | Clean | 0 errors | **0 errors** | **PASSED** | **100%** |
-| **Extension Production Build** | Passing | Built (3.04s) | **Built (5.64s, 427 kB)** | **PASSED** | **100%** |
-| **Alembic Migrations** | 0001–0007 | 0001–0007 | **0001–0007 (verified head)** | **PASSED** | **100%** |
-| **Canonical Database** | ok | ok | **11 tables, integrity ok** | **PASSED** | **100%** |
+| Suite | Task 2.4 Baseline | Task 2.4B Verified | Task 2.4C Final | Task 2.4D Released | Status | Pass Rate |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Backend (pytest)** | 152 | 174 | 220 | **261** | **PASSED** | **100% (261/261)** |
+| **Frontend (vitest)** | 45 | 56 | 56 | **56** | **PASSED** | **100% (56/56)** |
+| **TypeScript (`tsc --noEmit`)** | Clean | 0 errors | 0 errors | **0 errors** | **PASSED** | **100%** |
+| **Extension Production Build** | Passing | Built (3.04s) | Built (5.64s, 427 kB) | **Built (3.06s, 427 kB)** | **PASSED** | **100%** |
+| **Alembic Migrations** | 0001–0007 | 0001–0007 | 0001–0007 (head) | **0001–0007 (verified head)** | **PASSED** | **100%** |
+| **Canonical Database** | ok | ok | 11 tables, integrity ok | **11 tables, integrity ok** | **PASSED** | **100%** |
 
 ---
 
@@ -57,3 +57,53 @@ Component-level test suite (`extension/tests/seoHealthDashboard.test.tsx`) verif
 - **Near-Duplicate Content Clustering (500 crawl pages):** Executed in **< 0.15s** (benchmark assertion threshold < 2.0s).
 - **Iteration Safety Limit:** Bron-Kerbosch recursion bounded at 10,000 steps (`MAX_BRON_KERBOSCH_STEPS = 10_000`).
 - **Disjoint Selection:** Overlapping maximal cliques use greedy disjoint selection to ensure affected pages and URL counts are never double-counted.
+
+---
+
+## 5. Task 2.4D Targeted Reliability & Regression Suites (+41 Tests)
+The Task 2.4D release introduces 4 new test modules expanding backend coverage from 220 to 261 passed tests:
+1. **Availability Eligibility Gates (`backend/tests/test_scoring_availability_gates.py` - 13 tests):**
+   - 1/22 technical rules executed -> provisional
+   - 21/22 technical rules executed -> provisional
+   - 22/22 technical rules executed alone -> provisional
+   - 50/51 total rules executed -> provisional
+   - 51/51 registered rules complete -> available
+   - Missing on-page image rules -> provisional
+   - Missing sitewide rules -> provisional
+   - One-page crawl and partial crawl gating
+   - Failed fetch gating -> provisional
+   - Unknown-only evidence -> null score, insufficient_evidence
+   - N/A-only assessments -> null score, insufficient_evidence
+   - Quick Page Audit vs Complete Full Audit requirements
+2. **Seed & HTTP 5xx Prioritization (`backend/tests/test_seed_and_5xx_priorities.py` - 15 tests):**
+   - Root homepage detection (`normalize_priority_url` and `resolve_page_importance`)
+   - Deep `/contact` page identified as deep page, never domain homepage
+   - Deep seed URL identified as seed, not domain homepage
+   - Redirected seed URL tracking
+   - Invalid URL fallback to unknown importance
+   - Root homepage 500 error -> P0
+   - Isolated deep `/contact` 500 -> P1
+   - `/products/item` 500 -> P1
+   - Seed URL 500 -> P0
+   - Redirected seed 500 -> P0
+   - 3+ affected pages 500 -> P0
+   - Missing HTTP status evidence demoted to P2
+   - HTTP 200 mislabeled as 500 demoted to P2
+   - Canonical conflicts not automatically treated as emergencies
+   - Deterministic ranking and tie-breaking order
+3. **Canonical Scoring Fingerprint Consistency (`backend/tests/test_scoring_fingerprint_consistency.py` - 12 tests):**
+   - Identical evidence produces identical SHA-256 hash
+   - Database row reordering produces identical hash
+   - HTTP 200 to 500 mutation produces different hash
+   - Fetch success to error mutation produces different hash
+   - Canonical target changes produce new hash
+   - Redirect target changes produce new hash
+   - Page ID changes produce new hash
+   - Seed URL changes produce new hash
+   - Scoring policy changes produce new hash
+   - Render evidence changes produce new hash
+   - New issue assessment produces new hash
+   - ScoringService database staleness detection and recalculation
+4. **Synthetic Audit Lifecycle E2E (`backend/tests/test_synthetic_audit_e2e.py` - 1 test):**
+   - Full API integration: create audit -> calculate score -> retrieve scorecard -> mutate crawl evidence (200 -> 500) -> detect stale score -> recalculate score -> verify updated fingerprint and provisional state.
+

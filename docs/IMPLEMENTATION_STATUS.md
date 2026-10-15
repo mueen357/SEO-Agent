@@ -338,3 +338,45 @@
      - **Alembic Head:** Confirmed at revision `0007_add_scoring_and_priorities` (head). Migration 0008 was not needed or created.
      - **Database Integrity:** SQLite `PRAGMA integrity_check` verified clean (`[('ok',)]`).
      - **Continuous GitHub Synchronization:** Checkpoints 1, 2, 3, and 4 committed, pushed, and verified via `git ls-remote`.
+---
+
+### Task 2.4D — Final Targeted Scoring Reliability and Security Corrections
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-15
+- **Working Branch:** `fix/phase2-4d-release-reliability` (branched from verified Task 2.4C HEAD `8cfbdba6380495a8ea3d957957b518e09c60d350`)
+- **Completed Components:**
+  1. **Score Availability State Eligibility Gates (`backend/app/scoring/coverage.py`):**
+     - Tracked expected, executed, missing, known, unknown, and not-applicable rule evaluations for all 51 registered SEO rules across On-Page (16), Technical (22), and Site-Wide (13) families.
+     - Enforced eligibility gates: full audits with incomplete required families (`status != 'complete'` or `missing_count > 0`) cannot yield an unqualified `"available"` overall score; they are strictly marked `"provisional"`.
+     - Zero evaluated pages, zero known evaluations, or all assessments not-applicable/unknown yield numeric score `None` with state `"insufficient_evidence"`.
+     - Partial crawls (`crawl_status in ('partial', 'failed')`) and failed fetch pages trigger `"provisional"` state.
+     - Comprehensive regression suite: `backend/tests/test_scoring_availability_gates.py` (13/13 passing).
+  2. **Seed & Homepage Identity Resolution (`backend/app/scoring/priorities.py`):**
+     - Safe URL normalization via `urllib.parse.urlsplit` (`normalize_priority_url`).
+     - Explicit importance resolver (`resolve_page_importance`) resolves root domain homepage (path in `('', '/')` and empty query) vs deep seed URLs (e.g. `/contact`).
+     - Tracks original seed URL and verified redirected final URL from persisted audit evidence.
+     - Completely eliminated naive slash-count and string-suffix heuristics.
+  3. **HTTP 5xx Prioritization Engine (`backend/app/scoring/priorities.py`):**
+     - Confirmed 5xx status requires verified response evidence (`500 <= http_status <= 599`).
+     - Missing HTTP status evidence or HTTP 200 mislabeled as 500 is demoted to `P2`.
+     - Isolated deep page 500 errors (e.g. `/contact` or `/products/item`) are classified as `P1`.
+     - `P0` classification strictly requires confirmed entrance impact (root homepage or seed URL 500) or site-wide outage ($\ge 3$ affected pages).
+     - Comprehensive regression suite: `backend/tests/test_seed_and_5xx_priorities.py` (15/15 passing).
+  4. **Canonical Scoring Fingerprint Consistency (`backend/app/scoring/engine.py` & `backend/app/services/scoring_service.py`):**
+     - Unified fingerprint builder (`_build_fingerprint`) used identically across calculation, reuse, recalculation, and GET staleness detection.
+     - Fingerprint schema `v2.4d` incorporates audit metadata, policy version, category weights, page-level fetch statuses, HTTP codes, canonical targets, redirect counts, renders, and canonicalized rule assessments.
+     - Added `input_fingerprint` field to `ScorecardResponse` schema (`backend/app/schemas/scoring.py`).
+     - Comprehensive regression suite: `backend/tests/test_scoring_fingerprint_consistency.py` (12/12 passing).
+  5. **Synthetic Audit End-to-End Verification (`backend/tests/test_synthetic_audit_e2e.py`):**
+     - End-to-end API lifecycle test passing: create audit -> calculate score -> retrieve score -> mutate crawl page HTTP status (200 -> 500) -> detect stale score -> recalculate score -> confirm updated fingerprint and provisional state.
+  6. **Security & Git Credential Safety (Section 6 Compliance):**
+     - Zero credential helper bridges, custom askpass scripts, or credential-manager dumps created or executed.
+     - Safe non-interactive git authentication verification without disclosing secrets or tokens.
+  7. **Full Verification Metrics:**
+     - **Backend Pytest:** **261 passed** out of 261 (100% pass rate, 56.27s execution).
+     - **Frontend Vitest:** **56 passed** out of 56 (100% pass rate, 5 test files, 6.18s execution).
+     - **TypeScript Typecheck:** `tsc --noEmit` exited 0 (clean, 0 errors).
+     - **Extension Build:** `wxt build` clean in 3.06s (total bundle: 427.07 kB).
+     - **Alembic Head:** Confirmed at revision `0007_add_scoring_and_priorities` (head). Migration 0008 not needed or created.
+     - **Canonical Database:** `backend/siteaudit.db` preserved intact.
+     - **Checkpoints Committed:** CP1 (`32f4dc2`), CP2 (`1e3f7f4`), CP3 (`ef8ff1f`), CP4 (Documentation & release verification).

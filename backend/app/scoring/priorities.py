@@ -230,10 +230,8 @@ def classify_priority_tier(
             return "P1"
 
     if rule_id == "TECH_REDIRECT_LOOP":
-        # Confirmed redirect loop prevents crawling/indexing
-        if is_important_page or affected_pages >= 3 or severity == "critical":
-            return "P0" if status == "fail" else "P1"
-        return "P1"
+        # Confirmed redirect loop prevents all crawling and rendering
+        return "P0" if status == "fail" else "P1"
 
     if rule_id in ("TECH_CANONICAL_CONFLICT", "TECH_CANONICAL_TARGET_STATUS"):
         # Avoid automatically treating all canonical conflicts as emergencies

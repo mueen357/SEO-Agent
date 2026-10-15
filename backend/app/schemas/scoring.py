@@ -12,6 +12,7 @@ class ScorecardResponse(BaseModel):
     id: uuid.UUID
     audit_id: uuid.UUID
     policy_version: str
+    input_fingerprint: Optional[str] = None
     overall_score: Optional[float] = None
     score_label: str
     overall_state: str
