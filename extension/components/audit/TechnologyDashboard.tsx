@@ -453,9 +453,9 @@ export function TechnologyDashboard({
   }
 
   // Primary CMS helper
-  const primaryCmsName = summary?.primary_cms || 'Custom / Not Identified';
-  const hasCms = Boolean(summary?.primary_cms);
   const detectedCmsFinding = technologies.find((t) => t.technology_category === 'cms' && t.status === 'detected');
+  const primaryCmsName = summary?.primary_cms || detectedCmsFinding?.technology_name || 'None / Unknown';
+  const hasCms = Boolean(summary?.primary_cms || detectedCmsFinding);
   const primaryCmsStatus = detectedCmsFinding ? detectedCmsFinding.status : (hasCms ? 'detected' : 'unknown');
 
   // Distribution counts
@@ -544,7 +544,7 @@ export function TechnologyDashboard({
             <Layers className="w-3.5 h-3.5 text-emerald-400" />
           </div>
           <div className="text-sm font-bold text-slate-100">
-            {summary?.total_detected || 0}
+            {summary?.total_detected ?? technologies.length} Technologies
           </div>
           <div className="mt-1 text-[11px] text-slate-400 flex items-center space-x-1.5">
             <span className="text-emerald-400 font-semibold">{summary?.detected_technologies_count || 0} detected</span>
