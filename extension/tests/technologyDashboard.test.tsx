@@ -868,4 +868,509 @@ describe('TechnologyDashboard Component Verification (Mocked Suite)', () => {
     // Stale audit-1 must NOT overwrite audit-2
     expect(container.textContent).toContain('Shopify');
   });
+
+  it('18. Issue A: Switch audit while POST analyze is pending and old POST resolves after switch', async () => {
+    let resolvePostA: any;
+    const postPromiseA = new Promise<any>((res) => {
+      resolvePostA = res;
+    });
+
+    vi.spyOn(api, 'analyzeTechnologies').mockImplementation((id) => {
+      if (id === 'audit-A') return postPromiseA;
+      return Promise.resolve({
+        message: 'Analyzed',
+        audit_id: id,
+        technologies_detected: 1,
+        primary_cms: 'Joomla',
+        technologies: [],
+        wordpress_themes: [],
+        wordpress_plugins: [],
+      });
+    });
+
+    vi.spyOn(api, 'getAuditTechnologySummary').mockImplementation((id) => {
+      if (id === 'audit-A') {
+        return Promise.resolve({
+          ...wpSummary,
+          audit_id: 'audit-A',
+          primary_cms: 'WordPress',
+          total_detected: 1,
+          wordpress_themes: [],
+          wordpress_plugins: [],
+        });
+      }
+      return Promise.resolve({
+        ...wpSummary,
+        audit_id: 'audit-B',
+        primary_cms: 'Joomla',
+        total_detected: 1,
+        wordpress_themes: [],
+        wordpress_plugins: [],
+      });
+    });
+
+    vi.spyOn(api, 'getAuditTechnologies').mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+      wordpress_themes: [],
+      wordpress_plugins: [],
+    });
+
+    // 1. Render Audit A
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-A"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('WordPress');
+
+    // 2. Click Re-analyze on Audit A (initiates pending POST)
+    const reanalyzeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.toLowerCase().includes('re-analyze')
+    );
+    expect(reanalyzeBtn).not.toBeUndefined();
+
+    await act(async () => {
+      reanalyzeBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // Button transitions to analyzing state
+    expect(container.textContent).toContain('Re-analyzing...');
+
+    // 3. User switches to Audit B while POST for A is still pending
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-B"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // Audit B is rendered and MUST be interactive immediately (not stuck in Re-analyzing)
+    expect(container.textContent).toContain('Joomla');
+    expect(container.textContent).not.toContain('Re-analyzing...');
+    const btnOnAuditB = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.toLowerCase().includes('re-analyze')
+    );
+    expect(btnOnAuditB?.hasAttribute('disabled')).toBe(false);
+
+    // 4. Old POST for Audit A now resolves
+    await act(async () => {
+      resolvePostA({
+        message: 'Late resolution for A',
+        audit_id: 'audit-A',
+        technologies_detected: 1,
+        primary_cms: 'WordPress',
+        technologies: [],
+        wordpress_themes: [],
+        wordpress_plugins: [],
+      });
+    });
+
+    // Audit B remains on screen and interactive
+    expect(container.textContent).toContain('Joomla');
+    expect(container.textContent).not.toContain('WordPress');
+    expect(container.textContent).not.toContain('Re-analyzing...');
+    expect(btnOnAuditB?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('19. Issue A: Switch audit while POST analyze is pending and old POST fails after switch', async () => {
+    let rejectPostA: any;
+    const postPromiseA = new Promise<any>((_, rej) => {
+      rejectPostA = rej;
+    });
+
+    vi.spyOn(api, 'analyzeTechnologies').mockImplementation((id) => {
+      if (id === 'audit-A') return postPromiseA;
+      return Promise.resolve({
+        message: 'Analyzed',
+        audit_id: id,
+        technologies_detected: 1,
+        primary_cms: 'Drupal',
+        technologies: [],
+        wordpress_themes: [],
+        wordpress_plugins: [],
+      });
+    });
+
+    vi.spyOn(api, 'getAuditTechnologySummary').mockImplementation((id) => {
+      if (id === 'audit-A') {
+        return Promise.resolve({
+          ...wpSummary,
+          audit_id: 'audit-A',
+          primary_cms: 'WordPress',
+          total_detected: 1,
+          wordpress_themes: [],
+          wordpress_plugins: [],
+        });
+      }
+      return Promise.resolve({
+        ...wpSummary,
+        audit_id: 'audit-B',
+        primary_cms: 'Drupal',
+        total_detected: 1,
+        wordpress_themes: [],
+        wordpress_plugins: [],
+      });
+    });
+
+    vi.spyOn(api, 'getAuditTechnologies').mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+      wordpress_themes: [],
+      wordpress_plugins: [],
+    });
+
+    // 1. Render Audit A
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-A"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // 2. Click Re-analyze on Audit A
+    const reanalyzeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.toLowerCase().includes('re-analyze')
+    );
+    await act(async () => {
+      reanalyzeBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('Re-analyzing...');
+
+    // 3. User switches to Audit B
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-B"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('Drupal');
+
+    // 4. Old POST for Audit A rejects
+    await act(async () => {
+      rejectPostA(new Error('Internal server error on audit A'));
+    });
+
+    // Error banner from Audit A must NOT be displayed on Audit B
+    expect(container.textContent).not.toContain('Internal server error on audit A');
+    expect(container.textContent).not.toContain('Failed to execute technology analysis');
+    expect(container.textContent).toContain('Drupal');
+    expect(container.textContent).not.toContain('Re-analyzing...');
+  });
+
+  it('20. Issue A: Switching to null audit clears state and resets analyzing', async () => {
+    let resolvePost: any;
+    const postPromise = new Promise<any>((res) => {
+      resolvePost = res;
+    });
+    vi.spyOn(api, 'analyzeTechnologies').mockReturnValue(postPromise);
+    vi.spyOn(api, 'getAuditTechnologySummary').mockResolvedValue(wpSummary);
+    vi.spyOn(api, 'getAuditTechnologies').mockResolvedValue({
+      items: wpItems,
+      total: wpItems.length,
+      limit: 100,
+      offset: 0,
+      wordpress_themes: wpSummary.wordpress_themes,
+      wordpress_plugins: wpSummary.wordpress_plugins,
+    });
+
+    // 1. Render audit
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-A"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // 2. Click Re-analyze
+    const reanalyzeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.toLowerCase().includes('re-analyze')
+    );
+    await act(async () => {
+      reanalyzeBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('Re-analyzing...');
+
+    // 3. Switch to null audit
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId={null}
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // Null audit renders empty/no-audit state, and analyzing is cleared
+    expect(container.textContent).not.toContain('Re-analyzing...');
+    expect(container.textContent).toContain('No Full Website Audit Selected');
+  });
+
+  it('21. Issue B: Page 3 of All -> CMS with one page safely resets/clamps to page 1', async () => {
+    const baseItem: TechnologyFindingItem = wpItems[0]!;
+    // Generate 45 items (with pageSize 20 -> 3 pages)
+    const items45: TechnologyFindingItem[] = [];
+    // Item 0: CMS
+    items45.push({
+      ...baseItem,
+      id: 'tech-cms-1',
+      technology_id: 'wordpress',
+      technology_name: 'WordPress CMS',
+      technology_category: 'cms',
+    });
+    // Items 1..44: Frontend
+    for (let i = 1; i < 45; i++) {
+      items45.push({
+        ...baseItem,
+        id: `tech-fe-${i}`,
+        technology_id: `tech-${i}`,
+        technology_name: `Frontend Tech ${i}`,
+        technology_category: 'frontend',
+      });
+    }
+
+    vi.spyOn(api, 'getAuditTechnologySummary').mockResolvedValue({
+      ...wpSummary,
+      total_detected: 45,
+    });
+    vi.spyOn(api, 'getAuditTechnologies').mockResolvedValue({
+      items: items45,
+      total: 45,
+      limit: 100,
+      offset: 0,
+      wordpress_themes: [],
+      wordpress_plugins: [],
+    });
+
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-paginated"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // Confirm initial page 1 of 3
+    expect(container.textContent).toContain('1 / 3');
+
+    // Find and click "Next" button twice to reach Page 3
+    const getNextBtn = () =>
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === 'Next' && !b.hasAttribute('disabled')
+      );
+
+    await act(async () => {
+      getNextBtn()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('2 / 3');
+
+    await act(async () => {
+      getNextBtn()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('3 / 3');
+
+    // Now click "CMS & Builders" tab (which contains only 1 item)
+    const cmsTab = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('CMS & Builders')
+    );
+    expect(cmsTab).not.toBeUndefined();
+
+    await act(async () => {
+      cmsTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // Must reset to page 1 and display WordPress CMS
+    expect(container.textContent).toContain('WordPress CMS');
+    expect(container.textContent).not.toContain('No Technologies Match Filters');
+    expect(container.textContent).not.toContain('No Technologies Detected');
+
+    // Click "All Stack" to restore All
+    const allTab = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('All Stack')
+    );
+    await act(async () => {
+      allTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // All Stack is restored to page 1
+    expect(container.textContent).toContain('1 / 3');
+    expect(container.textContent).toContain('WordPress CMS');
+  });
+
+  it('22. Issue B: Page 2 -> filtered one-page results safely resets/clamps to page 1', async () => {
+    const baseItem: TechnologyFindingItem = wpItems[0]!;
+    // Generate 25 items (2 pages)
+    const items25: TechnologyFindingItem[] = [];
+    items25.push({
+      ...baseItem,
+      id: 'tech-special',
+      technology_id: 'special-cms',
+      technology_name: 'UniqueSpecialSystem',
+      technology_category: 'cms',
+    });
+    for (let i = 1; i < 25; i++) {
+      items25.push({
+        ...baseItem,
+        id: `tech-other-${i}`,
+        technology_id: `other-${i}`,
+        technology_name: `Standard Framework ${i}`,
+        technology_category: 'frontend',
+      });
+    }
+
+    vi.spyOn(api, 'getAuditTechnologySummary').mockResolvedValue({
+      ...wpSummary,
+      total_detected: 25,
+    });
+    vi.spyOn(api, 'getAuditTechnologies').mockResolvedValue({
+      items: items25,
+      total: 25,
+      limit: 100,
+      offset: 0,
+      wordpress_themes: [],
+      wordpress_plugins: [],
+    });
+
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-filter-page"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // Navigate to Page 2
+    const getNextBtn = () =>
+      Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === 'Next' && !b.hasAttribute('disabled')
+      );
+    await act(async () => {
+      getNextBtn()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('2 / 2');
+
+    // Select 'cms' category dropdown which contains only the 1 special item
+    const selects = container.querySelectorAll('select');
+    const categorySelect = selects[0] as HTMLSelectElement;
+    await act(async () => {
+      categorySelect.value = 'cms';
+      categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // Results clamp safely to page 1 and item is visible
+    expect(container.textContent).toContain('UniqueSpecialSystem');
+    expect(container.textContent).not.toContain('2 / 2');
+
+    // Clear filters
+    const clearBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Clear Filters')
+    );
+    await act(async () => {
+      clearBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // All items restored on page 1 of 2
+    expect(container.textContent).toContain('1 / 2');
+
+    // Test text search filter clamping
+    await act(async () => {
+      getNextBtn()?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('2 / 2');
+
+    const searchInput = container.querySelector('input[type="text"]') as HTMLInputElement;
+    await act(async () => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      nativeSetter?.call(searchInput, 'UniqueSpecialSystem');
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      searchInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('UniqueSpecialSystem');
+    expect(container.textContent).not.toContain('2 / 2');
+  });
+
+  it('23. Bounded complete pagination requests all pages when total exceeds 100', async () => {
+    const baseItem: TechnologyFindingItem = wpItems[0]!;
+    const page1Items: TechnologyFindingItem[] = Array.from({ length: 100 }, (_, i) => ({
+      ...baseItem,
+      id: `p1-${i}`,
+      technology_name: `Tech Item ${i}`,
+    }));
+    const page2Items: TechnologyFindingItem[] = Array.from({ length: 30 }, (_, i) => ({
+      ...baseItem,
+      id: `p2-${i}`,
+      technology_name: `Tech Item ${100 + i}`,
+    }));
+
+    const getTechnologiesSpy = vi.spyOn(api, 'getAuditTechnologies').mockImplementation(async (id, params) => {
+      if (params?.page === 2) {
+        return {
+          items: page2Items,
+          total: 130,
+          limit: 100,
+          offset: 100,
+          wordpress_themes: [],
+          wordpress_plugins: [],
+        };
+      }
+      return {
+        items: page1Items,
+        total: 130,
+        limit: 100,
+        offset: 0,
+        wordpress_themes: [],
+        wordpress_plugins: [],
+      };
+    });
+
+    vi.spyOn(api, 'getAuditTechnologySummary').mockResolvedValue({
+      ...wpSummary,
+      total_detected: 130,
+    });
+
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId="audit-large-stack"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // Verify bounded loop fetched page 1 and page 2
+    expect(getTechnologiesSpy).toHaveBeenCalledWith('audit-large-stack', { page: 1, page_size: 100 });
+    expect(getTechnologiesSpy).toHaveBeenCalledWith('audit-large-stack', { page: 2, page_size: 100 });
+
+    // Verify all 130 items are loaded in state
+    expect(container.textContent).toContain('All Stack (130)');
+  });
 });

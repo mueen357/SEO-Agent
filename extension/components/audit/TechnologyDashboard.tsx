@@ -88,7 +88,7 @@ export function TechnologyDashboard({
     activeAuditRef.current = auditId;
   }, [auditId]);
 
-  // Load technology summary & findings
+  // Load technology summary & findings with bounded complete pagination
   const loadData = useCallback(async (id: string) => {
     if (!isBackendOnline) return;
     setError(null);
@@ -114,24 +114,41 @@ export function TechnologyDashboard({
           setTechnologies([]);
           setThemes([]);
           setPlugins([]);
+          setTotalCount(0);
           return;
         }
         throw err;
       }
 
-      // 2. Fetch Findings List
-      const listRes: TechnologyListResponse = await getAuditTechnologies(id, {
-        page: 1,
-        page_size: 100,
-      });
+      // 2. Fetch Findings List with Bounded Complete Pagination
+      // Page through up to 5 pages (500 items max) to ensure full registry coverage without unbounded looping
+      const MAX_PAGES = 5;
+      const PAGE_SIZE = 100;
+      let allItems: TechnologyFindingItem[] = [];
+      let currentPageNum = 1;
+      let total = 0;
+
+      do {
+        const listRes: TechnologyListResponse = await getAuditTechnologies(id, {
+          page: currentPageNum,
+          page_size: PAGE_SIZE,
+        });
+
+        if (activeAuditRef.current !== id) return;
+
+        const items = listRes.items || [];
+        allItems = allItems.concat(items);
+        total = listRes.total || allItems.length;
+
+        if (items.length < PAGE_SIZE || allItems.length >= total || currentPageNum >= MAX_PAGES) {
+          break;
+        }
+        currentPageNum++;
+      } while (currentPageNum <= MAX_PAGES);
 
       if (activeAuditRef.current !== id) return;
-      setTechnologies(listRes.items || []);
-      setTotalCount(listRes.total || (listRes.items ? listRes.items.length : 0));
-
-      if (summaryData && listRes.items.length === 0 && (summaryData.wordpress_themes?.length || 0) === 0) {
-        // Zero technologies found
-      }
+      setTechnologies(allItems);
+      setTotalCount(total);
     } catch (err: any) {
       if (activeAuditRef.current !== id) return;
       console.error('Failed to load technology data:', err);
@@ -148,35 +165,43 @@ export function TechnologyDashboard({
     }
   }, [isBackendOnline]);
 
+  // Synchronize audit changes: immediately reset async operation state and purge stale data
   useEffect(() => {
+    setAnalyzing(false);
+    setLoading(false);
+    setError(null);
+    setNotAnalyzed(false);
+    setInsufficientEvidence(false);
+    setExpandedTechIds(new Set());
+    setCurrentPage(1);
+
+    setSummary(null);
+    setTechnologies([]);
+    setThemes([]);
+    setPlugins([]);
+    setTotalCount(0);
+
     if (auditId) {
       loadData(auditId);
-    } else {
-      setSummary(null);
-      setTechnologies([]);
-      setThemes([]);
-      setPlugins([]);
-      setNotAnalyzed(false);
-      setInsufficientEvidence(false);
-      setError(null);
     }
   }, [auditId, loadData]);
 
-  // Handle re-analyze / initial analyze action
+  // Handle re-analyze / initial analyze action with strictly scoped async tracking
   const handleAnalyze = async () => {
     if (!auditId || analyzing || !isBackendOnline) return;
+    const targetAuditId = auditId;
     setAnalyzing(true);
     setError(null);
     setNotAnalyzed(false);
     setInsufficientEvidence(false);
 
     try {
-      await analyzeTechnologies(auditId);
-      if (activeAuditRef.current === auditId) {
-        await loadData(auditId);
+      await analyzeTechnologies(targetAuditId);
+      if (activeAuditRef.current === targetAuditId) {
+        await loadData(targetAuditId);
       }
     } catch (err: any) {
-      if (activeAuditRef.current === auditId) {
+      if (activeAuditRef.current === targetAuditId) {
         console.error('Technology analysis error:', err);
         const msg = String(err.message || '');
         if (msg.includes('0 crawled pages') || msg.includes('no crawled pages')) {
@@ -186,7 +211,7 @@ export function TechnologyDashboard({
         }
       }
     } finally {
-      if (activeAuditRef.current === auditId) {
+      if (activeAuditRef.current === targetAuditId) {
         setAnalyzing(false);
       }
     }
@@ -202,6 +227,12 @@ export function TechnologyDashboard({
       }
       return next;
     });
+  };
+
+  // Safe section switcher that resets pagination to page 1
+  const handleSectionChange = (section: 'all' | 'cms' | 'frontend' | 'backend' | 'wordpress') => {
+    setActiveSection(section);
+    setCurrentPage(1);
   };
 
   // Filtered technology list
@@ -240,13 +271,21 @@ export function TechnologyDashboard({
     });
   }, [technologies, searchQuery, selectedCategory, selectedStatus, selectedConfidence, activeSection]);
 
-  // Paginated slice
-  const paginatedTechnologies = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredTechnologies.slice(start, start + pageSize);
-  }, [filteredTechnologies, currentPage]);
+  const totalPages = Math.max(1, Math.ceil(filteredTechnologies.length / pageSize));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
 
-  const totalPages = Math.ceil(filteredTechnologies.length / pageSize) || 1;
+  // Paginated slice safely clamped to available pages
+  const paginatedTechnologies = useMemo(() => {
+    const start = (safeCurrentPage - 1) * pageSize;
+    return filteredTechnologies.slice(start, start + pageSize);
+  }, [filteredTechnologies, safeCurrentPage, pageSize]);
+
+  // Safely clamp currentPage when filtered dataset count changes
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   // Clear filters
   const hasActiveFilters = searchQuery !== '' || selectedCategory !== 'ALL' || selectedStatus !== 'ALL' || selectedConfidence !== 'ALL';
@@ -597,7 +636,7 @@ export function TechnologyDashboard({
       {/* NAVIGATION TABS FOR SUB-SECTIONS */}
       <div className="flex items-center space-x-1 bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs overflow-x-auto no-scrollbar">
         <button
-          onClick={() => setActiveSection('all')}
+          onClick={() => handleSectionChange('all')}
           className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
             activeSection === 'all'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
@@ -608,7 +647,7 @@ export function TechnologyDashboard({
         </button>
 
         <button
-          onClick={() => setActiveSection('cms')}
+          onClick={() => handleSectionChange('cms')}
           className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
             activeSection === 'cms'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
@@ -619,7 +658,7 @@ export function TechnologyDashboard({
         </button>
 
         <button
-          onClick={() => setActiveSection('frontend')}
+          onClick={() => handleSectionChange('frontend')}
           className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
             activeSection === 'frontend'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
@@ -630,7 +669,7 @@ export function TechnologyDashboard({
         </button>
 
         <button
-          onClick={() => setActiveSection('backend')}
+          onClick={() => handleSectionChange('backend')}
           className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
             activeSection === 'backend'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
@@ -642,7 +681,7 @@ export function TechnologyDashboard({
 
         {(themes.length > 0 || plugins.length > 0) && (
           <button
-            onClick={() => setActiveSection('wordpress')}
+            onClick={() => handleSectionChange('wordpress')}
             className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
               activeSection === 'wordpress'
                 ? 'bg-slate-800 text-cyan-400 border border-slate-700'
@@ -787,7 +826,10 @@ export function TechnologyDashboard({
               />
               {searchQuery && (
                 <button
-                  onClick={() => setSearchQuery('')}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCurrentPage(1);
+                  }}
                   className="absolute right-2.5 top-2 text-slate-500 hover:text-slate-300"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -867,6 +909,14 @@ export function TechnologyDashboard({
       {/* SECTION B, C, D: FINDINGS LIST WITH EVIDENCE INSPECTOR */}
       {activeSection !== 'wordpress' && (
         <div className="space-y-2">
+          {totalCount > technologies.length && (
+            <div className="p-2.5 bg-cyan-950/40 border border-cyan-800/40 rounded-xl text-[11px] text-cyan-300 flex items-center space-x-2">
+              <Info className="w-4 h-4 flex-shrink-0 text-cyan-400" />
+              <span>
+                Displaying top {technologies.length} of {totalCount} findings (bounded query limit).
+              </span>
+            </div>
+          )}
           {paginatedTechnologies.length === 0 ? (
             <div className="p-8 text-center bg-slate-900/40 border border-slate-800/80 rounded-xl">
               <Cpu className="w-6 h-6 text-slate-500 mx-auto mb-2" />
@@ -1048,23 +1098,23 @@ export function TechnologyDashboard({
           {filteredTechnologies.length > pageSize && (
             <div className="flex items-center justify-between pt-2 px-1 text-xs text-slate-400">
               <span>
-                Showing {(currentPage - 1) * pageSize + 1} to{' '}
-                {Math.min(currentPage * pageSize, filteredTechnologies.length)} of {filteredTechnologies.length} findings
+                Showing {(safeCurrentPage - 1) * pageSize + 1} to{' '}
+                {Math.min(safeCurrentPage * pageSize, filteredTechnologies.length)} of {filteredTechnologies.length} findings
               </span>
               <div className="flex items-center space-x-1">
                 <button
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
+                  disabled={safeCurrentPage <= 1}
                   className="px-2.5 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
                 <span className="px-2 font-medium text-slate-300">
-                  {currentPage} / {totalPages}
+                  {safeCurrentPage} / {totalPages}
                 </span>
                 <button
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
+                  disabled={safeCurrentPage >= totalPages}
                   className="px-2.5 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Next
