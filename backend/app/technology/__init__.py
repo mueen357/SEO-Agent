@@ -13,14 +13,26 @@ from app.technology.models import (
     WordPressThemeCandidate,
 )
 from app.technology.registry import TechnologyRegistry
+from app.technology.detector import TechnologyDetector
+from app.technology.classifiers import (
+    BackendClassifier,
+    BaseClassifier,
+    CMSClassifier,
+    FrontendClassifier,
+)
 
 __all__ = [
+    "BackendClassifier",
+    "BaseClassifier",
+    "CMSClassifier",
     "ConfidenceLevel",
     "DetectionMethod",
     "DetectionStatus",
     "EvidenceItem",
     "EvidenceType",
+    "FrontendClassifier",
     "TechnologyCategory",
+    "TechnologyDetector",
     "TechnologyFinding",
     "TechnologySummary",
     "TechnologyRegistry",
