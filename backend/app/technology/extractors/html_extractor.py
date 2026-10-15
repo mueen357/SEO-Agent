@@ -221,8 +221,14 @@ class HTMLTechnologyExtractor:
         # Check HTML comments (scan top 50KB of HTML)
         top_slice = html_str[:50000]
         for pat, tech, desc in cls.COMMENT_MARKER_PATTERNS:
-            if pat in top_slice:
-                marker_key = f"comment:{tech}:{pat[:50]}"
+            idx = top_slice.find(pat)
+            if idx != -1:
+                end_idx = top_slice.find("-->", idx)
+                if end_idx != -1 and (end_idx - idx) <= 200:
+                    snippet = top_slice[idx:end_idx].strip()
+                else:
+                    snippet = top_slice[idx : idx + 100].strip()
+                marker_key = f"comment:{tech}:{snippet}"
                 if marker_key not in seen_dom:
                     seen_dom.add(marker_key)
                     evidence.inline_markers.append(marker_key)

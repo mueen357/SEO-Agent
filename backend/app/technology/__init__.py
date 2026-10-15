@@ -14,6 +14,7 @@ from app.technology.models import (
 )
 from app.technology.registry import TechnologyRegistry
 from app.technology.detector import TechnologyDetector
+from app.technology.wordpress import WordPressAssetDetector
 from app.technology.classifiers import (
     BackendClassifier,
     BaseClassifier,
@@ -36,6 +37,7 @@ __all__ = [
     "TechnologyFinding",
     "TechnologySummary",
     "TechnologyRegistry",
+    "WordPressAssetDetector",
     "WordPressPluginCandidate",
     "WordPressThemeCandidate",
 ]
