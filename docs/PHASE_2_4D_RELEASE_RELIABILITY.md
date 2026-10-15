@@ -96,7 +96,7 @@
 | **CP2** | `1e3f7f4bfd192ca181cb2aa0ea2277d0137d6dd6` | `fix(scoring): harden seed/homepage resolution and HTTP 5xx priority classification (CP2)` |
 | **CP3** | `ef8ff1f9e2bf404ec90924aa96dfd280e2f5b61b` | `fix(scoring): canonicalize scoring fingerprint inputs across service and engine (CP3)` |
 | **CP4** | `bb7c5aab196bb12d9dec1501760a9781109a4d0d` | `docs(release): document Phase 2 Task 2.4D reliability fixes, test evidence, and release verification (CP4)` |
-| **CP5** | *(Pending)* | `fix(scoring): prevent isolated deep 500 from triggering P0 on percentage alone (CP5)` |
+| **CP5** | `df5bc65089c9d4fa7df70a599908316e68078e62` | `fix(scoring): prevent isolated deep 500 from triggering P0 on percentage alone (CP5)` |
 
 ---
 
