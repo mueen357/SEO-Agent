@@ -252,11 +252,17 @@ async def test_complete_missing_analysis_api(client: AsyncClient, test_db_sessio
         test_db_session.add(p)
     await test_db_session.commit()
 
-    # Call endpoint
+    # Call endpoint - returns 202 Accepted and enqueues for worker
     resp = await client.post(f"/api/v1/audits/{audit_id}/complete-analysis")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "completed"
+    assert data["status"] == "queued"
+    assert data["audit_id"] == str(audit_id)
+
+    # Worker executes the queued pipeline (skipping crawling since pages exist)
+    factory = create_test_session_factory(test_db_session)
+    pipeline = AuditPipelineService(session_factory=factory)
+    await pipeline.execute_pipeline(audit_id, worker_token="worker-complete-test")
 
     # Verify all 3 rule families exist
     stmt = select(SeoIssue).where(SeoIssue.audit_id == audit_id)

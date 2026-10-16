@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
@@ -12,6 +12,48 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.database.models import Audit, AuditStatus, CrawlLink, CrawlPage, CrawlPageRender, CrawlSitemap
 
 logger = logging.getLogger("crawl_repository")
+
+
+def _safe_merge_progress_json(
+    existing: Optional[Dict[str, Any]],
+    incoming: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Safely deep-merge incoming progress updates into existing progress JSON without losing pipeline or stage state."""
+    base = dict(existing or {})
+    if not incoming:
+        return base
+
+    for key, val in incoming.items():
+        if key == "pipeline" and isinstance(val, dict) and isinstance(base.get("pipeline"), dict):
+            base_pipe = dict(base["pipeline"])
+            for pk, pv in val.items():
+                if pk == "stages" and isinstance(pv, dict) and isinstance(base_pipe.get("stages"), dict):
+                    merged_stages = dict(base_pipe["stages"])
+                    for sk, sv in pv.items():
+                        if isinstance(sv, dict) and isinstance(merged_stages.get(sk), dict):
+                            stage_entry = dict(merged_stages[sk])
+                            stage_entry.update(sv)
+                            merged_stages[sk] = stage_entry
+                        else:
+                            merged_stages[sk] = sv
+                    base_pipe["stages"] = merged_stages
+                elif pk == "completed_stages" and isinstance(pv, list) and isinstance(base_pipe.get("completed_stages"), list):
+                    comp_list = list(base_pipe["completed_stages"])
+                    for st_item in pv:
+                        if st_item not in comp_list:
+                            comp_list.append(st_item)
+                    base_pipe["completed_stages"] = comp_list
+                elif pk == "errors" and isinstance(pv, dict) and isinstance(base_pipe.get("errors"), dict):
+                    err_dict = dict(base_pipe["errors"])
+                    err_dict.update(pv)
+                    base_pipe["errors"] = err_dict
+                else:
+                    base_pipe[pk] = pv
+            base["pipeline"] = base_pipe
+        else:
+            base[key] = val
+
+    return base
 
 
 class CrawlRepository:
@@ -200,7 +242,7 @@ class CrawlRepository:
         worker_token: str,
         lease_seconds: int = 60,
     ) -> Optional[Audit]:
-        """Atomically claim the next eligible queued or abandoned audit job."""
+        """Atomically claim the next eligible queued or abandoned audit job using conditional update."""
         now = datetime.now(timezone.utc)
         lease_expiration = now + timedelta(seconds=lease_seconds)
 
@@ -210,8 +252,9 @@ class CrawlRepository:
             AuditStatus.enriching.value,
             AuditStatus.generating_recommendations.value,
         ]
+        # Query top eligible candidates ordered by created_at
         stmt = (
-            select(Audit)
+            select(Audit.id)
             .where(
                 (Audit.status == AuditStatus.queued.value)
                 | (
@@ -221,26 +264,52 @@ class CrawlRepository:
                 )
             )
             .order_by(Audit.created_at.asc())
-            .limit(1)
+            .limit(5)
         )
         result = await self.session.execute(stmt)
-        audit = result.scalar_one_or_none()
+        candidate_ids = result.scalars().all()
 
-        if not audit:
+        if not candidate_ids:
             return None
 
-        # Atomically update lease and status
-        if audit.status == AuditStatus.queued.value:
-            audit.status = AuditStatus.crawling.value
-        audit.worker_token = worker_token
-        audit.lease_expires_at = lease_expiration
-        audit.heartbeat_at = now
-        if not audit.started_at:
-            audit.started_at = now
+        # Attempt atomic conditional update on candidates
+        for candidate_id in candidate_ids:
+            update_stmt = (
+                update(Audit)
+                .where(
+                    Audit.id == candidate_id,
+                    (
+                        (Audit.status == AuditStatus.queued.value)
+                        | (
+                            (Audit.status.in_(active_in_progress_statuses))
+                            & (Audit.lease_expires_at != None)
+                            & (Audit.lease_expires_at < now)
+                        )
+                    ),
+                )
+                .values(
+                    status=case(
+                        (Audit.status == AuditStatus.queued.value, AuditStatus.crawling.value),
+                        else_=Audit.status,
+                    ),
+                    worker_token=worker_token,
+                    lease_expires_at=lease_expiration,
+                    heartbeat_at=now,
+                    started_at=case(
+                        (Audit.started_at == None, now),
+                        else_=Audit.started_at,
+                    ),
+                )
+            )
+            update_res = await self.session.execute(update_stmt)
+            if update_res.rowcount > 0:
+                await self.session.commit()
+                # Fetch and return the claimed audit
+                fetch_stmt = select(Audit).where(Audit.id == candidate_id)
+                fetch_res = await self.session.execute(fetch_stmt)
+                return fetch_res.scalar_one_or_none()
 
-        await self.session.commit()
-        await self.session.refresh(audit)
-        return audit
+        return None
 
     async def heartbeat(
         self,
@@ -252,7 +321,7 @@ class CrawlRepository:
         pages_discovered: Optional[int] = None,
         status: Optional[str] = None,
     ) -> bool:
-        """Renew job lease and persist progress. Returns False if job was cancelled or stolen."""
+        """Renew job lease and persist progress with safe deep-merge. Returns False if job was cancelled or stolen."""
         if isinstance(audit_id, str):
             audit_id = uuid.UUID(audit_id)
         now = datetime.now(timezone.utc)
@@ -267,10 +336,13 @@ class CrawlRepository:
         if audit.status == AuditStatus.cancelled.value:
             return False
 
-        # If another worker stole the lease
+        # If another worker stole or owns the lease
         if audit.worker_token is None:
             audit.worker_token = worker_token
         elif audit.worker_token != worker_token:
+            logger.warning(
+                f"Heartbeat rejected: worker '{worker_token}' does not own audit '{audit_id}' (owned by '{audit.worker_token}')"
+            )
             return False
 
         audit.heartbeat_at = now
@@ -278,7 +350,7 @@ class CrawlRepository:
         if status is not None:
             audit.status = status
         if progress_json is not None:
-            audit.progress_json = progress_json
+            audit.progress_json = _safe_merge_progress_json(audit.progress_json, progress_json)
             flag_modified(audit, "progress_json")
         if pages_crawled is not None:
             audit.pages_crawled = pages_crawled
@@ -305,7 +377,7 @@ class CrawlRepository:
         progress_json: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None,
     ) -> bool:
-        """Complete or fail a job, ensuring cancelled jobs are not overwritten as completed."""
+        """Complete or fail a job, ensuring cancelled jobs are preserved and stale workers cannot release."""
         if isinstance(audit_id, str):
             audit_id = uuid.UUID(audit_id)
         stmt = select(Audit).where(Audit.id == audit_id)
@@ -320,6 +392,13 @@ class CrawlRepository:
             await self.session.commit()
             return True
 
+        # Enforce worker ownership: stale workers must not overwrite status or publish results
+        if audit.worker_token is not None and audit.worker_token != worker_token:
+            logger.warning(
+                f"Stale worker '{worker_token}' attempted to release audit '{audit_id}' owned by '{audit.worker_token}'"
+            )
+            return False
+
         audit.status = terminal_status.value
         audit.completed_at = datetime.now(timezone.utc)
         audit.worker_token = None
@@ -327,7 +406,8 @@ class CrawlRepository:
         if error_message:
             audit.error_message = error_message
         if progress_json:
-            audit.progress_json = progress_json
+            audit.progress_json = _safe_merge_progress_json(audit.progress_json, progress_json)
+            flag_modified(audit, "progress_json")
             if "pages_crawled" in progress_json:
                 audit.pages_crawled = progress_json["pages_crawled"]
             if "urls_discovered" in progress_json:
@@ -335,3 +415,11 @@ class CrawlRepository:
 
         await self.session.commit()
         return True
+
+    async def has_pages(self, audit_id: uuid.UUID) -> bool:
+        """Check if any crawled pages exist for this audit."""
+        if isinstance(audit_id, str):
+            audit_id = uuid.UUID(audit_id)
+        stmt = select(CrawlPage.id).where(CrawlPage.audit_id == audit_id).limit(1)
+        res = await self.session.execute(stmt)
+        return res.scalar_one_or_none() is not None

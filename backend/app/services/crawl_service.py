@@ -59,6 +59,7 @@ class CrawlService:
         render_policy: Optional[RenderPolicy] = None,
         allow_local_fixtures: bool = False,
         release_on_completion: bool = True,
+        fetcher: Optional[Any] = None,
     ) -> Any:
         """Run crawling engine with optional rendering, independent lease heartbeat, and status management."""
         audit = await self.audit_repo.get_audit_by_id(audit_id)
@@ -202,11 +203,23 @@ class CrawlService:
             await self.crawl_repo.save_sitemap(audit_id, sitemap_data)
 
         async def on_progress(progress: Dict[str, Any]):
+            pipeline_update = {
+                "pipeline": {
+                    "stages": {
+                        "crawling": {
+                            "status": "running",
+                            "pages_crawled": progress.get("pages_crawled", 0),
+                            "urls_discovered": progress.get("urls_discovered", 0),
+                        }
+                    }
+                },
+                "crawl": progress,
+            }
             await self.crawl_repo.heartbeat(
                 audit_id=audit_id,
                 worker_token=worker_token,
                 lease_seconds=60,
-                progress_json=progress,
+                progress_json=pipeline_update,
                 pages_crawled=progress.get("pages_crawled"),
                 pages_discovered=progress.get("urls_discovered"),
             )
@@ -214,6 +227,7 @@ class CrawlService:
         engine = CrawlEngine(
             start_url=audit.target_url,
             config=cfg,
+            fetcher=fetcher,
             on_page_persisted=on_page_persisted,
             on_sitemap_persisted=on_sitemap_persisted,
             on_progress=on_progress,

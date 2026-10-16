@@ -528,9 +528,9 @@ async def get_audit_technology_summary(
 @router.post(
     "/{audit_id}/complete-analysis",
     response_model=dict,
-    status_code=status.HTTP_200_OK,
-    summary="Complete Missing Analysis for Existing Audit",
-    description="Executes any missing analysis stages (On-Page, Technical, Site-Wide, Technology, Scoring) on an existing crawl without recrawling."
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue Missing Analysis for Existing Audit",
+    description="Atomically enqueues missing downstream analysis stages (On-Page, Technical, Site-Wide, Technology, Scoring) on an existing crawl for background worker execution."
 )
 async def complete_missing_audit_analysis(
     audit_id: uuid.UUID,
@@ -538,7 +538,7 @@ async def complete_missing_audit_analysis(
 ) -> dict:
     session_factory = async_sessionmaker(bind=db.bind, class_=AsyncSession, expire_on_commit=False, autoflush=False)
     pipeline_svc = AuditPipelineService(session_factory=session_factory)
-    result = await pipeline_svc.run_missing_stages(audit_id=audit_id)
+    result = await pipeline_svc.enqueue_missing_stages(audit_id=audit_id)
     return result
 
 

@@ -20,7 +20,9 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.errors import ConflictError, NotFoundError
 from app.database.models import Audit, AuditStatus, CrawlPage
 from app.database.session import get_session_factory
 from app.repositories.audit_repository import AuditRepository
@@ -157,194 +159,369 @@ class AuditPipelineService:
         audit_id: uuid.UUID,
         worker_token: str,
         allow_local_fixtures: bool = False,
+        fetcher: Optional[Any] = None,
     ) -> None:
-        """Execute the full 9-stage pipeline sequentially."""
+        """Execute the full 9-stage pipeline sequentially with continuous heartbeat and ownership checks."""
         logger.info(f"Starting full audit pipeline for audit '{audit_id}' [worker: {worker_token}]")
 
-        # STAGE 1: Validation
-        if await self._is_cancelled(audit_id):
-            return
-        if not await self._stage_is_completed(audit_id, "validation"):
-            await self._update_stage(audit_id, worker_token, "validation", "running", audit_status=AuditStatus.crawling)
-            await asyncio.sleep(0.01)  # Context yield
-            await self._update_stage(audit_id, worker_token, "validation", "completed")
+        heartbeat_stop = asyncio.Event()
+        ownership_lost = asyncio.Event()
 
-        # STAGE 2 & 3: Crawling & Storage
-        if await self._is_cancelled(audit_id):
-            return
+        async def _continuous_pipeline_heartbeat():
+            while not heartbeat_stop.is_set():
+                try:
+                    await asyncio.sleep(10.0)
+                    if heartbeat_stop.is_set():
+                        break
+                    async with self.session_factory() as session:
+                        crawl_repo = CrawlRepository(session)
+                        valid = await crawl_repo.heartbeat(
+                            audit_id=audit_id,
+                            worker_token=worker_token,
+                            lease_seconds=60,
+                        )
+                        if not valid:
+                            logger.warning(
+                                f"Continuous worker heartbeat rejected for worker '{worker_token}', audit '{audit_id}'. "
+                                "Ownership lost or audit cancelled."
+                            )
+                            ownership_lost.set()
+                            break
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug(f"Continuous pipeline heartbeat loop error: {e}")
 
-        crawl_already_done = await self._stage_is_completed(audit_id, "crawling") and await self._has_crawled_pages(audit_id)
-        if crawl_already_done:
-            logger.info(f"Audit '{audit_id}' crawling and storage already completed. Skipping crawl stage during resume.")
-        else:
-            await self._update_stage(audit_id, worker_token, "crawling", "running", audit_status=AuditStatus.crawling)
-            await self._update_stage(audit_id, worker_token, "storage", "running")
+        heartbeat_task = asyncio.create_task(_continuous_pipeline_heartbeat())
 
-            crawl_summary = {}
-            try:
-                async with self.session_factory() as session:
-                    crawl_svc = CrawlService(session)
-                    crawl_summary = await crawl_svc.execute_crawl(
-                        audit_id=audit_id,
-                        worker_token=worker_token,
-                        allow_local_fixtures=allow_local_fixtures,
-                        release_on_completion=False,
-                    )
-            except Exception as e:
-                logger.exception(f"Crawl stage failed for audit '{audit_id}': {e}")
-                await self._update_stage(audit_id, worker_token, "crawling", "failed", error_msg=str(e))
-                await self._update_stage(audit_id, worker_token, "storage", "failed", error_msg=str(e))
-                async with self.session_factory() as session:
-                    crawl_repo = CrawlRepository(session)
-                    await crawl_repo.release_job(
-                        audit_id=audit_id,
-                        worker_token=worker_token,
-                        terminal_status=AuditStatus.failed,
-                        error_message=f"Crawling failed: {e}",
-                    )
-                return
-
+        async def _should_abort() -> bool:
+            if ownership_lost.is_set():
+                logger.warning(f"Aborting pipeline for audit '{audit_id}': worker '{worker_token}' lost ownership.")
+                return True
             if await self._is_cancelled(audit_id):
+                logger.info(f"Aborting pipeline for audit '{audit_id}': cancelled by user.")
+                return True
+            return False
+
+        try:
+            # STAGE 1: Validation
+            if await _should_abort():
+                return
+            if not await self._stage_is_completed(audit_id, "validation"):
+                ok = await self._update_stage(audit_id, worker_token, "validation", "running", audit_status=AuditStatus.crawling)
+                if not ok:
+                    ownership_lost.set()
+                    return
+                await asyncio.sleep(0.01)  # Context yield
+                ok = await self._update_stage(audit_id, worker_token, "validation", "completed")
+                if not ok:
+                    ownership_lost.set()
+                    return
+
+            # STAGE 2 & 3: Crawling & Storage
+            if await _should_abort():
                 return
 
-            pages_crawled = crawl_summary.get("pages_crawled", 0) if isinstance(crawl_summary, dict) else 0
-            if pages_crawled == 0:
-                logger.warning(f"Audit '{audit_id}' crawled 0 pages. Aborting downstream pipeline.")
-                await self._update_stage(audit_id, worker_token, "crawling", "failed", error_msg="0 pages crawled")
-                await self._update_stage(audit_id, worker_token, "storage", "failed", error_msg="0 pages crawled")
-                async with self.session_factory() as session:
-                    crawl_repo = CrawlRepository(session)
-                    await crawl_repo.release_job(
-                        audit_id=audit_id,
-                        worker_token=worker_token,
-                        terminal_status=AuditStatus.failed,
-                        error_message="Crawl failed to retrieve any pages.",
-                    )
+            crawl_already_done = await self._stage_is_completed(audit_id, "crawling") and await self._has_crawled_pages(audit_id)
+            if crawl_already_done:
+                logger.info(f"Audit '{audit_id}' crawling and storage already completed. Skipping crawl stage during resume.")
+            else:
+                ok = await self._update_stage(audit_id, worker_token, "crawling", "running", audit_status=AuditStatus.crawling)
+                if not ok:
+                    ownership_lost.set()
+                    return
+                ok = await self._update_stage(audit_id, worker_token, "storage", "running")
+                if not ok:
+                    ownership_lost.set()
+                    return
+
+                crawl_summary = {}
+                try:
+                    async with self.session_factory() as session:
+                        crawl_svc = CrawlService(session)
+                        crawl_summary = await crawl_svc.execute_crawl(
+                            audit_id=audit_id,
+                            worker_token=worker_token,
+                            allow_local_fixtures=allow_local_fixtures,
+                            release_on_completion=False,
+                            fetcher=fetcher,
+                        )
+                except Exception as e:
+                    logger.exception(f"Crawl stage failed for audit '{audit_id}': {e}")
+                    await self._update_stage(audit_id, worker_token, "crawling", "failed", error_msg=str(e))
+                    await self._update_stage(audit_id, worker_token, "storage", "failed", error_msg=str(e))
+                    async with self.session_factory() as session:
+                        crawl_repo = CrawlRepository(session)
+                        await crawl_repo.release_job(
+                            audit_id=audit_id,
+                            worker_token=worker_token,
+                            terminal_status=AuditStatus.failed,
+                            error_message=f"Crawling failed: {e}",
+                        )
+                    return
+
+                if await _should_abort():
+                    return
+
+                pages_crawled = crawl_summary.get("pages_crawled", 0) if isinstance(crawl_summary, dict) else 0
+                if pages_crawled == 0:
+                    logger.warning(f"Audit '{audit_id}' crawled 0 pages. Aborting downstream pipeline.")
+                    await self._update_stage(audit_id, worker_token, "crawling", "failed", error_msg="0 pages crawled")
+                    await self._update_stage(audit_id, worker_token, "storage", "failed", error_msg="0 pages crawled")
+                    async with self.session_factory() as session:
+                        crawl_repo = CrawlRepository(session)
+                        await crawl_repo.release_job(
+                            audit_id=audit_id,
+                            worker_token=worker_token,
+                            terminal_status=AuditStatus.failed,
+                            error_message="Crawl failed to retrieve any pages.",
+                        )
+                    return
+
+                ok = await self._update_stage(audit_id, worker_token, "crawling", "completed")
+                if not ok:
+                    ownership_lost.set()
+                    return
+                ok = await self._update_stage(audit_id, worker_token, "storage", "completed")
+                if not ok:
+                    ownership_lost.set()
+                    return
+
+            # STAGE 4: On-Page SEO
+            if await _should_abort():
                 return
+            if await self._stage_is_completed(audit_id, "on_page_seo"):
+                logger.info(f"Audit '{audit_id}' on_page_seo already completed. Skipping.")
+            else:
+                ok = await self._update_stage(audit_id, worker_token, "on_page_seo", "running", audit_status=AuditStatus.analyzing)
+                if not ok:
+                    ownership_lost.set()
+                    return
+                try:
+                    async with self.session_factory() as session:
+                        issue_svc = IssueService(session)
+                        await issue_svc.run_analysis(audit_id, category="on_page")
+                    ok = await self._update_stage(audit_id, worker_token, "on_page_seo", "completed")
+                    if not ok:
+                        ownership_lost.set()
+                        return
+                except Exception as e:
+                    logger.exception(f"On-Page SEO analysis stage failed for audit '{audit_id}': {e}")
+                    await self._update_stage(audit_id, worker_token, "on_page_seo", "failed", error_msg=str(e))
 
-            await self._update_stage(audit_id, worker_token, "crawling", "completed")
-            await self._update_stage(audit_id, worker_token, "storage", "completed")
+            # STAGE 5: Technical SEO
+            if await _should_abort():
+                return
+            if await self._stage_is_completed(audit_id, "technical_seo"):
+                logger.info(f"Audit '{audit_id}' technical_seo already completed. Skipping.")
+            else:
+                ok = await self._update_stage(audit_id, worker_token, "technical_seo", "running", audit_status=AuditStatus.analyzing)
+                if not ok:
+                    ownership_lost.set()
+                    return
+                try:
+                    async with self.session_factory() as session:
+                        issue_svc = IssueService(session)
+                        await issue_svc.run_analysis(audit_id, category="technical")
+                    ok = await self._update_stage(audit_id, worker_token, "technical_seo", "completed")
+                    if not ok:
+                        ownership_lost.set()
+                        return
+                except Exception as e:
+                    logger.exception(f"Technical SEO analysis stage failed for audit '{audit_id}': {e}")
+                    await self._update_stage(audit_id, worker_token, "technical_seo", "failed", error_msg=str(e))
 
-        # STAGE 4: On-Page SEO
-        if await self._is_cancelled(audit_id):
-            return
-        if await self._stage_is_completed(audit_id, "on_page_seo"):
-            logger.info(f"Audit '{audit_id}' on_page_seo already completed. Skipping.")
-        else:
-            await self._update_stage(audit_id, worker_token, "on_page_seo", "running", audit_status=AuditStatus.analyzing)
+            # STAGE 6: Site-Wide SEO
+            if await _should_abort():
+                return
+            if await self._stage_is_completed(audit_id, "sitewide_seo"):
+                logger.info(f"Audit '{audit_id}' sitewide_seo already completed. Skipping.")
+            else:
+                ok = await self._update_stage(audit_id, worker_token, "sitewide_seo", "running", audit_status=AuditStatus.analyzing)
+                if not ok:
+                    ownership_lost.set()
+                    return
+                try:
+                    async with self.session_factory() as session:
+                        issue_svc = IssueService(session)
+                        await issue_svc.run_sitewide_analysis(audit_id)
+                    ok = await self._update_stage(audit_id, worker_token, "sitewide_seo", "completed")
+                    if not ok:
+                        ownership_lost.set()
+                        return
+                except Exception as e:
+                    logger.exception(f"Site-Wide SEO analysis stage failed for audit '{audit_id}': {e}")
+                    await self._update_stage(audit_id, worker_token, "sitewide_seo", "failed", error_msg=str(e))
+
+            # STAGE 7: Technology & CMS Detection
+            if await _should_abort():
+                return
+            if await self._stage_is_completed(audit_id, "technology_detection"):
+                logger.info(f"Audit '{audit_id}' technology_detection already completed. Skipping.")
+            else:
+                ok = await self._update_stage(audit_id, worker_token, "technology_detection", "running", audit_status=AuditStatus.enriching)
+                if not ok:
+                    ownership_lost.set()
+                    return
+                try:
+                    async with self.session_factory() as session:
+                        tech_svc = TechnologyService(session)
+                        await tech_svc.analyze_audit(audit_id)
+                    ok = await self._update_stage(audit_id, worker_token, "technology_detection", "completed")
+                    if not ok:
+                        ownership_lost.set()
+                        return
+                except Exception as e:
+                    logger.exception(f"Technology detection stage failed for audit '{audit_id}': {e}")
+                    await self._update_stage(audit_id, worker_token, "technology_detection", "failed", error_msg=str(e))
+
+            # STAGE 8: SEO Scoring & Priorities
+            if await _should_abort():
+                return
+            if await self._stage_is_completed(audit_id, "seo_scoring"):
+                logger.info(f"Audit '{audit_id}' seo_scoring already completed. Skipping.")
+            else:
+                ok = await self._update_stage(
+                    audit_id,
+                    worker_token,
+                    "seo_scoring",
+                    "running",
+                    audit_status=AuditStatus.generating_recommendations,
+                )
+                if not ok:
+                    ownership_lost.set()
+                    return
+                try:
+                    async with self.session_factory() as session:
+                        score_svc = ScoringService(session)
+                        await score_svc.compute_score(audit_id, force=True)
+                    ok = await self._update_stage(audit_id, worker_token, "seo_scoring", "completed")
+                    if not ok:
+                        ownership_lost.set()
+                        return
+                except Exception as e:
+                    logger.exception(f"SEO Scoring stage failed for audit '{audit_id}': {e}")
+                    await self._update_stage(audit_id, worker_token, "seo_scoring", "failed", error_msg=str(e))
+
+            # STAGE 9: Publishing & Completion
+            if await _should_abort():
+                return
+            await self._update_stage(audit_id, worker_token, "publishing", "running")
+
+            # Determine terminal status based on stage errors
+            async with self.session_factory() as session:
+                crawl_repo = CrawlRepository(session)
+                stmt = select(Audit).where(Audit.id == audit_id)
+                res = await session.execute(stmt)
+                audit = res.scalar_one_or_none()
+                if not audit:
+                    return
+
+                # Check if ownership is still held by this worker
+                if audit.worker_token != worker_token:
+                    logger.warning(f"Worker '{worker_token}' cannot publish audit '{audit_id}': owned by '{audit.worker_token}'")
+                    return
+
+                progress = self._init_pipeline_progress(audit.progress_json)
+                pipe = progress["pipeline"]
+                errors = pipe.get("errors", {})
+                terminal_status = AuditStatus.partially_completed if errors else AuditStatus.completed
+
+                pipe["stages"].setdefault("publishing", {})["status"] = "completed"
+                pipe["stages"]["publishing"]["completed_at"] = utc_iso_now()
+                if "publishing" not in pipe["completed_stages"]:
+                    pipe["completed_stages"].append("publishing")
+                pipe["current_stage"] = "completed"
+
+                audit.progress_json = progress
+
+                await crawl_repo.release_job(
+                    audit_id=audit_id,
+                    worker_token=worker_token,
+                    terminal_status=terminal_status,
+                    progress_json=audit.progress_json,
+                )
+                logger.info(f"Audit pipeline successfully finished for audit '{audit_id}' with status '{terminal_status.value}'")
+
+        finally:
+            heartbeat_stop.set()
+            heartbeat_task.cancel()
             try:
-                async with self.session_factory() as session:
-                    issue_svc = IssueService(session)
-                    await issue_svc.run_analysis(audit_id, category="on_page")
-                await self._update_stage(audit_id, worker_token, "on_page_seo", "completed")
-            except Exception as e:
-                logger.exception(f"On-Page SEO analysis stage failed for audit '{audit_id}': {e}")
-                await self._update_stage(audit_id, worker_token, "on_page_seo", "failed", error_msg=str(e))
+                await heartbeat_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
-        # STAGE 5: Technical SEO
-        if await self._is_cancelled(audit_id):
-            return
-        if await self._stage_is_completed(audit_id, "technical_seo"):
-            logger.info(f"Audit '{audit_id}' technical_seo already completed. Skipping.")
-        else:
-            await self._update_stage(audit_id, worker_token, "technical_seo", "running", audit_status=AuditStatus.analyzing)
-            try:
-                async with self.session_factory() as session:
-                    issue_svc = IssueService(session)
-                    await issue_svc.run_analysis(audit_id, category="technical")
-                await self._update_stage(audit_id, worker_token, "technical_seo", "completed")
-            except Exception as e:
-                logger.exception(f"Technical SEO analysis stage failed for audit '{audit_id}': {e}")
-                await self._update_stage(audit_id, worker_token, "technical_seo", "failed", error_msg=str(e))
+    async def enqueue_missing_stages(
+        self,
+        audit_id: uuid.UUID,
+    ) -> Dict[str, Any]:
+        """Atomically enqueue missing downstream analysis stages for background worker execution."""
+        if isinstance(audit_id, str):
+            audit_id = uuid.UUID(audit_id)
 
-        # STAGE 6: Site-Wide SEO
-        if await self._is_cancelled(audit_id):
-            return
-        if await self._stage_is_completed(audit_id, "sitewide_seo"):
-            logger.info(f"Audit '{audit_id}' sitewide_seo already completed. Skipping.")
-        else:
-            await self._update_stage(audit_id, worker_token, "sitewide_seo", "running", audit_status=AuditStatus.analyzing)
-            try:
-                async with self.session_factory() as session:
-                    issue_svc = IssueService(session)
-                    await issue_svc.run_sitewide_analysis(audit_id)
-                await self._update_stage(audit_id, worker_token, "sitewide_seo", "completed")
-            except Exception as e:
-                logger.exception(f"Site-Wide SEO analysis stage failed for audit '{audit_id}': {e}")
-                await self._update_stage(audit_id, worker_token, "sitewide_seo", "failed", error_msg=str(e))
-
-        # STAGE 7: Technology & CMS Detection
-        if await self._is_cancelled(audit_id):
-            return
-        if await self._stage_is_completed(audit_id, "technology_detection"):
-            logger.info(f"Audit '{audit_id}' technology_detection already completed. Skipping.")
-        else:
-            await self._update_stage(audit_id, worker_token, "technology_detection", "running", audit_status=AuditStatus.enriching)
-            try:
-                async with self.session_factory() as session:
-                    tech_svc = TechnologyService(session)
-                    await tech_svc.analyze_audit(audit_id)
-                await self._update_stage(audit_id, worker_token, "technology_detection", "completed")
-            except Exception as e:
-                logger.exception(f"Technology detection stage failed for audit '{audit_id}': {e}")
-                await self._update_stage(audit_id, worker_token, "technology_detection", "failed", error_msg=str(e))
-
-        # STAGE 8: SEO Scoring & Priorities
-        if await self._is_cancelled(audit_id):
-            return
-        if await self._stage_is_completed(audit_id, "seo_scoring"):
-            logger.info(f"Audit '{audit_id}' seo_scoring already completed. Skipping.")
-        else:
-            await self._update_stage(
-                audit_id,
-                worker_token,
-                "seo_scoring",
-                "running",
-                audit_status=AuditStatus.generating_recommendations,
-            )
-            try:
-                async with self.session_factory() as session:
-                    score_svc = ScoringService(session)
-                    await score_svc.compute_score(audit_id, force=True)
-                await self._update_stage(audit_id, worker_token, "seo_scoring", "completed")
-            except Exception as e:
-                logger.exception(f"SEO Scoring stage failed for audit '{audit_id}': {e}")
-                await self._update_stage(audit_id, worker_token, "seo_scoring", "failed", error_msg=str(e))
-
-        # STAGE 9: Publishing & Completion
-        if await self._is_cancelled(audit_id):
-            return
-        await self._update_stage(audit_id, worker_token, "publishing", "running")
-
-        # Determine terminal status based on stage errors
         async with self.session_factory() as session:
-            crawl_repo = CrawlRepository(session)
             stmt = select(Audit).where(Audit.id == audit_id)
             res = await session.execute(stmt)
             audit = res.scalar_one_or_none()
             if not audit:
-                return
+                raise NotFoundError(f"Audit '{audit_id}' was not found.")
 
+            # Validate that crawled pages exist
+            crawl_repo = CrawlRepository(session)
+            has_pages = await crawl_repo.has_pages(audit_id)
+            if not has_pages and (audit.pages_crawled or 0) == 0:
+                raise ConflictError(f"Cannot complete analysis for audit '{audit_id}': 0 pages crawled.")
+
+            # Check if an active worker currently owns the audit
+            now = datetime.now(timezone.utc)
+            lease_exp = audit.lease_expires_at
+            if lease_exp and lease_exp.tzinfo is None:
+                lease_exp = lease_exp.replace(tzinfo=timezone.utc)
+            if audit.worker_token is not None and lease_exp is not None and lease_exp > now:
+                raise ConflictError(f"Audit '{audit_id}' is actively being processed by worker '{audit.worker_token}'.")
+
+            if audit.status == AuditStatus.queued.value:
+                raise ConflictError(f"Audit '{audit_id}' is already queued for processing.")
+
+            # Atomically enqueue audit for background worker pickup
             progress = self._init_pipeline_progress(audit.progress_json)
             pipe = progress["pipeline"]
-            errors = pipe.get("errors", {})
-            terminal_status = AuditStatus.partially_completed if errors else AuditStatus.completed
+            # Validation, crawling, and storage are guaranteed completed since pages exist
+            pipe["stages"]["validation"]["status"] = "completed"
+            pipe["stages"]["crawling"]["status"] = "completed"
+            pipe["stages"]["storage"]["status"] = "completed"
+            for st in ("validation", "crawling", "storage"):
+                if st not in pipe["completed_stages"]:
+                    pipe["completed_stages"].append(st)
 
-            pipe["stages"].setdefault("publishing", {})["status"] = "completed"
-            pipe["stages"]["publishing"]["completed_at"] = utc_iso_now()
-            if "publishing" not in pipe["completed_stages"]:
-                pipe["completed_stages"].append("publishing")
-            pipe["current_stage"] = "completed"
+            # Reset downstream stages to pending
+            downstream = ["on_page_seo", "technical_seo", "sitewide_seo", "technology_detection", "seo_scoring", "publishing"]
+            for st in downstream:
+                pipe["stages"][st] = {"status": "pending"}
+                if st in pipe["completed_stages"]:
+                    pipe["completed_stages"].remove(st)
+                if st in pipe.get("errors", {}):
+                    pipe["errors"].pop(st, None)
 
+            pipe["current_stage"] = "on_page_seo"
+            pipe["errors"] = {}
+
+            audit.status = AuditStatus.queued.value
+            audit.worker_token = None
+            audit.lease_expires_at = None
+            audit.completed_at = None
+            audit.error_message = None
             audit.progress_json = progress
+            flag_modified(audit, "progress_json")
 
-            await crawl_repo.release_job(
-                audit_id=audit_id,
-                worker_token=worker_token,
-                terminal_status=terminal_status,
-                progress_json=audit.progress_json,
-            )
-            logger.info(f"Audit pipeline successfully finished for audit '{audit_id}' with status '{terminal_status.value}'")
+            await session.commit()
+
+        logger.info(f"Audit '{audit_id}' successfully enqueued for background worker analysis.")
+        return {
+            "status": "queued",
+            "audit_id": str(audit_id),
+            "message": "Missing analysis enqueued for background worker processing.",
+        }
 
     async def run_missing_stages(
         self,
@@ -360,13 +537,13 @@ class AuditPipelineService:
             res = await session.execute(stmt)
             audit = res.scalar_one_or_none()
             if not audit:
-                raise ValueError(f"Audit '{audit_id}' not found")
+                raise NotFoundError(f"Audit '{audit_id}' not found")
 
             # Check if pages exist
-            pages_stmt = select(CrawlPage.id).where(CrawlPage.audit_id == audit_id).limit(1)
-            pages_res = await session.execute(pages_stmt)
-            if not pages_res.scalar_one_or_none():
-                raise ValueError(f"Audit '{audit_id}' has 0 crawled pages. Cannot run analysis without pages.")
+            crawl_repo = CrawlRepository(session)
+            has_pages = await crawl_repo.has_pages(audit_id)
+            if not has_pages and (audit.pages_crawled or 0) == 0:
+                raise ConflictError(f"Audit '{audit_id}' has 0 crawled pages. Cannot run analysis without pages.")
 
             # Claim lease for analysis
             now = datetime.now(timezone.utc)
@@ -379,13 +556,11 @@ class AuditPipelineService:
             pipe["stages"]["validation"]["status"] = "completed"
             pipe["stages"]["crawling"]["status"] = "completed"
             pipe["stages"]["storage"]["status"] = "completed"
-            if "validation" not in pipe["completed_stages"]:
-                pipe["completed_stages"].append("validation")
-            if "crawling" not in pipe["completed_stages"]:
-                pipe["completed_stages"].append("crawling")
-            if "storage" not in pipe["completed_stages"]:
-                pipe["completed_stages"].append("storage")
+            for st in ("validation", "crawling", "storage"):
+                if st not in pipe["completed_stages"]:
+                    pipe["completed_stages"].append(st)
             audit.progress_json = progress
+            flag_modified(audit, "progress_json")
             await session.commit()
 
         # Run pipeline from current stage to finish
