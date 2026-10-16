@@ -39,6 +39,7 @@ import {
   checkBackendHealth,
   createAudit,
   startAudit,
+  completeAuditAnalysis,
   getAudit,
   getAuditPages,
   cancelAudit,
@@ -94,8 +95,11 @@ export default function App() {
   const [selectedPage, setSelectedPage] = useState<CrawlPageItem | null>(null);
   const [fullAuditSubView, setFullAuditSubView] = useState<'health' | 'pages' | 'findings' | 'sitewide' | 'technologies'>('health');
   const [isFullAuditing, setIsFullAuditing] = useState(false);
+  const [auditUpdateKey, setAuditUpdateKey] = useState(0);
 
   const pollingRef = useRef<number | null>(null);
+  const isFetchingRef = useRef(false);
+  const activeAuditIdRef = useRef<string | null>(null);
 
   // Load Tab & Health
   const refreshTab = useCallback(async () => {
@@ -122,7 +126,7 @@ export default function App() {
     refreshTab();
     refreshHealth();
 
-    // Check for saved active full audit
+    // Check for saved active full audit and resume polling if still active
     getActiveFullAuditId().then((savedId) => {
       if (savedId) {
         fetchFullAuditState(savedId);
@@ -157,33 +161,56 @@ export default function App() {
 
   // Full Audit Fetch & Polling
   const fetchFullAuditState = async (auditId: string) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    activeAuditIdRef.current = auditId;
+
     try {
       const auditRec = await getAudit(auditId);
+      // Discard response if active audit ID changed in between
+      if (activeAuditIdRef.current !== auditId) return;
+
       setFullAudit(auditRec);
 
-      const isRunning = ['queued', 'crawling', 'analyzing', 'enriching'].includes(auditRec.status);
+      const isRunning = [
+        'queued',
+        'crawling',
+        'analyzing',
+        'enriching',
+        'generating_recommendations',
+      ].includes(auditRec.status);
+
       setIsFullAuditing(isRunning);
 
       // Fetch pages
       const pagesRes = await getAuditPages(auditId, pagesCurrentPage, 20);
-      setPages(pagesRes.pages || []);
-      setPagesTotal(pagesRes.total || 0);
-      setPagesTotalPages(pagesRes.total_pages || 0);
+      if (activeAuditIdRef.current === auditId) {
+        setPages(pagesRes.pages || []);
+        setPagesTotal(pagesRes.total || 0);
+        setPagesTotalPages(pagesRes.total_pages || 0);
+      }
 
-      // If finished, stop polling
-      if (!isRunning) {
+      // If active and not yet polling, resume polling
+      if (isRunning && !pollingRef.current) {
+        startPolling(auditId);
+      } else if (!isRunning && pollingRef.current) {
+        // Stop polling on terminal state and trigger view refresh
         stopPolling();
+        setAuditUpdateKey((prev) => prev + 1);
       }
     } catch (err: any) {
       console.warn('Failed to fetch full audit state:', err);
+    } finally {
+      isFetchingRef.current = false;
     }
   };
 
   const startPolling = (auditId: string) => {
     stopPolling();
+    activeAuditIdRef.current = auditId;
     pollingRef.current = window.setInterval(() => {
       fetchFullAuditState(auditId);
-    }, 2500);
+    }, 2000);
   };
 
   const stopPolling = () => {
@@ -223,8 +250,23 @@ export default function App() {
 
       setFullAudit(created);
       startPolling(created.id);
+      await fetchFullAuditState(created.id);
     } catch (err: any) {
       setError(err?.message || 'Failed to start full website audit.');
+      setIsFullAuditing(false);
+    }
+  };
+
+  const handleCompleteMissingAnalysis = async () => {
+    if (!fullAudit?.id) return;
+    setError(null);
+    setIsFullAuditing(true);
+    try {
+      await completeAuditAnalysis(fullAudit.id);
+      startPolling(fullAudit.id);
+      await fetchFullAuditState(fullAudit.id);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to complete audit analysis.');
       setIsFullAuditing(false);
     }
   };
@@ -236,6 +278,7 @@ export default function App() {
       await fetchFullAuditState(fullAudit.id);
       stopPolling();
       setIsFullAuditing(false);
+      setAuditUpdateKey((prev) => prev + 1);
     } catch (err: any) {
       setError(err?.message || 'Failed to cancel audit.');
     }
@@ -322,6 +365,7 @@ export default function App() {
             onStartAudit={handleStartFullAudit}
             onCancelAudit={handleCancelFullAudit}
             onRefresh={() => fullAudit && fetchFullAuditState(fullAudit.id)}
+            onCompleteMissingAnalysis={handleCompleteMissingAnalysis}
             targetUrl={tab?.url}
             isBackendOnline={health?.status === 'ok'}
           />
@@ -382,6 +426,7 @@ export default function App() {
 
           {fullAuditSubView === 'health' ? (
             <SeoHealthDashboard
+              key={`${fullAudit?.id || 'none'}-${auditUpdateKey}`}
               auditId={fullAudit?.id || null}
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}
@@ -401,18 +446,21 @@ export default function App() {
             />
           ) : fullAuditSubView === 'findings' ? (
             <SeoFindingsView
+              key={`${fullAudit?.id || 'none'}-${auditUpdateKey}`}
               auditId={fullAudit?.id || null}
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}
             />
           ) : fullAuditSubView === 'sitewide' ? (
             <SiteWideIntelligenceView
+              key={`${fullAudit?.id || 'none'}-${auditUpdateKey}`}
               auditId={fullAudit?.id || null}
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}
             />
           ) : (
             <TechnologyDashboard
+              key={`${fullAudit?.id || 'none'}-${auditUpdateKey}`}
               auditId={fullAudit?.id || null}
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}
@@ -662,8 +710,8 @@ export default function App() {
 
       {/* Footer */}
       <footer className="p-3 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
-        <span>Website Audit Agent &bull; v0.1.0</span>
-        <span className="font-mono text-cyan-400">Phase 1 &bull; Tasks 1.1-1.4B</span>
+        <span>Website Audit Agent &bull; v2.3.0</span>
+        <span className="font-mono text-cyan-400">Automated Audit Engine</span>
       </footer>
     </div>
   );

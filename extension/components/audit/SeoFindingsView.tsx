@@ -365,14 +365,33 @@ export function SeoFindingsView({
         </div>
       ) : issues.length === 0 ? (
         <div className="p-8 rounded-xl bg-slate-900/30 border border-slate-800/60 text-center space-y-2">
-          <p className="text-xs text-slate-400 font-medium">
-            {totalAssessments > 0
-              ? 'No issues found matching current filters.'
-              : 'Analysis not run yet. Click "Run Full Analysis" or "Run Technical" above to evaluate crawl evidence.'}
-          </p>
-          <p className="text-[11px] text-slate-500">
-            Our rules do not generate fictional issues or arbitrary numeric scores.
-          </p>
+          {isAuditRunning ? (
+            <>
+              <RefreshCw className="w-5 h-5 text-cyan-400 animate-spin mx-auto" />
+              <p className="text-xs text-slate-300 font-semibold">SEO analysis in progress</p>
+              <p className="text-[11px] text-slate-400">
+                Evaluating On-Page, Technical, and Site-Wide SEO rules across crawled pages...
+              </p>
+            </>
+          ) : totalAssessments > 0 ? (
+            <>
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 mx-auto" />
+              <p className="text-xs text-slate-300 font-semibold">
+                No actionable issues found among the completed checks
+              </p>
+              <p className="text-[11px] text-slate-500">
+                All evaluated rules passed or no findings matched the active filter.
+              </p>
+            </>
+          ) : (
+            <>
+              <AlertTriangle className="w-5 h-5 text-slate-500 mx-auto" />
+              <p className="text-xs text-slate-300 font-semibold">Analysis not completed</p>
+              <p className="text-[11px] text-slate-500">
+                Crawl evidence has not been evaluated yet. Run the automated audit to inspect findings.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-2.5">

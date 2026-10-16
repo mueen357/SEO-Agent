@@ -317,13 +317,51 @@ export function SeoHealthDashboard({
           <div className="p-6 text-center text-xs text-slate-500">Loading priority actions...</div>
         ) : priorities.length === 0 ? (
           <div className="p-6 text-center bg-slate-900/30 border border-slate-800/60 rounded-xl space-y-1">
-            <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto" />
-            <div className="text-xs font-semibold text-slate-300">
-              {selectedTier === 'ALL' ? 'No actionable SEO issues detected!' : `No ${selectedTier} issues found.`}
-            </div>
-            <div className="text-[11px] text-slate-500">
-              Website conforms to verified technical standards for this tier.
-            </div>
+            {isAuditRunning ? (
+              <>
+                <RefreshCw className="w-6 h-6 text-cyan-400 animate-spin mx-auto" />
+                <div className="text-xs font-semibold text-slate-300">
+                  SEO analysis in progress
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Calculating evidence-based health scores and priority action items...
+                </div>
+              </>
+            ) : scorecard?.overall_state === 'not_analyzed' || !scorecard ? (
+              <>
+                <AlertTriangle className="w-6 h-6 text-slate-500 mx-auto" />
+                <div className="text-xs font-semibold text-slate-300">
+                  Analysis not completed
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Run the automated audit pipeline to evaluate SEO rules and generate priority recommendations.
+                </div>
+              </>
+            ) : scorecard?.overall_state === 'insufficient_evidence' || scorecard?.overall_state === 'provisional' ? (
+              <>
+                <AlertTriangle className="w-6 h-6 text-amber-400 mx-auto" />
+                <div className="text-xs font-semibold text-slate-300">
+                  {scorecard?.overall_state === 'insufficient_evidence' ? 'Insufficient evidence' : 'Some checks unavailable'}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {selectedTier === 'ALL'
+                    ? 'No actionable issues found among the completed checks. Crawl budget or coverage limits apply.'
+                    : `No ${selectedTier} issues found in current provisional evaluation.`}
+                </div>
+              </>
+            ) : (
+              <>
+                <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto" />
+                <div className="text-xs font-semibold text-slate-300">
+                  {selectedTier === 'ALL'
+                    ? 'No actionable issues found among the completed checks'
+                    : `No ${selectedTier} issues found among completed checks.`}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Website conforms to verified technical standards for this tier.
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-2">

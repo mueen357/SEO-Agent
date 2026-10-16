@@ -125,6 +125,7 @@ export interface AuditRecord {
   pages_discovered: number;
   pages_crawled: number;
   configuration_json: Record<string, unknown>;
+  progress_json?: Record<string, any> | null;
   error_message?: string | null;
   created_at: string;
   updated_at: string;

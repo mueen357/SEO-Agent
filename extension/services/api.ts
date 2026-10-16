@@ -226,6 +226,27 @@ export async function startAudit(
 }
 
 /**
+ * Run missing analysis stages for an existing completed crawl (POST /api/v1/audits/{id}/complete-analysis)
+ */
+export async function completeAuditAnalysis(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<{ message: string; audit_id: string; status: string }> {
+  const response = await fetch(`${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/complete-analysis`, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    const message = errorBody?.error?.message || `Failed to complete audit analysis (HTTP ${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+/**
  * Retrieve discovered sitemaps for an audit (GET /api/v1/audits/{id}/sitemaps)
  */
 export async function getAuditSitemaps(

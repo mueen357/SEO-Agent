@@ -3,6 +3,7 @@ import {
   checkBackendHealth,
   createAudit,
   startAudit,
+  completeAuditAnalysis,
   getAudit,
   getAuditPages,
   cancelAudit,
@@ -502,5 +503,34 @@ describe('Full Website Audit API & Storage Client', () => {
       'http://127.0.0.1:8000/api/v1/audits/test-id/sitewide/link-graph',
       expect.objectContaining({ method: 'GET' })
     );
+  });
+
+  it('completeAuditAnalysis issues POST /api/v1/audits/{id}/complete-analysis', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        message: 'Analysis job enqueued for existing audit.',
+        audit_id: 'test-id',
+        status: 'queued',
+      }),
+    } as any);
+
+    const res = await completeAuditAnalysis('test-id');
+    expect(res.status).toBe('queued');
+    expect(res.audit_id).toBe('test-id');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/audits/test-id/complete-analysis',
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
+  it('completeAuditAnalysis throws error when backend returns failure status', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { message: "Audit 'test-id' not found." } }),
+    } as any);
+
+    await expect(completeAuditAnalysis('test-id')).rejects.toThrow("Audit 'test-id' not found.");
   });
 });
