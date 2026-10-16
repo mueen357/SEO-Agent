@@ -468,40 +468,124 @@
      - **Database Migrations:** Alembic revision 0008 (head) intact.
      - **GUI Validation:** GUI TEST PENDING (headless execution environment).
 
-
----
-
-### Task 3.3 — Technology Detection Release Hardening
-- **Status:** **COMPLETE (PASS)**
-- **Completed On:** 2026-10-16
-- **Working Branch:** ix/phase3-3-technology-release (branched from verified Task 3.2 HEAD 1cf1aab963191a0bf33176ca41ba36fb1ea3ca1)
-- **Completed Hardening & Verifications:**
-  1. **Asynchronous Audit Switching Race Condition (Issue A):**
-     - Resolved stuck nalyzing = true state when users switch audits while analysis or data fetching is pending.
-     - Scoped handleAnalyze with 	argetAuditId and guaranteed immediate state reset in useEffect([auditId]).
-     - Cleared transient and stale audit findings immediately on audit change or null audit selection.
-     - Verified old pending POST resolutions or rejections do not overwrite or error on new audits.
-  2. **Pagination Clamping and Section Switching (Issue B):**
-     - Implemented handleSectionChange across all section tabs ('All Stack', 'CMS', 'Frontend', 'Backend', 'WordPress') to reset currentPage to 1.
-     - Added mathematical clamping safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages) to eliminate empty slices and out-of-bounds page rendering.
-     - Synchronized currentPage with 	otalPages in a reactive useEffect hook.
-     - Ensured search inputs, filter dropdowns, and clear buttons reset currentPage to 1.
-  3. **Bounded Complete Pagination for Findings List:**
-     - Replaced single page-1 fetch with a bounded multi-page loop (up to 5 pages / 500 items max) to ensure complete registry coverage without unbounded loops.
-     - Added bounded query disclosure banner when 	otalCount > technologies.length.
-  4. **Security & Evidence Invariants:**
-     - Verified crawler Set-Cookie extraction is strictly name-only against HeaderTechnologyExtractor.KNOWN_COOKIE_NAMES with dummy placeholder 
-ame=1. Zero credential or token leakage.
-     - Verified SAFE_HEADERS strictly blocks Authorization and raw cookie headers.
-     - Verified SSRF protections, DNS validation, and React HTML escaping remain completely intact.
-  5. **Regression Verification Suite:**
-     - **Backend Pytest:** **307 passed** out of 307 (100% pass rate, 102.45s execution).
-     - **Frontend Vitest:** **85 passed** out of 85 across 7 test files (100% pass rate, 9.40s execution; +6 new targeted regression tests in 	echnologyDashboard.test.tsx).
-     - **TypeScript Typecheck:** 	sc --noEmit exited 0 (clean, 0 errors).
-     - **Extension Production Build:** wxt build succeeded in 1.96s (bundle size: 464.37 kB).
-     - **SEO Rules Registry:** 51 registered SEO rules verified intact.
-     - **Database Migrations:** Alembic revision 0008 (head) intact.
-     - **Chrome GUI Validation:** GUI TEST PENDING (headless execution environment; documented manual verification protocol in docs/PHASE_3_3_RELEASE_VERIFICATION.md).
-  6. **GitHub Synchronization:**
-     - Pushed to origin/fix/phase3-3-technology-release.
-     - Remote SHA verified to match local HEAD (85aa3a7fe6a9b1f0785991108aaa5d6ef3462c8).
+
+
+---
+
+
+
+### Task 3.3 — Technology Detection Release Hardening
+
+- **Status:** **COMPLETE (PASS)**
+
+- **Completed On:** 2026-10-16
+
+- **Working Branch:** ix/phase3-3-technology-release (branched from verified Task 3.2 HEAD 1cf1aab963191a0bf33176ca41ba36fb1ea3ca1)
+
+- **Completed Hardening & Verifications:**
+
+  1. **Asynchronous Audit Switching Race Condition (Issue A):**
+
+     - Resolved stuck analyzing = true state when users switch audits while analysis or data fetching is pending.
+
+     - Scoped handleAnalyze with 	argetAuditId and guaranteed immediate state reset in useEffect([auditId]).
+
+     - Cleared transient and stale audit findings immediately on audit change or null audit selection.
+
+     - Verified old pending POST resolutions or rejections do not overwrite or error on new audits.
+
+  2. **Pagination Clamping and Section Switching (Issue B):**
+
+     - Implemented handleSectionChange across all section tabs ('All Stack', 'CMS', 'Frontend', 'Backend', 'WordPress') to reset currentPage to 1.
+
+     - Added mathematical clamping safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages) to eliminate empty slices and out-of-bounds page rendering.
+
+     - Synchronized currentPage with 	otalPages in a reactive useEffect hook.
+
+     - Ensured search inputs, filter dropdowns, and clear buttons reset currentPage to 1.
+
+  3. **Bounded Complete Pagination for Findings List:**
+
+     - Replaced single page-1 fetch with a bounded multi-page loop (up to 5 pages / 500 items max) to ensure complete registry coverage without unbounded loops.
+
+     - Added bounded query disclosure banner when 	otalCount > technologies.length.
+
+  4. **Security & Evidence Invariants:**
+
+     - Verified crawler Set-Cookie extraction is strictly name-only against HeaderTechnologyExtractor.KNOWN_COOKIE_NAMES with dummy placeholder 
+
+ame=1. Zero credential or token leakage.
+
+     - Verified SAFE_HEADERS strictly blocks Authorization and raw cookie headers.
+
+     - Verified SSRF protections, DNS validation, and React HTML escaping remain completely intact.
+
+  5. **Regression Verification Suite:**
+
+     - **Backend Pytest:** **307 passed** out of 307 (100% pass rate, 102.45s execution).
+
+     - **Frontend Vitest:** **85 passed** out of 85 across 7 test files (100% pass rate, 9.40s execution; +6 new targeted regression tests in 	echnologyDashboard.test.tsx).
+
+     - **TypeScript Typecheck:** 	sc --noEmit exited 0 (clean, 0 errors).
+
+     - **Extension Production Build:** wxt build succeeded in 1.96s (bundle size: 464.37 kB).
+
+     - **SEO Rules Registry:** 51 registered SEO rules verified intact.
+
+     - **Database Migrations:** Alembic revision 0008 (head) intact.
+
+     - **Chrome GUI Validation:** GUI TEST PENDING (headless execution environment; documented manual verification protocol in docs/PHASE_3_3_RELEASE_VERIFICATION.md).
+
+  6. **GitHub Synchronization:**
+
+     - Pushed to origin/fix/phase3-3-technology-release.
+
+     - Remote SHA verified to match local HEAD (a85aa3a7fe6a9b1f0785991108aaa5d6ef3462c8).
+
+---
+
+### Task: One-Click End-to-End Website Audit Automation & UX Integration
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-16
+- **Working Branch:** `feature/one-click-full-audit` (branched from verified baseline `fix/full-audit-schema-drift` commit `0f30d41a438743fd7709b6b492564c37b61791d4`)
+- **Completed Components & Verifications:**
+  1. **Automated 9-Stage Background Pipeline Orchestration:**
+     - Created `AuditPipelineService` coordinating all 9 audit stages sequentially without manual button clicks:
+       1. `validation` (URL syntax and DNS preflight)
+       2. `crawling` (Budgeted web crawl)
+       3. `storage` (Response headers, sitemaps, render artifacts)
+       4. `on_page_seo` (16 registered On-Page rules)
+       5. `technical_seo` (22 registered Technical SEO rules)
+       6. `sitewide_seo` (13 registered Site-Wide rules & duplicate graph)
+       7. `technology_detection` (Deterministic CMS, framework, WordPress themes/plugins)
+       8. `seo_scoring` (SEO health scorecard calculation & prioritization)
+       9. `publishing` (Finalize audit state, coverage, completion timestamps)
+     - Extended `CrawlWorker` to delegate claimed jobs to `AuditPipelineService.execute_pipeline`.
+     - Preserved worker leases, heartbeats, and cancellation detection across all stages.
+     - Implemented automatic stage skip & crash recovery (`_stage_is_completed`, `_has_crawled_pages`).
+  2. **SEO Rule Family Preservation Fix:**
+     - Fixed `IssueService.run_analysis()` bug where global replacement deleted `SITE_` findings.
+     - Isolated replacements to `rule_prefixes_to_replace = ["ONPAGE_", "TECH_"]`, ensuring all three rule families (`ONPAGE_`, `TECH_`, `SITE_`) cleanly coexist.
+  3. **Truthful 51-Rule Coverage:**
+     - Fixed duplicate content rules and low internal inlinks rule to return truthful `not_applicable` with evidence rather than empty lists `[]`.
+     - 100% of the 51 registered SEO rules (16 On-Page, 22 Technical, 13 Site-Wide) evaluated with zero fabricated passes.
+  4. **Priority Card Grouping Accuracy:**
+     - Corrected `scoring/grouping.py` to extract all URL collections and reported page counts for site-wide duplicate content groups, eliminating the 1 vs 49 page mismatch.
+  5. **Existing Audit Completion:**
+     - Added `POST /api/v1/audits/{id}/complete-analysis` endpoint and frontend button "Complete Missing Analysis" to run missing downstream stages on completed crawls without recrawling.
+  6. **Frontend 1-Click UX & Polling Synchronization:**
+     - Implemented single primary action "Start Full Audit (1-Click Automation)".
+     - Added real-time 9-stage pipeline progress stepper matrix in `FullAuditOverview.tsx`.
+     - Fixed polling in `App.tsx` across all active states (`queued`, `crawling`, `analyzing`, `enriching`, `generating_recommendations`).
+     - Added polling resume on sidepanel reopen / browser refresh and re-entrant fetch guards.
+     - Implemented automatic child view refresh (`auditUpdateKey`) upon audit completion.
+     - Replaced premature pass empty states with truthful status indicators ("SEO analysis in progress", "Analysis not completed", "Some checks unavailable").
+     - Updated outdated footer version string to `Automated Audit Engine v2.3.0`.
+  7. **Full Verification Suite:**
+     - **Backend Pytest:** **320 passed** out of 320 (100% pass rate, 142.12s execution; +7 new pipeline regression tests).
+     - **Frontend Vitest:** **92 passed** out of 92 across 8 test files (100% pass rate, 12.76s execution; +7 new tests in `oneClickPipelineUx.test.tsx` and `fullAuditApi.test.ts`).
+     - **TypeScript Typecheck:** `tsc --noEmit` exited 0 (clean, 0 errors).
+     - **Extension Production Build:** `wxt build` succeeded in 2.71s (bundle size: 471.36 kB).
+     - **SEO Rules Registry:** 51 registered SEO rules verified intact.
+     - **Database Migrations:** Alembic revision 0008 (head) intact.
+     - **Chrome GUI Validation:** GUI TEST PENDING (headless execution environment).
