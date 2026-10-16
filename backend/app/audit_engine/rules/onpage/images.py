@@ -15,8 +15,8 @@ class ImageAltMissingRule(BaseRule):
     default_severity = "medium"
 
     def evaluate(self, ctx: PageAuditContext) -> RuleAssessment:
-        total = ctx.page.image_count
-        missing = ctx.page.missing_alt_count
+        total = ctx.page.image_count or 0
+        missing = ctx.page.missing_alt_count or 0
 
         if total == 0:
             return RuleAssessment(
@@ -74,8 +74,8 @@ class ImageAltEmptyRule(BaseRule):
     default_severity = "low"
 
     def evaluate(self, ctx: PageAuditContext) -> RuleAssessment:
-        total = ctx.page.image_count
-        empty = ctx.page.empty_alt_count
+        total = ctx.page.image_count or 0
+        empty = ctx.page.empty_alt_count or 0
 
         if total == 0:
             return RuleAssessment(

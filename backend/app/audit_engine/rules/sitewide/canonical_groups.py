@@ -31,7 +31,26 @@ class DuplicateCanonicalReviewRule(BaseRule):
         dup_groups = {h: pages for h, pages in hash_to_pages.items() if len(pages) > 1}
 
         if not dup_groups:
-            return assessments
+            return [
+                RuleAssessment(
+                    rule_id=self.rule_id,
+                    category=self.category,
+                    subcategory=self.subcategory,
+                    title="Duplicate canonical consolidation not applicable (no duplicate content groups)",
+                    description="No duplicate content groups were detected across crawled pages, so duplicate canonical consolidation does not apply.",
+                    severity="info",
+                    status="not_applicable",
+                    evidence={
+                        "reason": "no_duplicate_content_groups",
+                        "pages_evaluated": len(ctx.pages),
+                    },
+                    recommendation="No duplicate canonical review needed.",
+                    source_type="derived_from_crawl",
+                    confidence=1.0,
+                    documentation_url=self.documentation_url,
+                    fingerprint_key=f"canonical_review_na:{ctx.audit_id}",
+                )
+            ]
 
         for h, pages in dup_groups.items():
             # Check canonical targets declared by pages in this duplicate group
@@ -106,6 +125,25 @@ class DuplicateCanonicalReviewRule(BaseRule):
                     )
                 )
 
+        if not assessments:
+            assessments.append(
+                RuleAssessment(
+                    rule_id=self.rule_id,
+                    category=self.category,
+                    subcategory=self.subcategory,
+                    title="Duplicate canonical review complete",
+                    description=f"Evaluated {len(dup_groups)} duplicate group(s); no competing self-referencing canonicals detected.",
+                    severity="info",
+                    status="pass",
+                    evidence={"duplicate_groups_count": len(dup_groups)},
+                    recommendation="No competing duplicate canonicals found.",
+                    source_type="derived_from_crawl",
+                    confidence=1.0,
+                    documentation_url=self.documentation_url,
+                    fingerprint_key=f"canonical_review_pass:{ctx.audit_id}",
+                )
+            )
+
         return assessments
 
 
@@ -130,6 +168,28 @@ class ContentCanonicalConflictRule(BaseRule):
                 hash_to_pages.setdefault(h, []).append(p)
 
         dup_groups = {h: pages for h, pages in hash_to_pages.items() if len(pages) > 1}
+
+        if not dup_groups:
+            return [
+                RuleAssessment(
+                    rule_id=self.rule_id,
+                    category=self.category,
+                    subcategory=self.subcategory,
+                    title="Content canonical conflict not applicable (no duplicate content groups)",
+                    description="No duplicate content groups were detected across crawled pages, so canonical conflict checks do not apply.",
+                    severity="info",
+                    status="not_applicable",
+                    evidence={
+                        "reason": "no_duplicate_content_groups",
+                        "pages_evaluated": len(ctx.pages),
+                    },
+                    recommendation="No canonical conflict review needed.",
+                    source_type="derived_from_crawl",
+                    confidence=1.0,
+                    documentation_url=self.documentation_url,
+                    fingerprint_key=f"can_conflict_na:{ctx.audit_id}",
+                )
+            ]
 
         for h, pages in dup_groups.items():
             for p in pages:
@@ -162,5 +222,26 @@ class ContentCanonicalConflictRule(BaseRule):
                             fingerprint_key=f"can_conflict:{p.final_url}",
                         )
                     )
+
+        if not assessments:
+            assessments.append(
+                RuleAssessment(
+                    rule_id=self.rule_id,
+                    category=self.category,
+                    subcategory=self.subcategory,
+                    title="No canonical conflicts with error pages detected",
+                    description="Duplicate pages with canonical tags point to accessible pages (no HTTP 4xx or 5xx targets).",
+                    severity="info",
+                    status="pass",
+                    evidence={
+                        "duplicate_groups_count": len(dup_groups),
+                    },
+                    recommendation="Canonical URLs are valid and accessible.",
+                    source_type="derived_from_crawl",
+                    confidence=1.0,
+                    documentation_url=self.documentation_url,
+                    fingerprint_key=f"can_conflict_pass:{ctx.audit_id}",
+                )
+            )
 
         return assessments

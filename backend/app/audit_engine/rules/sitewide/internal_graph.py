@@ -101,8 +101,27 @@ class LowInternalInlinksRule(BaseRule):
         graph: InternalLinkGraph = ctx.link_graph
 
         if not graph or len(ctx.pages) <= 5:
-            # Low inlink rule only applies when site has > 5 pages
-            return assessments
+            return [
+                RuleAssessment(
+                    rule_id=self.rule_id,
+                    category=self.category,
+                    subcategory=self.subcategory,
+                    title="Low internal inlinks check not applicable (sample <= 5 pages)",
+                    description="Internal link distribution analysis requires more than 5 crawled pages for statistically meaningful topology metrics.",
+                    severity="info",
+                    status="not_applicable",
+                    evidence={
+                        "reason": "small_sample_size",
+                        "pages_crawled": len(ctx.pages),
+                        "min_pages_required": 6,
+                    },
+                    recommendation="No action needed for small crawls.",
+                    source_type="derived_from_crawl",
+                    confidence=1.0,
+                    documentation_url=self.documentation_url,
+                    fingerprint_key=f"low_inlinks_na:{ctx.audit_id}",
+                )
+            ]
 
         low_inlink_pages = []
         for p in ctx.pages:

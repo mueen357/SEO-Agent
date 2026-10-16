@@ -154,6 +154,8 @@ class IssueService:
             rule_prefixes_to_replace = ["ONPAGE_"]
         elif category == "technical":
             rule_prefixes_to_replace = ["TECH_"]
+        elif category in (None, "all"):
+            rule_prefixes_to_replace = ["ONPAGE_", "TECH_"]
 
         saved_count = await self.repo.save_assessments(
             audit_id,
@@ -179,13 +181,14 @@ class IssueService:
         )
 
         cat_name = category or "all"
+        reported_issues = summary_data.get("total_issues", saved_count) if category in (None, "all") else saved_count
         return AnalyzeAuditResponse(
             audit_id=audit_id,
             status="completed",
             message=f"{cat_name.title()} SEO rule analysis completed successfully. Analyzed {pages_analyzed} page(s).",
             pages_analyzed=pages_analyzed,
-            total_issues=saved_count,
-            issues_found=saved_count,
+            total_issues=reported_issues,
+            issues_found=reported_issues,
             engine_version="2.3.0",
             summary=summary,
         )

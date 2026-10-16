@@ -28,7 +28,28 @@ def group_findings_by_rule_and_cause(
         title = issue.get("title", "")
         recommendation = issue.get("recommendation", "")
         evidence = issue.get("evidence", {}) or {}
-        url = issue.get("page_url") or issue.get("requested_url") or evidence.get("page_url") or ""
+
+        # Collect all affected URLs from direct issue fields and evidence collections
+        issue_urls: List[str] = []
+        for direct_field in ("page_url", "requested_url", "final_url", "url"):
+            val = issue.get(direct_field)
+            if val and isinstance(val, str) and val not in issue_urls:
+                issue_urls.append(val)
+        if evidence.get("page_url") and evidence["page_url"] not in issue_urls:
+            issue_urls.append(evidence["page_url"])
+
+        for collection_field in ("all_urls", "affected_urls", "urls", "sample_urls"):
+            val = evidence.get(collection_field)
+            if isinstance(val, list):
+                for u in val:
+                    if isinstance(u, str) and u and u not in issue_urls:
+                        issue_urls.append(u)
+
+        reported_page_count = 0
+        for count_field in ("page_count", "orphan_count", "deep_pages_count", "low_inlink_count"):
+            val = evidence.get(count_field)
+            if isinstance(val, int) and val > reported_page_count:
+                reported_page_count = val
 
         # Determine grouping key
         # If site-wide finding has group_id, use that
@@ -61,15 +82,19 @@ def group_findings_by_rule_and_cause(
                 "status": status,
                 "title": title,
                 "recommendation": recommendation,
-                "affected_urls": [url] if url else [],
+                "affected_urls": list(issue_urls),
                 "evidence_samples": [evidence] if evidence else [],
                 "count": 1,
+                "reported_page_count": reported_page_count,
             }
         else:
             item = grouped[fp]
             item["count"] += 1
-            if url and url not in item["affected_urls"]:
-                item["affected_urls"].append(url)
+            for u in issue_urls:
+                if u not in item["affected_urls"]:
+                    item["affected_urls"].append(u)
+            if reported_page_count > item.get("reported_page_count", 0):
+                item["reported_page_count"] = reported_page_count
             if evidence and len(item["evidence_samples"]) < 5:
                 item["evidence_samples"].append(evidence)
 
@@ -81,6 +106,8 @@ def group_findings_by_rule_and_cause(
         if not title:
             title = f"Remediate {data['rule_id']} across affected pages"
 
+        actual_page_count = max(len(data["affected_urls"]), data.get("reported_page_count", 0), data["count"])
+
         result.append({
             "group_fingerprint": fp,
             "rule_id": data["rule_id"],
@@ -88,9 +115,9 @@ def group_findings_by_rule_and_cause(
             "category": data["category"],
             "severity": data["severity"],
             "title": title,
-            "description": f"Observed on {len(data['affected_urls'])} page(s).",
+            "description": f"Observed on {actual_page_count} page(s).",
             "recommendation": data["recommendation"],
-            "affected_page_count": len(data["affected_urls"]) or data["count"],
+            "affected_page_count": actual_page_count,
             "affected_urls_json": data["affected_urls"][:50],  # cap list for DB storage
             "evidence_json": {
                 "sample_count": len(data["evidence_samples"]),

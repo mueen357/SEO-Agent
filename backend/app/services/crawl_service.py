@@ -58,7 +58,8 @@ class CrawlService:
         config: Optional[CrawlConfig] = None,
         render_policy: Optional[RenderPolicy] = None,
         allow_local_fixtures: bool = False,
-    ) -> None:
+        release_on_completion: bool = True,
+    ) -> Any:
         """Run crawling engine with optional rendering, independent lease heartbeat, and status management."""
         audit = await self.audit_repo.get_audit_by_id(audit_id)
         if not audit:
@@ -245,6 +246,18 @@ class CrawlService:
             else:
                 terminal_status = AuditStatus.failed
 
+            if not release_on_completion and terminal_status in (AuditStatus.completed, AuditStatus.partially_completed):
+                await self.crawl_repo.heartbeat(
+                    audit_id=audit_id,
+                    worker_token=worker_token,
+                    lease_seconds=60,
+                    progress_json=summary,
+                    pages_crawled=summary.get("pages_crawled"),
+                    pages_discovered=summary.get("urls_discovered"),
+                )
+                logger.info(f"Audit '{audit_id}' crawl finished ({summary.get('pages_crawled', 0)} pages); retaining worker lease for pipeline orchestration.")
+                return summary
+
             await self.crawl_repo.release_job(
                 audit_id=audit_id,
                 worker_token=worker_token,
@@ -252,6 +265,7 @@ class CrawlService:
                 progress_json=summary,
             )
             logger.info(f"Audit '{audit_id}' completed with status '{terminal_status.value}'.")
+            return summary
 
         except Exception as e:
             logger.exception(f"Unhandled error during audit '{audit_id}' crawl: {e}")

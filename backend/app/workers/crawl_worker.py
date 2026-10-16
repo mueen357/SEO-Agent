@@ -10,6 +10,7 @@ from typing import Optional
 
 from app.database.session import get_session_factory
 from app.repositories.crawl_repository import CrawlRepository
+from app.services.audit_pipeline_service import AuditPipelineService
 from app.services.crawl_service import CrawlService
 
 logging.basicConfig(
@@ -71,13 +72,12 @@ class CrawlWorker:
             audit_id = audit.id
             logger.info(f"Worker [{self.worker_id}] successfully claimed audit {audit_id} for {audit.target_url}")
 
-        # Execute crawl in fresh session context
-        async with session_factory() as session:
-            service = CrawlService(session)
-            await service.execute_crawl(
-                audit_id=audit_id,
-                worker_token=self.worker_id,
-            )
+        # Execute full audit pipeline across all stages
+        pipeline = AuditPipelineService(session_factory=session_factory)
+        await pipeline.execute_pipeline(
+            audit_id=audit_id,
+            worker_token=self.worker_id,
+        )
 
         return True
 

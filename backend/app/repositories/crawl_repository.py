@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.database.models import Audit, AuditStatus, CrawlLink, CrawlPage, CrawlPageRender, CrawlSitemap
 
@@ -203,12 +204,18 @@ class CrawlRepository:
         now = datetime.now(timezone.utc)
         lease_expiration = now + timedelta(seconds=lease_seconds)
 
+        active_in_progress_statuses = [
+            AuditStatus.crawling.value,
+            AuditStatus.analyzing.value,
+            AuditStatus.enriching.value,
+            AuditStatus.generating_recommendations.value,
+        ]
         stmt = (
             select(Audit)
             .where(
                 (Audit.status == AuditStatus.queued.value)
                 | (
-                    (Audit.status == AuditStatus.crawling.value)
+                    (Audit.status.in_(active_in_progress_statuses))
                     & (Audit.lease_expires_at != None)
                     & (Audit.lease_expires_at < now)
                 )
@@ -223,7 +230,8 @@ class CrawlRepository:
             return None
 
         # Atomically update lease and status
-        audit.status = AuditStatus.crawling.value
+        if audit.status == AuditStatus.queued.value:
+            audit.status = AuditStatus.crawling.value
         audit.worker_token = worker_token
         audit.lease_expires_at = lease_expiration
         audit.heartbeat_at = now
@@ -242,6 +250,7 @@ class CrawlRepository:
         progress_json: Optional[Dict[str, Any]] = None,
         pages_crawled: Optional[int] = None,
         pages_discovered: Optional[int] = None,
+        status: Optional[str] = None,
     ) -> bool:
         """Renew job lease and persist progress. Returns False if job was cancelled or stolen."""
         if isinstance(audit_id, str):
@@ -259,13 +268,18 @@ class CrawlRepository:
             return False
 
         # If another worker stole the lease
-        if audit.worker_token != worker_token:
+        if audit.worker_token is None:
+            audit.worker_token = worker_token
+        elif audit.worker_token != worker_token:
             return False
 
         audit.heartbeat_at = now
         audit.lease_expires_at = now + timedelta(seconds=lease_seconds)
+        if status is not None:
+            audit.status = status
         if progress_json is not None:
             audit.progress_json = progress_json
+            flag_modified(audit, "progress_json")
         if pages_crawled is not None:
             audit.pages_crawled = pages_crawled
         if pages_discovered is not None:

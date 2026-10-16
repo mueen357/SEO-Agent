@@ -21,7 +21,7 @@ import math
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, Query, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.database.session import get_db
 from app.schemas.audit import (
@@ -48,6 +48,7 @@ from app.schemas.crawl import (
     CrawlSitemapsListResponse,
 )
 from app.services.audit_service import AuditService
+from app.services.audit_pipeline_service import AuditPipelineService
 
 router = APIRouter(prefix="/audits", tags=["Audits"])
 
@@ -522,4 +523,22 @@ async def get_audit_technology_summary(
     service = TechnologyService(db)
     summary = await service.get_summary(audit_id=audit_id)
     return TechnologySummaryResponse.model_validate(summary)
+
+
+@router.post(
+    "/{audit_id}/complete-analysis",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Complete Missing Analysis for Existing Audit",
+    description="Executes any missing analysis stages (On-Page, Technical, Site-Wide, Technology, Scoring) on an existing crawl without recrawling."
+)
+async def complete_missing_audit_analysis(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    session_factory = async_sessionmaker(bind=db.bind, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+    pipeline_svc = AuditPipelineService(session_factory=session_factory)
+    result = await pipeline_svc.run_missing_stages(audit_id=audit_id)
+    return result
+
 
