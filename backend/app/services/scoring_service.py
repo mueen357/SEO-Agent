@@ -99,19 +99,21 @@ class ScoringService:
         pages_summary: List[Dict[str, Any]],
         evaluations: List[Dict[str, Any]],
         has_renders: bool,
+        legacy_status: Optional[str] = None,
     ) -> str:
         """Shared canonical fingerprint builder used identically for calculation, reuse, and staleness detection."""
         return compute_input_fingerprint(
             evaluations=evaluations,
             pages_count=total_p,
             audit_id=audit.id,
-            audit_status=audit.status,
+            audit_status=legacy_status or audit.status,
             max_pages_limit=audit.max_pages,
             has_renders=has_renders,
             policy=self.policy,
             page_evidence_summary=pages_summary,
             seed_url=audit.normalized_url or audit.target_url,
             audit_mode=audit.mode or "full",
+            _include_legacy_status=legacy_status is not None,
         )
 
     async def compute_score(
@@ -163,10 +165,40 @@ class ScoringService:
             # Auto-compute if missing
             return await self.compute_score(audit_id)
 
-        # Check staleness
+        # Check staleness against latest evidence
         total_p, _, _, evals, has_renders, pages_summary, _ = await self._gather_audit_evidence(audit_id)
         current_fp = self._build_fingerprint(audit, total_p, pages_summary, evals, has_renders)
-        if card.input_fingerprint != current_fp and card.overall_state != "stale":
+
+        # 1. Exact match with canonical decoupled evidence fingerprint
+        if card.input_fingerprint == current_fp:
+            if card.overall_state == "stale":
+                cov = card.coverage_json or {}
+                genuine_state = cov.get("score_state", "provisional")
+                if genuine_state == "stale":
+                    genuine_state = "provisional"
+                card.overall_state = genuine_state
+                await self.db.commit()
+                await self.db.refresh(card)
+            return card
+
+        # 2. Migration check: Check if scorecard was calculated during Stage 8 (generating_recommendations)
+        # where evidence has not changed at all since completion
+        stage8_legacy_fp = self._build_fingerprint(
+            audit, total_p, pages_summary, evals, has_renders, legacy_status="generating_recommendations"
+        )
+        if card.input_fingerprint == stage8_legacy_fp:
+            card.input_fingerprint = current_fp
+            cov = card.coverage_json or {}
+            genuine_state = cov.get("score_state", "provisional")
+            if genuine_state == "stale":
+                genuine_state = "provisional"
+            card.overall_state = genuine_state
+            await self.db.commit()
+            await self.db.refresh(card)
+            return card
+
+        # 3. Evidence has genuinely changed (pages crawled, HTTP codes, redirects, assessments, or policy)
+        if card.overall_state != "stale":
             card.overall_state = "stale"
             await self.db.commit()
             await self.db.refresh(card)

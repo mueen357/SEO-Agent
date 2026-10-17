@@ -41,12 +41,13 @@ def compute_input_fingerprint(
     page_evidence_summary: Optional[List[Dict[str, Any]]] = None,
     seed_url: Optional[str] = None,
     audit_mode: str = "full",
+    _include_legacy_status: bool = False,
 ) -> str:
     """Generate a deterministic, versioned evidence fingerprint to detect score staleness.
 
     Includes normalized:
     - Fingerprint schema version
-    - Audit ID, crawl seed, mode, and scope limits
+    - Audit ID, crawl seed, mode, and scope limits (decoupled from pipeline progress status)
     - Page identities, fetch states, HTTP codes, redirects, and canonical targets
     - Assessment identities, versions, status, severity, and canonicalized evidence
     - Scoring policy version, category weights, and status multipliers
@@ -66,12 +67,14 @@ def compute_input_fingerprint(
         "fingerprint_version": FINGERPRINT_VERSION,
         "audit_id": str(audit_id) if audit_id else "global",
         "audit_mode": audit_mode,
-        "audit_status": audit_status,
         "seed_url": seed_url or "",
         "pages_count": pages_count,
         "max_pages_limit": max_pages_limit,
         "has_renders": bool(has_renders),
     }
+    if _include_legacy_status:
+        scope_spec["audit_status"] = audit_status
+
 
     # 3. Canonicalized Assessments (lexicographically sorted for order-invariance)
     eval_tokens = []

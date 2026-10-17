@@ -471,6 +471,90 @@ describe('TechnologyDashboard Component Verification (Mocked Suite)', () => {
     expect(container.textContent).toContain('98% (high)');
   });
 
+  it('8b. Section B: Framer CMS detection with visible evidence and confidence', async () => {
+    const framerSummary: TechnologySummaryResponse = {
+      audit_id: auditId,
+      primary_cms: 'Framer',
+      frontend_frameworks: [],
+      backend_runtimes: [],
+      total_detected: 1,
+      detected_technologies_count: 1,
+      possible_technologies_count: 0,
+      confidence_distribution: { high: 1, medium: 0, low: 0 },
+      wordpress_themes: [],
+      wordpress_plugins: [],
+      created_at: '2026-10-15T00:00:00Z',
+      updated_at: '2026-10-15T00:00:00Z',
+    };
+
+    const framerItems: TechnologyFindingItem[] = [
+      {
+        id: 'tech-framer',
+        audit_id: auditId,
+        technology_id: 'framer',
+        technology_name: 'Framer',
+        technology_category: 'cms',
+        status: 'detected',
+        confidence: 0.99,
+        confidence_level: 'high',
+        detection_method: 'composite',
+        evidence_type: 'meta_generator',
+        evidence_summary: 'Meta generator declares Framer: Framer 7788242',
+        evidence_source: 'meta:generator',
+        observed_page_or_url: 'https://sendroq.com/',
+        version_or_null: '7788242',
+        page_count: 8,
+        affected_urls: ['https://sendroq.com/'],
+        evidence_items: [
+          {
+            evidence_type: 'meta_generator',
+            evidence_source: 'meta:generator',
+            evidence_summary: 'Meta generator declares Framer: Framer 7788242',
+            observed_page_or_url: 'https://sendroq.com/',
+            detection_method: 'passive_html',
+            raw_signal: 'Framer 7788242',
+            weight: 1.0,
+          },
+          {
+            evidence_type: 'header',
+            evidence_source: 'header:server',
+            evidence_summary: 'Framer origin server header: Framer/24ab00f',
+            observed_page_or_url: 'https://sendroq.com/',
+            detection_method: 'header_analysis',
+            raw_signal: 'Framer/24ab00f',
+            weight: 0.95,
+          },
+        ],
+        created_at: '2026-10-15T00:00:00Z',
+        updated_at: '2026-10-15T00:00:00Z',
+      },
+    ];
+
+    vi.spyOn(api, 'getAuditTechnologySummary').mockResolvedValue(framerSummary);
+    vi.spyOn(api, 'getAuditTechnologies').mockResolvedValue({
+      items: framerItems,
+      total: 1,
+      limit: 100,
+      offset: 0,
+      wordpress_themes: [],
+      wordpress_plugins: [],
+    });
+
+    await act(async () => {
+      root.render(
+        <TechnologyDashboard
+          auditId={auditId}
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('Framer');
+    expect(container.textContent).toContain('99% (high)');
+    expect(container.textContent).toContain('Meta generator declares Framer');
+  });
+
   it('9. Section B: Unknown CMS is not falsely labeled as Custom without proof', async () => {
     const unknownSummary: TechnologySummaryResponse = {
       audit_id: auditId,
