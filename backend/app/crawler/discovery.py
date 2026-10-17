@@ -20,12 +20,18 @@ class QueueItem:
 class CrawlQueue:
     """FIFO queue managing URL discovery, depth tracking, and deduplication."""
 
-    def __init__(self, scope: CrawlScope, config: CrawlConfig) -> None:
+    def __init__(
+        self,
+        scope: CrawlScope,
+        config: CrawlConfig,
+        initial_seen_urls: set[str] | None = None,
+        initial_discovered_count: int = 0,
+    ) -> None:
         self._scope = scope
         self._config = config
         self._queue: deque[QueueItem] = deque()
-        self._seen_urls: set[str] = set()
-        self.discovered_count: int = 0
+        self._seen_urls: set[str] = set(initial_seen_urls or [])
+        self.discovered_count: int = initial_discovered_count
         self.skipped_count: int = 0
         self.skipped_reasons: dict[str, int] = {
             "duplicate": 0,
@@ -40,24 +46,36 @@ class CrawlQueue:
         url: str,
         depth: int,
         source_url: str | None = None,
+        is_reconstructed: bool = False,
     ) -> bool:
-        """Push a URL into the crawl queue if eligible. Returns True if queued."""
-        self.discovered_count += 1
-
+        """Push a URL into the crawl queue if eligible. Returns True if queued.
+        
+        When is_reconstructed=True, the URL is restored from previously persisted evidence
+        and does not inflate discovery or duplicate skip counters.
+        """
         if url in self._seen_urls:
-            self.skipped_count += 1
-            self.skipped_reasons["duplicate"] += 1
+            if not is_reconstructed:
+                self.discovered_count += 1
+                self.skipped_count += 1
+                self.skipped_reasons["duplicate"] += 1
             return False
 
         if not self._scope.is_in_scope(url):
-            self.skipped_count += 1
-            self.skipped_reasons["out_of_scope"] += 1
+            if not is_reconstructed:
+                self.discovered_count += 1
+                self.skipped_count += 1
+                self.skipped_reasons["out_of_scope"] += 1
             return False
 
         if depth > self._config.max_depth:
-            self.skipped_count += 1
-            self.skipped_reasons["depth_limit"] += 1
+            if not is_reconstructed:
+                self.discovered_count += 1
+                self.skipped_count += 1
+                self.skipped_reasons["depth_limit"] += 1
             return False
+
+        if not is_reconstructed:
+            self.discovered_count += 1
 
         self._seen_urls.add(url)
         self._queue.append(QueueItem(url=url, depth=depth, source_url=source_url))

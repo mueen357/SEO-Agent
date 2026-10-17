@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
 from sqlalchemy import func, select, update, case, or_, and_
@@ -14,6 +15,29 @@ from app.crawler.normalizer import normalize_url
 from app.database.models import Audit, AuditStatus, CrawlLink, CrawlPage, CrawlPageRender, CrawlSitemap
 
 logger = logging.getLogger("crawl_repository")
+
+
+def safe_exception_summary(e: Exception) -> str:
+    """Extract a safe, non-sensitive diagnostic summary from an exception.
+
+    Prevents leakage of raw SQL queries, bound parameters (e.g. HTML content, auth tokens,
+    cookies, headers), table internals, or file system paths into log files.
+    """
+    cls_name = type(e).__name__
+    orig = getattr(e, "orig", None)
+    if orig is not None:
+        orig_str = str(orig)
+        orig_cls = type(orig).__name__
+        if "UNIQUE constraint failed" in orig_str:
+            match = re.search(r"UNIQUE constraint failed:\s*([a-zA-Z0-9_., ]+)", orig_str)
+            target = match.group(1).strip() if match else "unique_constraint"
+            return f"{cls_name}: UNIQUE constraint failed ({target})"
+        if "FOREIGN KEY constraint failed" in orig_str:
+            return f"{cls_name}: FOREIGN KEY constraint failed"
+        if "CHECK constraint failed" in orig_str:
+            return f"{cls_name}: CHECK constraint failed"
+        return f"{cls_name} ({orig_cls})"
+    return cls_name
 
 
 def _safe_merge_progress_json(
@@ -73,32 +97,43 @@ class CrawlRepository:
         """Persist a CrawlPage record and its discovered links idempotently.
         
         Guarantees that duplicate callbacks, engine retries, or replayed pages
-        never cause UNIQUE constraint primary key or (audit_id, requested_url) collisions.
+        never cause UNIQUE constraint primary key or (audit_id, requested_url) collisions,
+        and strictly enforces that foreign-audit IDs are rejected.
         """
         if isinstance(audit_id, str):
             audit_id = uuid.UUID(audit_id)
         requested_url = page_data.get("requested_url", "")
 
         # Define explicit page identity within an audit:
-        # If an explicit page ID is supplied in page_data, use it;
+        # If an explicit page ID is supplied in page_data, verify audit ownership;
         # otherwise, compute a deterministic UUID5 from (audit_id, normalized_url)
         # to ensure retries, replays, or callbacks never generate colliding random UUIDs.
         normalized_req_url = normalize_url(requested_url) or requested_url
         raw_page_id = page_data.get("id")
         if raw_page_id:
             page_id = uuid.UUID(raw_page_id) if isinstance(raw_page_id, str) else raw_page_id
+            # Verify explicit page ID does not collide with a foreign audit record
+            foreign_check = select(CrawlPage.audit_id).where(CrawlPage.id == page_id)
+            res_foreign = await self.session.execute(foreign_check)
+            existing_audit_id = res_foreign.scalar_one_or_none()
+            if existing_audit_id is not None and existing_audit_id != audit_id:
+                raise ValueError(
+                    f"Cross-audit record isolation violation: explicit page id '{page_id}' "
+                    f"belongs to foreign audit '{existing_audit_id}', not '{audit_id}'"
+                )
         else:
             page_id = uuid.uuid5(audit_id, normalized_req_url)
 
-        # Check if page already exists by primary key ID or (audit_id, requested_url)
+        # Check if page already exists within the target audit by primary key ID or (audit_id, requested_url)
         find_stmt = (
             select(CrawlPage)
             .options(selectinload(CrawlPage.links))
             .where(
+                CrawlPage.audit_id == audit_id,
                 or_(
                     CrawlPage.id == page_id,
-                    and_(CrawlPage.audit_id == audit_id, CrawlPage.requested_url == requested_url),
-                )
+                    CrawlPage.requested_url == requested_url,
+                ),
             )
         )
         res = await self.session.execute(find_stmt)
@@ -222,8 +257,9 @@ class CrawlRepository:
             return page
         except IntegrityError as e:
             # Handle concurrent race condition: another worker or callback persisted this page
+            safe_err = safe_exception_summary(e)
             logger.warning(
-                f"IntegrityError on page insertion for audit '{audit_id}', url '{requested_url}': {e}. "
+                f"IntegrityError on page insertion for audit '{audit_id}', url '{requested_url}': {safe_err}. "
                 "Rolling back and verifying persistence."
             )
             await self.session.rollback()
@@ -231,7 +267,7 @@ class CrawlRepository:
             persisted_page = check_res.scalar_one_or_none()
             if persisted_page:
                 return persisted_page
-            # Never swallow IntegrityError if row is genuinely missing (e.g. invalid foreign key)
+            # Never swallow IntegrityError if row is genuinely missing (e.g. invalid foreign key or foreign conflict)
             raise
 
     async def save_page_render(
@@ -240,23 +276,48 @@ class CrawlRepository:
         crawl_page_id: uuid.UUID,
         render_data: Dict[str, Any],
     ) -> CrawlPageRender:
-        """Persist or update a CrawlPageRender record associated with a CrawlPage idempotently."""
+        """Persist or update a CrawlPageRender record associated with a CrawlPage idempotently.
+        
+        Strictly enforces that the referenced CrawlPage belongs to the supplied audit_id,
+        and that an explicit render ID does not collide with a foreign audit record.
+        """
         if isinstance(audit_id, str):
             audit_id = uuid.UUID(audit_id)
         if isinstance(crawl_page_id, str):
             crawl_page_id = uuid.UUID(crawl_page_id)
 
+        # Verify crawl_page_id exists and belongs to the supplied audit_id
+        page_stmt = select(CrawlPage.audit_id).where(CrawlPage.id == crawl_page_id)
+        page_res = await self.session.execute(page_stmt)
+        page_audit_id = page_res.scalar_one_or_none()
+        if page_audit_id is None:
+            raise ValueError(f"CrawlPage '{crawl_page_id}' not found for render persistence")
+        if page_audit_id != audit_id:
+            raise ValueError(
+                f"Cross-audit record isolation violation: CrawlPage '{crawl_page_id}' "
+                f"belongs to foreign audit '{page_audit_id}', not '{audit_id}'"
+            )
+
         raw_render_id = render_data.get("id")
         if raw_render_id:
             render_id = uuid.UUID(raw_render_id) if isinstance(raw_render_id, str) else raw_render_id
+            foreign_render_check = select(CrawlPageRender.audit_id).where(CrawlPageRender.id == render_id)
+            res_foreign_render = await self.session.execute(foreign_render_check)
+            existing_render_audit_id = res_foreign_render.scalar_one_or_none()
+            if existing_render_audit_id is not None and existing_render_audit_id != audit_id:
+                raise ValueError(
+                    f"Cross-audit record isolation violation: explicit render id '{render_id}' "
+                    f"belongs to foreign audit '{existing_render_audit_id}', not '{audit_id}'"
+                )
         else:
             render_id = uuid.uuid5(audit_id, f"render:{crawl_page_id}")
 
         find_render_stmt = select(CrawlPageRender).where(
+            CrawlPageRender.audit_id == audit_id,
             or_(
                 CrawlPageRender.crawl_page_id == crawl_page_id,
                 CrawlPageRender.id == render_id,
-            )
+            ),
         )
         res = await self.session.execute(find_render_stmt)
         existing_render = res.scalar_one_or_none()
@@ -312,8 +373,9 @@ class CrawlRepository:
             await self.session.refresh(render)
             return render
         except IntegrityError as e:
+            safe_err = safe_exception_summary(e)
             logger.warning(
-                f"IntegrityError on page render insertion for page '{crawl_page_id}': {e}. "
+                f"IntegrityError on page render insertion for audit '{audit_id}', page '{crawl_page_id}': {safe_err}. "
                 "Rolling back and verifying persistence."
             )
             await self.session.rollback()
@@ -328,21 +390,33 @@ class CrawlRepository:
         audit_id: uuid.UUID,
         sitemap_data: Dict[str, Any],
     ) -> CrawlSitemap:
-        """Persist or update a CrawlSitemap record idempotently."""
+        """Persist or update a CrawlSitemap record idempotently.
+        
+        Strictly enforces that lookups and explicit IDs cannot match or overwrite foreign audit records.
+        """
         if isinstance(audit_id, str):
             audit_id = uuid.UUID(audit_id)
         sitemap_url = sitemap_data.get("sitemap_url", "")
         raw_sm_id = sitemap_data.get("id")
         if raw_sm_id:
             sm_id = uuid.UUID(raw_sm_id) if isinstance(raw_sm_id, str) else raw_sm_id
+            foreign_sm_check = select(CrawlSitemap.audit_id).where(CrawlSitemap.id == sm_id)
+            res_foreign_sm = await self.session.execute(foreign_sm_check)
+            existing_sm_audit_id = res_foreign_sm.scalar_one_or_none()
+            if existing_sm_audit_id is not None and existing_sm_audit_id != audit_id:
+                raise ValueError(
+                    f"Cross-audit record isolation violation: explicit sitemap id '{sm_id}' "
+                    f"belongs to foreign audit '{existing_sm_audit_id}', not '{audit_id}'"
+                )
         else:
             sm_id = uuid.uuid5(audit_id, sitemap_url)
 
         find_sm_stmt = select(CrawlSitemap).where(
+            CrawlSitemap.audit_id == audit_id,
             or_(
                 CrawlSitemap.id == sm_id,
-                and_(CrawlSitemap.audit_id == audit_id, CrawlSitemap.sitemap_url == sitemap_url),
-            )
+                CrawlSitemap.sitemap_url == sitemap_url,
+            ),
         )
         res = await self.session.execute(find_sm_stmt)
         existing_sm = res.scalar_one_or_none()
@@ -372,8 +446,9 @@ class CrawlRepository:
             await self.session.refresh(sm)
             return sm
         except IntegrityError as e:
+            safe_err = safe_exception_summary(e)
             logger.warning(
-                f"IntegrityError on sitemap insertion for '{sitemap_url}': {e}. "
+                f"IntegrityError on sitemap insertion for audit '{audit_id}', url '{sitemap_url}': {safe_err}. "
                 "Rolling back and verifying persistence."
             )
             await self.session.rollback()

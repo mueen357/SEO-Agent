@@ -14,6 +14,7 @@ STAGE 9: publishing (Finalize audit state, coverage, and completion timestamps)
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional
 import uuid
@@ -75,6 +76,20 @@ def sanitize_pipeline_error(e: Exception, stage: Optional[str] = None) -> str:
         if stage in ("crawling", "storage"):
             return "CRAWL_STORAGE_ERROR: Database operation failed during crawl storage."
         return f"STORAGE_ERROR: Database operation failed during {stage or 'processing'}."
+
+    # Redact sensitive token / credential patterns before any truncation
+    sensitive_patterns = [
+        (r"(bearer\s+)[a-zA-Z0-9_\-\.]+", r"\1[REDACTED]"),
+        (r"(token[=:\s]+)[a-zA-Z0-9_\-\.]+", r"\1[REDACTED]"),
+        (r"(api[_-]?key[=:\s]+)[a-zA-Z0-9_\-\.]+", r"\1[REDACTED]"),
+        (r"(password[=:\s]+)[^\s,;&]+", r"\1[REDACTED]"),
+        (r"(secret[=:\s]+)[^\s,;&]+", r"\1[REDACTED]"),
+        (r"(authorization[=:\s]+)[^\s,;&]+", r"\1[REDACTED]"),
+        (r"(cookie[=:\s]+)[^\r\n;]+", r"\1[REDACTED]"),
+        (r"([?&](?:token|key|api_key|apiKey|secret|password|auth)=)[^&\s]+", r"\1[REDACTED]"),
+    ]
+    for pat, repl in sensitive_patterns:
+        err_str = re.sub(pat, repl, err_str, flags=re.IGNORECASE)
 
     clean = err_str.strip()
     if len(clean) > 120:

@@ -542,3 +542,294 @@ async def test_deterministic_synthetic_fetcher_crawl_callback(test_db_session: A
         select(CrawlPageRender).where(CrawlPageRender.audit_id == audit.id)
     )).scalars().all()
     assert len(renders) == 3
+
+
+@pytest.mark.asyncio
+async def test_cross_audit_page_id_rejection(test_db_session: AsyncSession):
+    """Verify that CrawlRepository.save_page strictly rejects an explicit page ID belonging to a foreign audit."""
+    repo = CrawlRepository(test_db_session)
+    audit_a = await _create_test_audit(test_db_session, target_url="https://audita.test/")
+    audit_b = await _create_test_audit(test_db_session, target_url="https://auditb.test/")
+
+    # 1. Create legitimate page in Audit A
+    page_a = await repo.save_page(
+        audit_a.id,
+        {"requested_url": "https://audita.test/shared", "title": "Audit A Title"},
+        [],
+    )
+    assert page_a.audit_id == audit_a.id
+
+    # 2. Attempt to save page in Audit B using Audit A's page ID
+    with pytest.raises(ValueError, match="Cross-audit record isolation violation"):
+        await repo.save_page(
+            audit_b.id,
+            {"id": page_a.id, "requested_url": "https://auditb.test/evil", "title": "Hacked Title"},
+            [],
+        )
+
+    # 3. Ensure Audit A's page was NOT mutated
+    await test_db_session.refresh(page_a)
+    assert page_a.title == "Audit A Title"
+    assert page_a.requested_url == "https://audita.test/shared"
+    assert page_a.audit_id == audit_a.id
+
+    # 4. Ensure no page exists in Audit B with that ID
+    page_b_check = (await test_db_session.execute(
+        select(CrawlPage).where(CrawlPage.audit_id == audit_b.id)
+    )).scalar_one_or_none()
+    assert page_b_check is None
+
+
+@pytest.mark.asyncio
+async def test_cross_audit_render_rejection(test_db_session: AsyncSession):
+    """Verify that save_page_render rejects foreign audit crawl_page_id and foreign render id."""
+    repo = CrawlRepository(test_db_session)
+    audit_a = await _create_test_audit(test_db_session, target_url="https://audita.test/")
+    audit_b = await _create_test_audit(test_db_session, target_url="https://auditb.test/")
+
+    page_a = await repo.save_page(audit_a.id, {"requested_url": "https://audita.test/1"}, [])
+    render_a = await repo.save_page_render(audit_a.id, page_a.id, {"rendered_title": "Title A"})
+
+    page_b = await repo.save_page(audit_b.id, {"requested_url": "https://auditb.test/1"}, [])
+
+    # Rejection 1: Audit B attempts to attach a render to page_a (foreign CrawlPage)
+    with pytest.raises(ValueError, match="Cross-audit record isolation violation"):
+        await repo.save_page_render(audit_b.id, page_a.id, {"rendered_title": "Foreign Render"})
+
+    # Rejection 2: Audit B attempts to supply render_a's ID
+    with pytest.raises(ValueError, match="Cross-audit record isolation violation"):
+        await repo.save_page_render(audit_b.id, page_b.id, {"id": render_a.id, "rendered_title": "Hijacked Render"})
+
+    # Verify render_a is untouched
+    await test_db_session.refresh(render_a)
+    assert render_a.rendered_title == "Title A"
+    assert render_a.audit_id == audit_a.id
+
+
+@pytest.mark.asyncio
+async def test_cross_audit_sitemap_rejection(test_db_session: AsyncSession):
+    """Verify that save_sitemap rejects an explicit sitemap ID belonging to a foreign audit."""
+    repo = CrawlRepository(test_db_session)
+    audit_a = await _create_test_audit(test_db_session, target_url="https://audita.test/")
+    audit_b = await _create_test_audit(test_db_session, target_url="https://auditb.test/")
+
+    sm_a = await repo.save_sitemap(audit_a.id, {"sitemap_url": "https://audita.test/sitemap.xml", "url_count": 10})
+    assert sm_a.audit_id == audit_a.id
+
+    # Attempt to supply sm_a's ID to Audit B
+    with pytest.raises(ValueError, match="Cross-audit record isolation violation"):
+        await repo.save_sitemap(audit_b.id, {"id": sm_a.id, "sitemap_url": "https://auditb.test/sitemap.xml", "url_count": 5})
+
+    # Verify sm_a is untouched
+    await test_db_session.refresh(sm_a)
+    assert sm_a.url_count == 10
+    assert sm_a.audit_id == audit_a.id
+
+
+@pytest.mark.asyncio
+async def test_same_audit_idempotent_updates(test_db_session: AsyncSession):
+    """Verify that same-audit retries for page, render, and sitemap update records idempotently without duplicate rows."""
+    repo = CrawlRepository(test_db_session)
+    audit = await _create_test_audit(test_db_session, target_url="https://sameaudit.test/")
+
+    # 1. Page retry with updated title and links
+    p1 = await repo.save_page(audit.id, {"requested_url": "https://sameaudit.test/page", "title": "Initial"}, [
+        {"destination_url": "https://sameaudit.test/link1"}
+    ])
+    p2 = await repo.save_page(audit.id, {"requested_url": "https://sameaudit.test/page", "title": "Updated"}, [
+        {"destination_url": "https://sameaudit.test/link1"},
+        {"destination_url": "https://sameaudit.test/link2"}
+    ])
+    assert p1.id == p2.id
+    assert p2.title == "Updated"
+
+    pages = (await test_db_session.execute(select(CrawlPage).where(CrawlPage.audit_id == audit.id))).scalars().all()
+    assert len(pages) == 1
+
+    # 2. Render retry
+    r1 = await repo.save_page_render(audit.id, p1.id, {"rendered_title": "R1"})
+    r2 = await repo.save_page_render(audit.id, p1.id, {"rendered_title": "R2"})
+    assert r1.id == r2.id
+    assert r2.rendered_title == "R2"
+
+    renders = (await test_db_session.execute(select(CrawlPageRender).where(CrawlPageRender.audit_id == audit.id))).scalars().all()
+    assert len(renders) == 1
+
+    # 3. Sitemap retry
+    sm1 = await repo.save_sitemap(audit.id, {"sitemap_url": "https://sameaudit.test/sitemap.xml", "url_count": 1})
+    sm2 = await repo.save_sitemap(audit.id, {"sitemap_url": "https://sameaudit.test/sitemap.xml", "url_count": 2})
+    assert sm1.id == sm2.id
+    assert sm2.url_count == 2
+
+    sitemaps = (await test_db_session.execute(select(CrawlSitemap).where(CrawlSitemap.audit_id == audit.id))).scalars().all()
+    assert len(sitemaps) == 1
+
+
+@pytest.mark.asyncio
+async def test_interrupted_crawl_resumption_with_reconstructed_frontier(test_db_session: AsyncSession):
+    """Test interrupted crawl resumption with 2 persisted pages, 10-page budget, no sitemap,
+    persisted links to uncrawled pages, and simulated worker restart.
+    Assert remaining eligible pages are processed, no pages are recrawled, and counters are not inflated.
+    """
+    audit = await _create_test_audit(test_db_session, target_url="https://resume.test/")
+    session_factory = _create_test_session_factory(test_db_session)
+    repo = CrawlRepository(test_db_session)
+
+    # Persist Page 1 (depth 0) with links to /page2 and /page3
+    await repo.save_page(
+        audit.id,
+        {"requested_url": "https://resume.test/", "final_url": "https://resume.test/", "depth": 0, "http_status": 200},
+        [
+            {"destination_url": "https://resume.test/page2", "internal": True},
+            {"destination_url": "https://resume.test/page3", "internal": True},
+        ],
+    )
+    # Persist Page 2 (depth 1) with links to /page4 and /page5
+    await repo.save_page(
+        audit.id,
+        {"requested_url": "https://resume.test/page2", "final_url": "https://resume.test/page2", "depth": 1, "http_status": 200},
+        [
+            {"destination_url": "https://resume.test/page4", "internal": True},
+            {"destination_url": "https://resume.test/page5", "internal": True},
+        ],
+    )
+
+    # Simulate interrupted audit state before crash: 2 pages crawled, 5 discovered, 10 budget
+    audit.pages_crawled = 2
+    audit.pages_discovered = 5
+    audit.status = AuditStatus.crawling.value
+    audit.worker_token = "restart-worker-token"
+    await test_db_session.commit()
+
+    # Synthetic fetcher for remaining pages (/page3, /page4, /page5, and /page6 from /page4)
+    pages_html = {
+        "https://resume.test/page3": b'<html><body><h1>Page 3</h1></body></html>',
+        "https://resume.test/page4": b'<html><body><h1>Page 4</h1><a href="/page6">P6</a></body></html>',
+        "https://resume.test/page5": b'<html><body><h1>Page 5</h1></body></html>',
+        "https://resume.test/page6": b'<html><body><h1>Page 6</h1></body></html>',
+    }
+
+    fetched_urls = []
+
+    async def mock_fetch(url: str, *args, **kwargs):
+        fetched_urls.append(url)
+        body = pages_html.get(url, b"<html><body>Unknown</body></html>")
+        return FetchResult(
+            requested_url=url,
+            final_url=url,
+            fetch_status="success",
+            http_status=200,
+            content_type="text/html",
+            body=body,
+        )
+
+    fetcher = MagicMock(spec=SecureHTTPFetcher)
+    fetcher.fetch = AsyncMock(side_effect=mock_fetch)
+    fetcher.close = AsyncMock()
+
+    service = CrawlService(test_db_session, session_factory=session_factory)
+    summary = await service.execute_crawl(
+        audit_id=audit.id,
+        worker_token="restart-worker-token",
+        config=CrawlConfig(max_pages=10, parse_sitemaps=False, respect_robots_txt=False),
+        fetcher=fetcher,
+    )
+
+    # 1. Assert seed (/) and /page2 were NEVER recrawled
+    assert "https://resume.test/" not in fetched_urls
+    assert "https://resume.test/page2" not in fetched_urls
+
+    # 2. Assert remaining eligible pages were crawled
+    assert "https://resume.test/page3" in fetched_urls
+    assert "https://resume.test/page4" in fetched_urls
+    assert "https://resume.test/page5" in fetched_urls
+    assert "https://resume.test/page6" in fetched_urls
+
+    # 3. Assert accurate, uninflated statistics: 2 original + 4 newly crawled = 6 total
+    assert summary["pages_crawled"] == 6
+    assert summary["urls_discovered"] == 6
+    assert summary["crawl_resume_state"] == "genuinely_completed"
+
+    # 4. Verify 6 total pages exist in DB and audit is completed
+    all_pages = (await test_db_session.execute(
+        select(CrawlPage).where(CrawlPage.audit_id == audit.id)
+    )).scalars().all()
+    assert len(all_pages) == 6
+
+    await test_db_session.refresh(audit)
+    assert audit.status == AuditStatus.completed.value
+
+
+@pytest.mark.asyncio
+async def test_interrupted_crawl_unavailable_frontier_reported_honestly(test_db_session: AsyncSession):
+    """Test that when an interrupted crawl has no sitemap and no pending URLs in persisted evidence,
+    it honestly reports crawl_resume_state='frontier_unavailable' and status partially_completed,
+    instead of falsely marking it completed.
+    """
+    audit = await _create_test_audit(test_db_session, target_url="https://lost-frontier.test/")
+    session_factory = _create_test_session_factory(test_db_session)
+    repo = CrawlRepository(test_db_session)
+
+    # Persist 2 pages with NO links
+    await repo.save_page(
+        audit.id,
+        {"requested_url": "https://lost-frontier.test/", "final_url": "https://lost-frontier.test/", "depth": 0, "http_status": 200},
+        [],
+    )
+    await repo.save_page(
+        audit.id,
+        {"requested_url": "https://lost-frontier.test/2", "final_url": "https://lost-frontier.test/2", "depth": 1, "http_status": 200},
+        [],
+    )
+
+    # In-memory frontier had registered 15 discovered URLs before worker crashed
+    audit.pages_crawled = 2
+    audit.pages_discovered = 15
+    audit.status = AuditStatus.crawling.value
+    audit.worker_token = "restart-worker-token"
+    await test_db_session.commit()
+
+    fetcher = MagicMock(spec=SecureHTTPFetcher)
+    fetcher.fetch = AsyncMock()
+    fetcher.close = AsyncMock()
+
+    service = CrawlService(test_db_session, session_factory=session_factory)
+    summary = await service.execute_crawl(
+        audit_id=audit.id,
+        worker_token="restart-worker-token",
+        config=CrawlConfig(max_pages=10, parse_sitemaps=False, respect_robots_txt=False),
+        fetcher=fetcher,
+    )
+
+    # Frontier was unavailable; must not be marked completed
+    assert summary["crawl_resume_state"] == "frontier_unavailable"
+    assert summary["pages_crawled"] == 2
+
+    # Verify audit in DB is partially_completed, NOT completed
+    await test_db_session.refresh(audit)
+    assert audit.status == AuditStatus.partially_completed.value
+    assert "Crawl frontier unavailable" in (audit.error_message or "")
+
+
+def test_safe_exception_summary_and_token_redaction():
+    """Verify safe_exception_summary redacts SQL statements, bound parameters, HTML, and tokens."""
+    from app.repositories.crawl_repository import safe_exception_summary
+
+    # 1. SQLAlchemy IntegrityError with bound parameters, HTML, and tokens
+    raw_err = IntegrityError(
+        statement="INSERT INTO crawl_pages (id, raw_html) VALUES ('123', '<html>secret_token_12345</html>')",
+        params={"id": "123", "raw_html": "<html>secret_token_12345</html>", "token": "bearer secret_token_xyz"},
+        orig=Exception("UNIQUE constraint failed: crawl_pages.id"),
+    )
+    summary = safe_exception_summary(raw_err)
+    assert "IntegrityError: UNIQUE constraint failed (crawl_pages.id)" in summary
+    assert "INSERT INTO" not in summary
+    assert "secret_token_12345" not in summary
+    assert "secret_token_xyz" not in summary
+    assert "raw_html" not in summary
+
+    # 2. Token redaction in sanitize_pipeline_error with fallback message
+    token_err = RuntimeError("Connection failed while transmitting bearer abcd1234efgh5678 to api")
+    sanitized = sanitize_pipeline_error(token_err, stage="crawling")
+    assert "abcd1234efgh5678" not in sanitized
+    assert "[REDACTED]" in sanitized

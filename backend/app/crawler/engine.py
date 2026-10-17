@@ -36,6 +36,10 @@ class CrawlEngine:
         on_sitemap_persisted: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None,
         on_progress: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None,
         is_cancelled: Callable[[], Coroutine[Any, Any, bool]] | None = None,
+        initial_seen_urls: set[str] | None = None,
+        initial_frontier: list[tuple[str, int, str | None]] | None = None,
+        initial_pages_crawled: int = 0,
+        initial_discovered_count: int = 0,
     ) -> None:
         normalized_start = normalize_url(start_url)
         if not normalized_start:
@@ -45,26 +49,45 @@ class CrawlEngine:
         self.config = (config or CrawlConfig()).validate()
         self.scope = CrawlScope(self.start_url, include_subdomains=self.config.include_subdomains)
         self.fetcher = fetcher or SecureHTTPFetcher()
-        self.queue = CrawlQueue(self.scope, self.config)
+        self.queue = CrawlQueue(
+            self.scope,
+            self.config,
+            initial_seen_urls=initial_seen_urls,
+            initial_discovered_count=initial_discovered_count,
+        )
 
         self._on_page_persisted = on_page_persisted
         self._on_sitemap_persisted = on_sitemap_persisted
         self._on_progress = on_progress
         self._is_cancelled = is_cancelled
+        self.initial_frontier = initial_frontier or []
 
         # Execution statistics
-        self.pages_crawled: int = 0
+        self.pages_crawled: int = initial_pages_crawled
         self.pages_failed: int = 0
         self.max_depth_reached: int = 0
         self.start_time: float = 0.0
+        self.crawl_resume_state: str = "fresh" if initial_pages_crawled == 0 else "resumed"
 
     async def execute(self) -> dict[str, Any]:
         """Execute full crawl workflow."""
         self.start_time = time.monotonic()
         start_dt = datetime.now(timezone.utc)
 
-        # 1. Enqueue seed URL
-        self.queue.push(self.start_url, depth=0)
+        # 1. Enqueue seed URL if not already crawled; otherwise enqueue reconstructed frontier
+        if self.start_url not in self.queue._seen_urls:
+            self.queue.push(self.start_url, depth=0)
+
+        if self.initial_frontier:
+            self.crawl_resume_state = "interrupted_with_pending_urls"
+            for item in self.initial_frontier:
+                if isinstance(item, (list, tuple)):
+                    f_url = item[0]
+                    f_depth = item[1] if len(item) > 1 else 1
+                    f_source = item[2] if len(item) > 2 else self.start_url
+                else:
+                    f_url, f_depth, f_source = item, 1, self.start_url
+                self.queue.push(f_url, depth=f_depth, source_url=f_source, is_reconstructed=True)
 
         # 2. Robots.txt discovery
         robots = RobotsChecker(self.fetcher, self.scope, self.config)
@@ -76,24 +99,32 @@ class CrawlEngine:
             effective_delay = min(robots.crawl_delay, 10.0)
 
         # 3. XML Sitemap discovery
-        sitemap_parser = SitemapParser(self.fetcher, self.scope, self.config)
-        discovered_sitemap_urls, sitemap_records = await sitemap_parser.discover_sitemaps(robots.sitemap_urls)
+        if not self.initial_frontier:
+            sitemap_parser = SitemapParser(self.fetcher, self.scope, self.config)
+            discovered_sitemap_urls, sitemap_records = await sitemap_parser.discover_sitemaps(robots.sitemap_urls)
 
-        # Persist sitemap records
-        for sm_rec in sitemap_records:
-            if self._on_sitemap_persisted:
-                await self._on_sitemap_persisted({
-                    "sitemap_url": sm_rec.sitemap_url,
-                    "status": sm_rec.status,
-                    "url_count": sm_rec.url_count,
-                    "error_message": sm_rec.error_message,
-                })
+            # Persist sitemap records
+            for sm_rec in sitemap_records:
+                if self._on_sitemap_persisted:
+                    await self._on_sitemap_persisted({
+                        "sitemap_url": sm_rec.sitemap_url,
+                        "status": sm_rec.status,
+                        "url_count": sm_rec.url_count,
+                        "error_message": sm_rec.error_message,
+                    })
 
-        # Seed in-scope sitemap URLs into crawl queue (depth=1)
-        for sm_url in discovered_sitemap_urls:
-            if len(self.queue) >= self.config.max_pages * 2:
-                break
-            self.queue.push(sm_url, depth=1, source_url=self.start_url)
+            # Seed in-scope sitemap URLs into crawl queue (depth=1)
+            for sm_url in discovered_sitemap_urls:
+                if len(self.queue) >= self.config.max_pages * 2:
+                    break
+                self.queue.push(sm_url, depth=1, source_url=self.start_url)
+
+        # Check for unavailable frontier if queue is empty before starting
+        if self.queue.is_empty():
+            if self.pages_crawled >= self.config.max_pages:
+                self.crawl_resume_state = "genuinely_completed"
+            elif self.pages_crawled > 0:
+                self.crawl_resume_state = "frontier_unavailable"
 
         # 4. Main crawl loop
         last_request_time = 0.0
@@ -244,6 +275,15 @@ class CrawlEngine:
 
         await self.fetcher.close()
 
+        # Finalize crawl resume state honestly
+        if self._is_cancelled and await self._is_cancelled():
+            self.crawl_resume_state = "cancelled"
+        elif self.pages_crawled >= self.config.max_pages:
+            self.crawl_resume_state = "genuinely_completed"
+        elif self.queue.is_empty():
+            if self.crawl_resume_state != "frontier_unavailable":
+                self.crawl_resume_state = "genuinely_completed"
+
         end_dt = datetime.now(timezone.utc)
         summary = self.get_progress_summary()
         summary["started_at"] = start_dt.isoformat()
@@ -263,4 +303,5 @@ class CrawlEngine:
             "crawl_depth_reached": self.max_depth_reached,
             "max_pages_limit": self.config.max_pages,
             "max_depth_limit": self.config.max_depth,
+            "crawl_resume_state": self.crawl_resume_state,
         }
