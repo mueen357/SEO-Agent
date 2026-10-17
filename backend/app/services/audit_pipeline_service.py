@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import DatabaseError, IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -45,6 +46,40 @@ PIPELINE_STAGES = [
     "seo_scoring",
     "publishing",
 ]
+
+
+def sanitize_pipeline_error(e: Exception, stage: Optional[str] = None) -> str:
+    """Transform raw, potentially sensitive internal database/network exceptions into bounded sanitized error codes.
+
+    Prevents leakage of SQL queries, table structures, response parameters, tokens, headers, or internal tracebacks.
+    """
+    err_str = str(e)
+    # Check for integrity / unique constraint failures
+    if isinstance(e, IntegrityError) or "UNIQUE constraint failed" in err_str:
+        if stage in ("crawling", "storage") or "crawl_pages" in err_str:
+            return "PAGE_PERSISTENCE_CONFLICT: Page persistence encountered a unique constraint conflict."
+        return f"RECORD_CONFLICT: Unique constraint conflict during {stage or 'persistence'}."
+
+    # Check for general database / operational errors
+    if isinstance(e, (SQLAlchemyError, DatabaseError, OperationalError)):
+        if stage in ("crawling", "storage"):
+            return "CRAWL_STORAGE_ERROR: A database storage error occurred while saving crawl data."
+        return f"STORAGE_ERROR: An internal database error occurred during {stage or 'processing'}."
+
+    if isinstance(e, asyncio.TimeoutError):
+        return f"TIMEOUT_ERROR: Operation timed out during {stage or 'execution'}."
+
+    # Prevent SQL / parameters leakage from other unexpected exception types
+    leakage_indicators = ["INSERT INTO", "SELECT ", "UPDATE ", "DELETE FROM", "[SQL:", "[parameters:", "sqlite3.", "aiosqlite"]
+    if any(ind in err_str for ind in leakage_indicators):
+        if stage in ("crawling", "storage"):
+            return "CRAWL_STORAGE_ERROR: Database operation failed during crawl storage."
+        return f"STORAGE_ERROR: Database operation failed during {stage or 'processing'}."
+
+    clean = err_str.strip()
+    if len(clean) > 120:
+        clean = clean[:117] + "..."
+    return f"{stage.upper() if stage else 'PIPELINE'}_ERROR: {clean}" if clean else f"{stage.upper() if stage else 'PIPELINE'}_FAILURE"
 
 
 def utc_iso_now() -> str:
@@ -238,7 +273,7 @@ class AuditPipelineService:
                 crawl_summary = {}
                 try:
                     async with self.session_factory() as session:
-                        crawl_svc = CrawlService(session)
+                        crawl_svc = CrawlService(session, session_factory=self.session_factory)
                         crawl_summary = await crawl_svc.execute_crawl(
                             audit_id=audit_id,
                             worker_token=worker_token,
@@ -248,15 +283,16 @@ class AuditPipelineService:
                         )
                 except Exception as e:
                     logger.exception(f"Crawl stage failed for audit '{audit_id}': {e}")
-                    await self._update_stage(audit_id, worker_token, "crawling", "failed", error_msg=str(e))
-                    await self._update_stage(audit_id, worker_token, "storage", "failed", error_msg=str(e))
+                    sanitized = sanitize_pipeline_error(e, stage="crawling")
+                    await self._update_stage(audit_id, worker_token, "crawling", "failed", error_msg=sanitized)
+                    await self._update_stage(audit_id, worker_token, "storage", "failed", error_msg=sanitized)
                     async with self.session_factory() as session:
                         crawl_repo = CrawlRepository(session)
                         await crawl_repo.release_job(
                             audit_id=audit_id,
                             worker_token=worker_token,
                             terminal_status=AuditStatus.failed,
-                            error_message=f"Crawling failed: {e}",
+                            error_message=f"Crawling failed: {sanitized}",
                         )
                     return
 
@@ -307,7 +343,8 @@ class AuditPipelineService:
                         return
                 except Exception as e:
                     logger.exception(f"On-Page SEO analysis stage failed for audit '{audit_id}': {e}")
-                    await self._update_stage(audit_id, worker_token, "on_page_seo", "failed", error_msg=str(e))
+                    sanitized = sanitize_pipeline_error(e, stage="on_page_seo")
+                    await self._update_stage(audit_id, worker_token, "on_page_seo", "failed", error_msg=sanitized)
 
             # STAGE 5: Technical SEO
             if await _should_abort():
@@ -329,7 +366,8 @@ class AuditPipelineService:
                         return
                 except Exception as e:
                     logger.exception(f"Technical SEO analysis stage failed for audit '{audit_id}': {e}")
-                    await self._update_stage(audit_id, worker_token, "technical_seo", "failed", error_msg=str(e))
+                    sanitized = sanitize_pipeline_error(e, stage="technical_seo")
+                    await self._update_stage(audit_id, worker_token, "technical_seo", "failed", error_msg=sanitized)
 
             # STAGE 6: Site-Wide SEO
             if await _should_abort():
@@ -351,7 +389,8 @@ class AuditPipelineService:
                         return
                 except Exception as e:
                     logger.exception(f"Site-Wide SEO analysis stage failed for audit '{audit_id}': {e}")
-                    await self._update_stage(audit_id, worker_token, "sitewide_seo", "failed", error_msg=str(e))
+                    sanitized = sanitize_pipeline_error(e, stage="sitewide_seo")
+                    await self._update_stage(audit_id, worker_token, "sitewide_seo", "failed", error_msg=sanitized)
 
             # STAGE 7: Technology & CMS Detection
             if await _should_abort():
@@ -373,7 +412,8 @@ class AuditPipelineService:
                         return
                 except Exception as e:
                     logger.exception(f"Technology detection stage failed for audit '{audit_id}': {e}")
-                    await self._update_stage(audit_id, worker_token, "technology_detection", "failed", error_msg=str(e))
+                    sanitized = sanitize_pipeline_error(e, stage="technology_detection")
+                    await self._update_stage(audit_id, worker_token, "technology_detection", "failed", error_msg=sanitized)
 
             # STAGE 8: SEO Scoring & Priorities
             if await _should_abort():
@@ -401,7 +441,8 @@ class AuditPipelineService:
                         return
                 except Exception as e:
                     logger.exception(f"SEO Scoring stage failed for audit '{audit_id}': {e}")
-                    await self._update_stage(audit_id, worker_token, "seo_scoring", "failed", error_msg=str(e))
+                    sanitized = sanitize_pipeline_error(e, stage="seo_scoring")
+                    await self._update_stage(audit_id, worker_token, "seo_scoring", "failed", error_msg=sanitized)
 
             # STAGE 9: Publishing & Completion
             if await _should_abort():
@@ -483,10 +524,26 @@ class AuditPipelineService:
             if audit.status == AuditStatus.queued.value:
                 raise ConflictError(f"Audit '{audit_id}' is already queued for processing.")
 
-            # Atomically enqueue audit for background worker pickup
+            # Validate that crawl itself did not fail (cannot complete missing analysis on an incomplete/failed crawl)
             progress = self._init_pipeline_progress(audit.progress_json)
             pipe = progress["pipeline"]
-            # Validation, crawling, and storage are guaranteed completed since pages exist
+            crawling_status = pipe.get("stages", {}).get("crawling", {}).get("status")
+            storage_status = pipe.get("stages", {}).get("storage", {}).get("status")
+            pipe_errors = pipe.get("errors", {})
+            if (
+                audit.status == AuditStatus.failed.value
+                or crawling_status in ("failed", "cancelled")
+                or storage_status in ("failed", "cancelled")
+                or "crawling" in pipe_errors
+                or "storage" in pipe_errors
+            ):
+                raise ConflictError(
+                    f"Cannot complete missing analysis for audit '{audit_id}': The crawl failed or was incomplete. "
+                    "A successfully completed crawl is required before downstream analysis can be completed."
+                )
+
+            # Atomically enqueue audit for background worker pickup
+            # Validation, crawling, and storage are guaranteed completed since pages exist and were verified
             pipe["stages"]["validation"]["status"] = "completed"
             pipe["stages"]["crawling"]["status"] = "completed"
             pipe["stages"]["storage"]["status"] = "completed"
@@ -545,14 +602,30 @@ class AuditPipelineService:
             if not has_pages and (audit.pages_crawled or 0) == 0:
                 raise ConflictError(f"Audit '{audit_id}' has 0 crawled pages. Cannot run analysis without pages.")
 
+            # Validate that crawl itself completed successfully
+            progress = self._init_pipeline_progress(audit.progress_json)
+            pipe = progress["pipeline"]
+            crawling_status = pipe.get("stages", {}).get("crawling", {}).get("status")
+            storage_status = pipe.get("stages", {}).get("storage", {}).get("status")
+            pipe_errors = pipe.get("errors", {})
+            if (
+                audit.status == AuditStatus.failed.value
+                or crawling_status in ("failed", "cancelled")
+                or storage_status in ("failed", "cancelled")
+                or "crawling" in pipe_errors
+                or "storage" in pipe_errors
+            ):
+                raise ConflictError(
+                    f"Cannot run missing analysis for audit '{audit_id}': The crawl failed or was incomplete. "
+                    "A successfully completed crawl is required before downstream analysis can be run."
+                )
+
             # Claim lease for analysis
             now = datetime.now(timezone.utc)
             audit.worker_token = token
             audit.status = AuditStatus.analyzing.value
             audit.lease_expires_at = now + timedelta(seconds=120)
             audit.heartbeat_at = now
-            progress = self._init_pipeline_progress(audit.progress_json)
-            pipe = progress["pipeline"]
             pipe["stages"]["validation"]["status"] = "completed"
             pipe["stages"]["crawling"]["status"] = "completed"
             pipe["stages"]["storage"]["status"] = "completed"

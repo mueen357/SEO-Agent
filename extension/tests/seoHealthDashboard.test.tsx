@@ -368,4 +368,72 @@ describe('SeoHealthDashboard Component Verification', () => {
     expect(container.textContent).toContain('--');
     expect(container.textContent).toContain('Unrated');
   });
+
+  it('12. displays truthful failure message and suppresses technical conformity statement when crawl fails during storage', async () => {
+    vi.spyOn(api, 'getAuditScore').mockResolvedValue(null as any);
+    vi.spyOn(api, 'getAuditPriorities').mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+      tier_counts: { P0: 0, P1: 0, P2: 0, P3: 0 },
+    });
+
+    await act(async () => {
+      root.render(
+        <SeoHealthDashboard
+          auditId="audit-failed-crawl"
+          isBackendOnline={true}
+          isAuditRunning={false}
+          auditStatus="failed"
+          auditError="CRAWL_STORAGE_ERROR"
+          progressJson={{
+            pipeline: {
+              stages: {
+                crawling: { status: 'failed' },
+              },
+            },
+          }}
+        />
+      );
+    });
+
+    // Must display exact expected messaging
+    expect(container.textContent).toContain('SEO analysis was not completed.');
+    expect(container.textContent).toContain('The crawl failed during page storage.');
+
+    // Must NOT falsely claim website conforms to technical standards
+    expect(container.textContent).not.toContain('conforms to verified technical standards');
+  });
+
+  it('13. renders "Analysis incomplete or outdated" and suppresses conformity statement when scorecard is stale', async () => {
+    const staleScorecard: AuditScorecardData = {
+      ...baseScorecard,
+      overall_state: 'stale',
+      overall_score: null,
+      score_label: 'Unrated',
+    };
+    vi.spyOn(api, 'getAuditScore').mockResolvedValue(staleScorecard);
+    vi.spyOn(api, 'getAuditPriorities').mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+      tier_counts: { P0: 0, P1: 0, P2: 0, P3: 0 },
+    });
+
+    await act(async () => {
+      root.render(
+        <SeoHealthDashboard
+          auditId="audit-stale"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    // Must display truthful incomplete statement instead of positive badge
+    expect(container.textContent).toContain('Analysis incomplete or outdated');
+    expect(container.textContent).not.toContain('conforms to verified technical standards');
+  });
 });

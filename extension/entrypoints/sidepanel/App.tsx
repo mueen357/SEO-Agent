@@ -430,6 +430,9 @@ export default function App() {
               auditId={fullAudit?.id || null}
               isBackendOnline={health?.status === 'ok'}
               isAuditRunning={isFullAuditing}
+              auditStatus={fullAudit?.status}
+              auditError={fullAudit?.error_message}
+              progressJson={fullAudit?.progress_json}
               onNavigateToFindings={() => setFullAuditSubView('findings')}
               onNavigateToPages={() => setFullAuditSubView('pages')}
             />

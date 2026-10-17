@@ -27,6 +27,9 @@ interface SeoHealthDashboardProps {
   auditId: string | null;
   isBackendOnline: boolean;
   isAuditRunning: boolean;
+  auditStatus?: string;
+  auditError?: string | null;
+  progressJson?: any;
   onNavigateToFindings?: () => void;
   onNavigateToPages?: () => void;
 }
@@ -35,6 +38,9 @@ export function SeoHealthDashboard({
   auditId,
   isBackendOnline,
   isAuditRunning,
+  auditStatus,
+  auditError,
+  progressJson,
   onNavigateToFindings,
   onNavigateToPages,
 }: SeoHealthDashboardProps) {
@@ -67,8 +73,8 @@ export function SeoHealthDashboard({
         priority_tier: selectedTier === 'ALL' ? undefined : selectedTier,
         page_size: 50,
       });
-      setPriorities(prioRes.items);
-      setTierCounts(prioRes.tier_counts);
+      setPriorities(prioRes?.items || []);
+      setTierCounts(prioRes?.tier_counts || { P0: 0, P1: 0, P2: 0, P3: 0 });
     } catch (err: any) {
       console.error('Failed to load SEO Health data:', err);
       setError(err.message || 'Unable to load SEO Health Scorecard.');
@@ -327,41 +333,106 @@ export function SeoHealthDashboard({
                   Calculating evidence-based health scores and priority action items...
                 </div>
               </>
-            ) : scorecard?.overall_state === 'not_analyzed' || !scorecard ? (
-              <>
-                <AlertTriangle className="w-6 h-6 text-slate-500 mx-auto" />
-                <div className="text-xs font-semibold text-slate-300">
-                  Analysis not completed
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  Run the automated audit pipeline to evaluate SEO rules and generate priority recommendations.
-                </div>
-              </>
-            ) : scorecard?.overall_state === 'insufficient_evidence' || scorecard?.overall_state === 'provisional' ? (
-              <>
-                <AlertTriangle className="w-6 h-6 text-amber-400 mx-auto" />
-                <div className="text-xs font-semibold text-slate-300">
-                  {scorecard?.overall_state === 'insufficient_evidence' ? 'Insufficient evidence' : 'Some checks unavailable'}
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  {selectedTier === 'ALL'
-                    ? 'No actionable issues found among the completed checks. Crawl budget or coverage limits apply.'
-                    : `No ${selectedTier} issues found in current provisional evaluation.`}
-                </div>
-              </>
-            ) : (
-              <>
-                <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto" />
-                <div className="text-xs font-semibold text-slate-300">
-                  {selectedTier === 'ALL'
-                    ? 'No actionable issues found among the completed checks'
-                    : `No ${selectedTier} issues found among completed checks.`}
-                </div>
-                <div className="text-[11px] text-slate-500">
-                  Website conforms to verified technical standards for this tier.
-                </div>
-              </>
-            )}
+            ) : (() => {
+              const pipeline = (progressJson as any)?.pipeline;
+              const stageErrors = pipeline?.errors || {};
+              const isCrawlFailed =
+                auditStatus === 'failed' &&
+                (Boolean(stageErrors.crawling) ||
+                  Boolean(stageErrors.storage) ||
+                  (Boolean(auditError) &&
+                    (auditError!.includes('storage') ||
+                      auditError!.includes('crawl') ||
+                      auditError!.includes('PAGE_PERSISTENCE_CONFLICT') ||
+                      auditError!.includes('CRAWL_STORAGE_ERROR') ||
+                      auditError!.includes('IntegrityError'))));
+
+              if (isCrawlFailed) {
+                return (
+                  <>
+                    <AlertTriangle className="w-6 h-6 text-rose-400 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-200">
+                      SEO analysis was not completed.
+                    </div>
+                    <div className="text-[11px] text-rose-400/90 max-w-sm mx-auto">
+                      The crawl failed during page storage.
+                    </div>
+                  </>
+                );
+              }
+
+              if (auditStatus === 'failed') {
+                return (
+                  <>
+                    <AlertTriangle className="w-6 h-6 text-rose-400 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-200">
+                      SEO analysis was not completed.
+                    </div>
+                    <div className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                      {auditError || 'The audit encountered a critical error during execution.'}
+                    </div>
+                  </>
+                );
+              }
+
+              if (scorecard?.overall_state === 'not_analyzed' || !scorecard) {
+                return (
+                  <>
+                    <AlertTriangle className="w-6 h-6 text-slate-500 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-300">
+                      Analysis not completed
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Run the automated audit pipeline to evaluate SEO rules and generate priority recommendations.
+                    </div>
+                  </>
+                );
+              }
+
+              if (scorecard?.overall_state === 'insufficient_evidence' || scorecard?.overall_state === 'provisional') {
+                return (
+                  <>
+                    <AlertTriangle className="w-6 h-6 text-amber-400 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-300">
+                      {scorecard?.overall_state === 'insufficient_evidence' ? 'Insufficient evidence' : 'Some checks unavailable'}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {selectedTier === 'ALL'
+                        ? 'No actionable issues found among the completed checks. Crawl budget or coverage limits apply.'
+                        : `No ${selectedTier} issues found in current provisional evaluation.`}
+                    </div>
+                  </>
+                );
+              }
+
+              if (scorecard?.overall_state === 'stale') {
+                return (
+                  <>
+                    <AlertTriangle className="w-6 h-6 text-amber-400 mx-auto" />
+                    <div className="text-xs font-semibold text-slate-300">
+                      Analysis incomplete or outdated
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      SEO analysis was not completed or requires recalculation.
+                    </div>
+                  </>
+                );
+              }
+
+              return (
+                <>
+                  <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto" />
+                  <div className="text-xs font-semibold text-slate-300">
+                    {selectedTier === 'ALL'
+                      ? 'No actionable issues found among the completed checks'
+                      : `No ${selectedTier} issues found among completed checks.`}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Website conforms to verified technical standards for this tier.
+                  </div>
+                </>
+              );
+            })()}
           </div>
         ) : (
           <div className="space-y-2">

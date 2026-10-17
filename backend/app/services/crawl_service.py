@@ -5,13 +5,15 @@ from datetime import datetime, timezone
 import logging
 from typing import Any, Dict, Optional
 import uuid
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.core.errors import ConflictError, NotFoundError
 from app.crawler.engine import CrawlEngine
 from app.crawler.policies import CrawlConfig
-from app.database.models import Audit, AuditMode, AuditStatus
+from app.database.models import Audit, AuditMode, AuditStatus, CrawlPage
+from app.database.session import get_session_factory
 from app.renderer.browser_manager import BrowserManager
 from app.renderer.render_detector import RenderDetector
 from app.renderer.render_policy import RenderMode, RenderPolicy, RenderStrategy
@@ -25,8 +27,13 @@ logger = logging.getLogger("crawl_service")
 class CrawlService:
     """Manages crawl start transitions, worker orchestration, independent heartbeats, and rendering."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
+    ) -> None:
         self.session = session
+        self.session_factory = session_factory
         self.audit_repo = AuditRepository(session)
         self.crawl_repo = CrawlRepository(session)
 
@@ -107,14 +114,18 @@ class CrawlService:
                     await asyncio.sleep(15.0)
                     if heartbeat_stop.is_set():
                         break
-                    valid = await self.crawl_repo.heartbeat(
-                        audit_id=audit_id,
-                        worker_token=worker_token,
-                        lease_seconds=60,
-                    )
-                    if not valid:
-                        logger.warning(f"Worker heartbeat rejected or audit '{audit_id}' cancelled/overtaken.")
-                        break
+                    # Use a dedicated session for background heartbeat to NEVER share AsyncSession across concurrent tasks
+                    sf = self.session_factory or get_session_factory()
+                    async with sf() as hb_session:
+                        hb_repo = CrawlRepository(hb_session)
+                        valid = await hb_repo.heartbeat(
+                            audit_id=audit_id,
+                            worker_token=worker_token,
+                            lease_seconds=60,
+                        )
+                        if not valid:
+                            logger.warning(f"Worker heartbeat rejected or audit '{audit_id}' cancelled/overtaken.")
+                            break
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
@@ -234,6 +245,13 @@ class CrawlService:
             is_cancelled=is_cancelled,
         )
 
+        # Pre-populate engine queue seen URLs from existing pages to ensure restarts / retries don't re-fetch
+        existing_pages_stmt = select(CrawlPage.requested_url).where(CrawlPage.audit_id == audit_id)
+        existing_pages_res = await self.session.execute(existing_pages_stmt)
+        for u in existing_pages_res.scalars().all():
+            engine.queue._seen_urls.add(u)
+        engine.pages_crawled = len(engine.queue._seen_urls)
+
         try:
             summary = await engine.execute()
 
@@ -285,12 +303,15 @@ class CrawlService:
             logger.exception(f"Unhandled error during audit '{audit_id}' crawl: {e}")
             heartbeat_stop.set()
             heartbeat_task.cancel()
+            from app.services.audit_pipeline_service import sanitize_pipeline_error
+            sanitized = sanitize_pipeline_error(e, stage="crawling")
             await self.crawl_repo.release_job(
                 audit_id=audit_id,
                 worker_token=worker_token,
                 terminal_status=AuditStatus.failed,
-                error_message=str(e),
+                error_message=f"Crawling failed: {sanitized}",
             )
+            raise
         finally:
             heartbeat_stop.set()
             if not heartbeat_task.done():

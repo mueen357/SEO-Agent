@@ -74,8 +74,21 @@ export const FullAuditOverview: React.FC<FullAuditOverviewProps> = ({
   const completedStages: string[] = pipeline?.completed_stages || [];
   const stageErrors: Record<string, string> = pipeline?.errors || {};
 
-  // Check if crawl exists but downstream analysis is missing
-  const hasCrawlData = (audit?.pages_crawled ?? 0) > 0 || ['completed', 'partially_completed'].includes(audit?.status || '');
+  // Check if crawl exists and succeeded, but downstream analysis is missing.
+  // Precondition: Crawling and storage MUST be completed without crawl errors.
+  // An incomplete or failed crawl cannot be treated as ready for missing analysis.
+  const isCrawlComplete = pipeline
+    ? (completedStages.includes('crawling') &&
+       completedStages.includes('storage') &&
+       !stageErrors.crawling &&
+       !stageErrors.storage)
+    : (audit?.status === 'completed');
+
+  const hasCrawlData =
+    (audit?.pages_crawled ?? 0) > 0 &&
+    isCrawlComplete &&
+    audit?.status !== 'failed';
+
   const isMissingAnalysis = hasCrawlData && !isRunning && (!pipeline || !completedStages.includes('seo_scoring'));
 
   return (

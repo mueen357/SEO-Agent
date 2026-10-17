@@ -175,4 +175,54 @@ describe('One-Click Full Audit UX & Empty State Verification', () => {
     // Assert that false-pass text is NOT displayed
     expect(container.textContent).not.toContain('No actionable SEO issues detected');
   });
+
+  it('FullAuditOverview does NOT display "Complete Missing Analysis" on failed or incomplete crawl', async () => {
+    const failedCrawlAudit: AuditRecord = {
+      id: 'failed-crawl-audit-uuid',
+      target_url: 'https://www.pukkajuice.co.uk/',
+      normalized_url: 'https://www.pukkajuice.co.uk/',
+      hostname: 'www.pukkajuice.co.uk',
+      mode: 'full',
+      status: 'failed',
+      max_pages: 50,
+      pages_discovered: 151,
+      pages_crawled: 2,
+      error_message: 'PAGE_PERSISTENCE_CONFLICT: Database conflict during page persistence.',
+      configuration_json: {},
+      progress_json: {
+        pipeline: {
+          current_stage: 'crawling',
+          total_stages: 9,
+          completed_stages: ['validation'],
+          stages: {
+            validation: { status: 'completed' },
+            crawling: { status: 'failed', error: 'PAGE_PERSISTENCE_CONFLICT' },
+          },
+          errors: {
+            crawling: 'PAGE_PERSISTENCE_CONFLICT: Database conflict during page persistence.',
+          },
+        },
+      },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    await act(async () => {
+      root.render(
+        <FullAuditOverview
+          audit={failedCrawlAudit}
+          isRunning={false}
+          onStartAudit={vi.fn()}
+          onCancelAudit={vi.fn()}
+          onRefresh={vi.fn()}
+          onCompleteMissingAnalysis={vi.fn()}
+          isBackendOnline={true}
+        />
+      );
+    });
+
+    const buttons = Array.from(container.querySelectorAll('button'));
+    const completeBtn = buttons.find((b) => b.textContent?.includes('Complete Missing Analysis'));
+    expect(completeBtn).toBeUndefined();
+  });
 });
