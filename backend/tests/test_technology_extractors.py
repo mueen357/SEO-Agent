@@ -28,7 +28,12 @@ def test_technology_registry_definitions():
 
     cms_list = TechnologyRegistry.get_by_category(TechnologyCategory.cms)
     cms_ids = {c.id for c in cms_list}
-    assert {"wordpress", "shopify", "wix", "webflow", "squarespace"}.issubset(cms_ids)
+    assert {"wordpress", "shopify", "wix", "webflow", "squarespace", "framer"}.issubset(cms_ids)
+    framer = TechnologyRegistry.get("framer")
+    assert framer is not None
+    assert framer.name == "Framer"
+    assert framer.category == TechnologyCategory.cms
+
 
 
 def test_html_extractor_meta_generators():
@@ -176,4 +181,38 @@ def test_crawler_safe_cookie_name_capture():
     assert sanitized_header == "connect.sid=1; laravel_session=1"
     assert "SECRET123" not in sanitized_header
     assert "eyJpdiI" not in sanitized_header
+
+
+def test_html_extractor_framer_markers():
+    """Verify Framer generator, structural DOM attributes, and CDN asset URLs are captured."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="generator" content="Framer 7788242" />
+        <link rel="stylesheet" href="https://framerusercontent.com/sites/abc/style.css" />
+        <script src="https://events.framer.com/script?v=2"></script>
+        <script src="https://framerusercontent.com/sites/abc/script_main.mjs"></script>
+        <script>window.__framer__ = { siteId: "123" };</script>
+    </head>
+    <body>
+        <div data-framer-name="Desktop Header" data-framer-hydrate-v2="hydrate-token-abc">
+            <div data-framer-component="NavigationMenu">Menu</div>
+            <img src="https://framerusercontent.com/images/hero.webp" alt="Hero banner" />
+        </div>
+        <div id="__framer-badge-container">Made with Framer</div>
+    </body>
+    </html>
+    """
+    evidence = HTMLTechnologyExtractor.extract(html)
+    assert "Framer 7788242" in evidence.meta_generators
+    assert any("framer:data-framer-name" in m for m in evidence.dom_markers)
+    assert "framer:data-framer-hydrate-v2" in evidence.dom_markers
+    assert "framer:data-framer-component" in evidence.dom_markers
+    assert "id:__framer-badge-container" in evidence.dom_markers
+    assert any("framer:__framer__" in m for m in evidence.inline_markers)
+    assert any("framerusercontent.com" in s for s in evidence.script_sources)
+    assert any("events.framer.com" in s for s in evidence.script_sources)
+    assert any("framerusercontent.com/images/hero.webp" in a for a in evidence.asset_urls)
+
 

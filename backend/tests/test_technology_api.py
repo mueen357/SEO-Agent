@@ -299,3 +299,130 @@ async def test_technology_analyze_zero_pages(client: AsyncClient, test_db_sessio
     assert "0 crawled pages" in res.json()["detail"]
     assert "Cannot perform technology detection without crawl evidence" in res.json()["detail"]
 
+
+@pytest.mark.asyncio
+async def test_technology_analyze_framer_persistence_and_api(client: AsyncClient, test_db_session: AsyncSession):
+    """Verify Framer detection persistence, listing, and summary via API endpoints."""
+    audit = Audit(
+        target_url="https://framer-site.com",
+        normalized_url="https://framer-site.com/",
+        hostname="framer-site.com",
+        mode=AuditMode.full,
+        status=AuditStatus.completed,
+    )
+    test_db_session.add(audit)
+    await test_db_session.commit()
+
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="generator" content="Framer 7788242" />
+        <script src="https://events.framer.com/script?v=2"></script>
+        <script src="https://framerusercontent.com/sites/abc/script.js"></script>
+    </head>
+    <body>
+        <div data-framer-name="Desktop" data-framer-hydrate-v2="true">
+            <img src="https://framerusercontent.com/images/hero.webp" />
+        </div>
+    </body>
+    </html>
+    """
+    raw_ev = HTMLTechnologyExtractor.extract(html).to_dict()
+
+    page = CrawlPage(
+        audit_id=audit.id,
+        requested_url="https://framer-site.com/",
+        final_url="https://framer-site.com/",
+        fetch_status="success",
+        http_status=200,
+        headers_json={"server": "Framer/24ab00f"},
+        technology_evidence_json=raw_ev,
+    )
+    test_db_session.add(page)
+    await test_db_session.commit()
+
+    # 1. Trigger analyze
+    post_res = await client.post(f"/api/v1/audits/{audit.id}/technologies/analyze")
+    assert post_res.status_code == 200
+    post_data = post_res.json()
+    assert post_data["audit_id"] == str(audit.id)
+    assert post_data["primary_cms"] == "Framer"
+    assert post_data["technologies_detected"] >= 1
+
+    framer_finding = next((t for t in post_data["technologies"] if t["technology_id"] == "framer"), None)
+    assert framer_finding is not None
+    assert framer_finding["technology_name"] == "Framer"
+    assert framer_finding["confidence"] >= 0.95
+    assert framer_finding["confidence_level"] == "high"
+    assert framer_finding["status"] == "detected"
+    assert framer_finding["version_or_null"] == "7788242"
+
+    # 2. Query list endpoint
+    list_res = await client.get(f"/api/v1/audits/{audit.id}/technologies")
+    assert list_res.status_code == 200
+    list_data = list_res.json()
+    assert list_data["total"] >= 1
+    assert any(t["technology_id"] == "framer" for t in list_data["items"])
+
+    # 3. Query summary endpoint
+    summary_res = await client.get(f"/api/v1/audits/{audit.id}/technologies/summary")
+    assert summary_res.status_code == 200
+    summary_data = summary_res.json()
+    assert summary_data["primary_cms"] == "Framer"
+    assert summary_data["total_detected"] >= 1
+    assert summary_data["detected_technologies_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_historical_audit_reanalysis_without_recrawl(client: AsyncClient, test_db_session: AsyncSession):
+    """Verify historical completed audit re-analyzes technologies from persisted crawl evidence without recrawling."""
+    audit = Audit(
+        target_url="https://sendroq.com",
+        normalized_url="https://sendroq.com/",
+        hostname="sendroq.com",
+        mode=AuditMode.full,
+        status=AuditStatus.completed,
+    )
+    test_db_session.add(audit)
+    await test_db_session.commit()
+
+    # Persisted crawl page from completed historical crawl (matching SendRoq evidence profile)
+    page = CrawlPage(
+        audit_id=audit.id,
+        requested_url="https://sendroq.com/",
+        final_url="https://www.sendroq.com/",
+        fetch_status="success",
+        http_status=200,
+        headers_json={"server": "Framer/24ab00f", "content-type": "text/html; charset=utf-8"},
+        technology_evidence_json={
+            "meta_generators": ["Framer 7788242"],
+            "script_sources": [
+                "https://events.framer.com/script?v=2",
+                "https://framerusercontent.com/sites/2Jd6gYIuhN3w12iK0q2J8s/script_main.QJCSBOPQ.mjs",
+            ],
+            "stylesheet_hrefs": [],
+            "dom_markers": [],
+            "body_classes": [],
+            "html_attributes": {},
+            "inline_markers": [],
+            "comment_markers": [],
+            "asset_urls": [],
+        },
+    )
+    test_db_session.add(page)
+    await test_db_session.commit()
+
+    # Re-analyze historical audit
+    res = await client.post(f"/api/v1/audits/{audit.id}/technologies/analyze")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["primary_cms"] == "Framer"
+
+    framer = next((t for t in data["technologies"] if t["technology_id"] == "framer"), None)
+    assert framer is not None
+    assert framer["confidence"] >= 0.95
+    assert framer["confidence_level"] == "high"
+    assert framer["status"] == "detected"
+
+

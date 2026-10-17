@@ -202,6 +202,32 @@ describe('SeoHealthDashboard Component Verification', () => {
     expect(container.textContent).toContain('Stale Evidence');
   });
 
+  it('4b. renders genuinely fresh completed scorecard without Stale Evidence badge', async () => {
+    const freshCard: AuditScorecardData = {
+      ...baseScorecard,
+      overall_score: 51.1,
+      overall_state: 'available',
+      rules_evaluated: 45,
+    };
+
+    vi.spyOn(api, 'getAuditScore').mockResolvedValue(freshCard);
+    vi.spyOn(api, 'getAuditPriorities').mockResolvedValue(samplePrioritiesResponse);
+
+    await act(async () => {
+      root.render(
+        <SeoHealthDashboard
+          auditId="audit-sendroq"
+          isBackendOnline={true}
+          isAuditRunning={false}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('51.1');
+    expect(container.textContent).toContain('45 Rules');
+    expect(container.textContent).not.toContain('Stale Evidence');
+  });
+
   it('5. renders category score percentages accurately', async () => {
     vi.spyOn(api, 'getAuditScore').mockResolvedValue(baseScorecard);
     vi.spyOn(api, 'getAuditPriorities').mockResolvedValue(samplePrioritiesResponse);

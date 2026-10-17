@@ -57,6 +57,13 @@ class TechnologyRegistry:
             website="https://www.squarespace.com",
             description="Website builder and hosting platform.",
         ),
+        "framer": TechnologyDefinition(
+            id="framer",
+            name="Framer",
+            category=TechnologyCategory.cms,
+            website="https://www.framer.com",
+            description="Interactive website builder and CMS platform for designers and teams.",
+        ),
 
         # Frontend Frameworks & Libraries
         "react": TechnologyDefinition(

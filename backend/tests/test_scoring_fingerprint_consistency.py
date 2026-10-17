@@ -363,3 +363,205 @@ async def test_12_and_13_scoring_service_staleness_and_recalculation(test_db_ses
     card_fresh = await service.get_scorecard(audit.id)
     assert card_fresh.overall_state != "stale"
     assert card_fresh.input_fingerprint == card_recalculated.input_fingerprint
+
+
+@pytest.mark.asyncio
+async def test_14_score_calculated_in_stage_8_remains_fresh_after_stage_9_completed_transition(test_db_session: AsyncSession):
+    """Verify scorecard computed during Stage 8 (generating_recommendations) does NOT become stale when Stage 9 marks completed."""
+    audit = Audit(
+        id=uuid.uuid4(),
+        target_url="https://lifecycle-test.com",
+        normalized_url="https://lifecycle-test.com/",
+        hostname="lifecycle-test.com",
+        mode=AuditMode.full,
+        status=AuditStatus.generating_recommendations,
+        pages_crawled=2,
+    )
+    test_db_session.add(audit)
+
+    page1 = CrawlPage(
+        id=uuid.uuid4(),
+        audit_id=audit.id,
+        requested_url="https://lifecycle-test.com/",
+        final_url="https://lifecycle-test.com/",
+        fetch_status="success",
+        http_status=200,
+        depth=0,
+    )
+    page2 = CrawlPage(
+        id=uuid.uuid4(),
+        audit_id=audit.id,
+        requested_url="https://lifecycle-test.com/about",
+        final_url="https://lifecycle-test.com/about",
+        fetch_status="success",
+        http_status=200,
+        depth=1,
+    )
+    test_db_session.add_all([page1, page2])
+
+    issue1 = SeoIssue(
+        id=uuid.uuid4(),
+        audit_id=audit.id,
+        crawl_page_id=page1.id,
+        rule_id="ONPAGE_TITLE_PRESENT",
+        category="on_page",
+        subcategory="title",
+        severity="high",
+        status="pass",
+        title="Title Present",
+        description="Page has title.",
+        recommendation="None.",
+        fingerprint="fp_title_lc_1",
+        evidence_json={"page_url": page1.final_url},
+    )
+    test_db_session.add(issue1)
+    await test_db_session.commit()
+
+    service = ScoringService(test_db_session)
+
+    # Stage 8: Compute scorecard while audit status is generating_recommendations
+    card_stage8 = await service.compute_score(audit.id)
+    assert card_stage8.overall_state != "stale"
+    stage8_fp = card_stage8.input_fingerprint
+
+    # Stage 9: Pipeline transitions audit status to completed
+    audit.status = AuditStatus.completed
+    await test_db_session.commit()
+
+    # GET scorecard after completion: Must remain fresh and NOT falsely marked stale!
+    card_completed = await service.get_scorecard(audit.id)
+    assert card_completed.overall_state != "stale"
+    # Incomplete rule coverage truthfully reports provisional (coverage honesty)
+    assert card_completed.overall_state == "provisional"
+    assert card_completed.input_fingerprint == stage8_fp
+
+    # Verify that a REAL evidence change still triggers true staleness after completion
+    page2.http_status = 404
+    await test_db_session.commit()
+
+    card_mutated = await service.get_scorecard(audit.id)
+    assert card_mutated.overall_state == "stale"
+
+
+@pytest.mark.asyncio
+async def test_15_legacy_stage_8_fingerprint_auto_migrates_on_get(test_db_session: AsyncSession):
+    """Verify historical scorecards with legacy generating_recommendations fingerprints automatically migrate to canonical fresh state."""
+    audit = Audit(
+        id=uuid.uuid4(),
+        target_url="https://legacy-migrate.com",
+        normalized_url="https://legacy-migrate.com/",
+        hostname="legacy-migrate.com",
+        mode=AuditMode.full,
+        status=AuditStatus.completed,
+        pages_crawled=1,
+    )
+    test_db_session.add(audit)
+
+    page = CrawlPage(
+        id=uuid.uuid4(),
+        audit_id=audit.id,
+        requested_url="https://legacy-migrate.com/",
+        final_url="https://legacy-migrate.com/",
+        fetch_status="success",
+        http_status=200,
+        depth=0,
+    )
+    test_db_session.add(page)
+
+    issue = SeoIssue(
+        id=uuid.uuid4(),
+        audit_id=audit.id,
+        crawl_page_id=page.id,
+        rule_id="TECH_HTTPS_USAGE",
+        category="technical",
+        subcategory="security",
+        severity="critical",
+        status="pass",
+        title="HTTPS Usage",
+        description="Site uses HTTPS.",
+        recommendation="None.",
+        fingerprint="fp_https_mig_1",
+        evidence_json={"is_https": True},
+    )
+    test_db_session.add(issue)
+    await test_db_session.commit()
+
+    service = ScoringService(test_db_session)
+
+    # Compute what the legacy Stage 8 fingerprint would have been
+    total_p, eval_p, fail_p, evals, has_renders, pages_summary, seed_final_url = await service._gather_audit_evidence(audit.id)
+    legacy_fp = service._build_fingerprint(
+        audit,
+        total_p,
+        pages_summary,
+        evals,
+        has_renders,
+        legacy_status="generating_recommendations",
+    )
+
+    # Save a scorecard with this legacy fingerprint and status "stale" (as occurred before fix)
+    card = await service.compute_score(audit.id)
+    card.input_fingerprint = legacy_fp
+    card.overall_state = "stale"
+    await test_db_session.commit()
+
+    # GET scorecard: Should detect legacy match, migrate to canonical fingerprint, and restore fresh state
+    retrieved = await service.get_scorecard(audit.id)
+    assert retrieved.overall_state != "stale"
+    assert retrieved.overall_state in ("available", "provisional")
+    assert retrieved.input_fingerprint != legacy_fp
+
+
+@pytest.mark.asyncio
+async def test_16_provisional_45_of_51_coverage_honesty(test_db_session: AsyncSession):
+    """Verify that when 45 of 51 rules evaluate, honest coverage counts and states are preserved without fabricating passes."""
+    audit = Audit(
+        id=uuid.uuid4(),
+        target_url="https://honesty-test.com",
+        normalized_url="https://honesty-test.com/",
+        hostname="honesty-test.com",
+        mode=AuditMode.full,
+        status=AuditStatus.completed,
+        pages_crawled=2,
+    )
+    test_db_session.add(audit)
+
+    page = CrawlPage(
+        id=uuid.uuid4(),
+        audit_id=audit.id,
+        requested_url="https://honesty-test.com/",
+        final_url="https://honesty-test.com/",
+        fetch_status="success",
+        http_status=200,
+        depth=0,
+    )
+    test_db_session.add(page)
+
+    # Add exactly 45 passed evaluations for distinct rules
+    for i in range(45):
+        issue = SeoIssue(
+            id=uuid.uuid4(),
+            audit_id=audit.id,
+            crawl_page_id=page.id,
+            rule_id=f"TEST_RULE_{i:03d}",
+            category="on_page" if i < 20 else ("technical" if i < 35 else "sitewide"),
+            subcategory="test",
+            severity="medium",
+            status="pass",
+            title=f"Test Rule {i}",
+            description=f"Description {i}",
+            recommendation="None.",
+            fingerprint=f"fp_honesty_{i}",
+            evidence_json={"val": i},
+        )
+        test_db_session.add(issue)
+    await test_db_session.commit()
+
+    service = ScoringService(test_db_session)
+    scorecard = await service.compute_score(audit.id)
+
+    # Rules evaluated must accurately report 45, not forced to 51
+    assert scorecard.rules_evaluated == 45
+    assert scorecard.pass_count == 45
+    assert scorecard.overall_state != "stale"
+

@@ -400,3 +400,135 @@ def test_multi_page_aggregation_and_corroboration():
     summary = detector.summarize(aggregated)
     assert summary.primary_cms == "WordPress"
     assert summary.total_detected >= 1
+
+
+def test_framer_multiple_strong_signals():
+    """Verify Framer with meta generator, server header, structural DOM, and scripts is detected with high confidence."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="generator" content="Framer 7788242" />
+        <script src="https://events.framer.com/script?v=2"></script>
+        <script src="https://framerusercontent.com/sites/5fO5hB3jMuqzCsiRWNoNXy/script_main.0FIUGeB-.mjs"></script>
+    </head>
+    <body>
+        <div data-framer-name="Desktop Hero" data-framer-hydrate-v2="hydrated">
+            <h1>SendRoq Modern Courier</h1>
+            <img src="https://framerusercontent.com/images/logo.png" alt="SendRoq" />
+        </div>
+    </body>
+    </html>
+    """
+    headers = {"server": "Framer/24ab00f", "content-type": "text/html"}
+    evidence = HTMLTechnologyExtractor.extract(html)
+    detector = TechnologyDetector()
+    findings = detector.detect_page(evidence, headers, page_url="https://www.sendroq.com/")
+
+    framer = next((f for f in findings if f.technology_id == "framer"), None)
+    assert framer is not None
+    assert framer.status == DetectionStatus.detected.value
+    assert framer.confidence_level == ConfidenceLevel.high.value
+    assert framer.confidence >= 0.85
+    assert framer.version_or_null in ("7788242", "24ab00f")
+    assert framer.technology_category == TechnologyCategory.cms.value
+
+    summary = detector.summarize(findings)
+    assert summary.primary_cms == "Framer"
+    assert summary.total_detected >= 1
+
+
+def test_framer_single_weak_asset_false_positive_prevention():
+    """Verify a non-Framer website embedding an isolated Framer image does NOT trigger Framer detection."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Independent Blog</title>
+    </head>
+    <body>
+        <h1>My Personal Blog</h1>
+        <p>Check out this graphic designed in Framer:</p>
+        <img src="https://framerusercontent.com/images/embedded-illustration.png" alt="Illustration" />
+    </body>
+    </html>
+    """
+    headers = {"server": "Apache/2.4.41 (Ubuntu)"}
+    evidence = HTMLTechnologyExtractor.extract(html)
+    detector = TechnologyDetector()
+    findings = detector.detect_page(evidence, headers, page_url="https://independent-blog.com/post-1")
+
+    framer = next((f for f in findings if f.technology_id == "framer"), None)
+    # Must NOT report Framer as detected or possible CMS
+    assert framer is None or framer.status == DetectionStatus.unknown.value
+
+    summary = detector.summarize(findings)
+    assert summary.primary_cms != "Framer"
+
+
+def test_framer_two_weak_assets_lower_confidence():
+    """Verify multiple weaker Framer assets without strong corroboration yield lower confidence / possible status."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <link rel="stylesheet" href="https://framercdn.com/styles/theme.css" />
+    </head>
+    <body>
+        <img src="https://framerusercontent.com/images/asset1.webp" />
+    </body>
+    </html>
+    """
+    headers = {"server": "cloudflare"}
+    evidence = HTMLTechnologyExtractor.extract(html)
+    detector = TechnologyDetector()
+    findings = detector.detect_page(evidence, headers, page_url="https://example.com/")
+
+    framer = next((f for f in findings if f.technology_id == "framer"), None)
+    assert framer is not None
+    assert framer.status == DetectionStatus.possible.value
+    assert framer.confidence_level == ConfidenceLevel.low.value
+    assert framer.confidence < 0.65
+
+
+def test_framer_exact_host_matching_prevents_subdomain_spoofing():
+    """Verify exact host matching rejects attacker domains mimicking Framer hostnames."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://evil-framerusercontent.com/payload.js"></script>
+        <script src="https://framerstatic.com.attacker.net/script.js"></script>
+        <link rel="stylesheet" href="https://notframerusercontent.com/style.css" />
+    </head>
+    <body>
+        <img src="https://spoofed-framercdn.com/image.png" />
+    </body>
+    </html>
+    """
+    evidence = HTMLTechnologyExtractor.extract(html)
+    classifier = CMSClassifier()
+    finding = classifier._detect_framer(evidence, {}, "https://spoofed-test.com/")
+    assert finding is None
+
+
+def test_existing_cms_detection_unchanged():
+    """Verify existing WordPress, Shopify, Wix, Webflow, Squarespace classifiers remain unchanged."""
+    classifier = CMSClassifier()
+
+    # Webflow test
+    wf_html = "<html data-wf-page='123' data-wf-site='456'><head><meta name='generator' content='Webflow' /></head></html>"
+    wf_ev = HTMLTechnologyExtractor.extract(wf_html)
+    wf_findings = classifier.classify(wf_ev, {}, "https://webflow-site.com/")
+    wf = next((f for f in wf_findings if f.technology_id == "webflow"), None)
+    assert wf is not None
+    assert wf.status == DetectionStatus.detected.value
+
+    # Squarespace test
+    sqs_html = "<html><head><meta name='generator' content='Squarespace' /><script src='https://assets.squarespace.com/universal/scripts/common.js'></script></head></html>"
+    sqs_ev = HTMLTechnologyExtractor.extract(sqs_html)
+    sqs_findings = classifier.classify(sqs_ev, {}, "https://squarespace-site.com/")
+    sqs = next((f for f in sqs_findings if f.technology_id == "squarespace"), None)
+    assert sqs is not None
+    assert sqs.status == DetectionStatus.detected.value
+

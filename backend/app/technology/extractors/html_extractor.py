@@ -25,6 +25,7 @@ class RawPageEvidence:
     inline_markers: List[str] = field(default_factory=list)
     body_classes: List[str] = field(default_factory=list)
     html_attributes: Dict[str, str] = field(default_factory=dict)
+    asset_urls: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class RawPageEvidence:
             "inline_markers": self.inline_markers[:50],
             "body_classes": self.body_classes[:50],
             "html_attributes": self.html_attributes,
+            "asset_urls": self.asset_urls[:50],
         }
 
     @classmethod
@@ -49,6 +51,7 @@ class RawPageEvidence:
             inline_markers=data.get("inline_markers", []),
             body_classes=data.get("body_classes", []),
             html_attributes=data.get("html_attributes", {}),
+            asset_urls=data.get("asset_urls", []),
         )
 
 
@@ -66,6 +69,12 @@ class HTMLTechnologyExtractor:
         ("Webflow.require", "webflow", "Webflow client modules runtime"),
         ("wp.apiFetch", "wordpress", "WordPress REST API client library"),
         ("wp-json", "wordpress", "WordPress REST API endpoint reference"),
+        ("__framer__", "framer", "Framer client runtime global (__framer__)"),
+        ("data-framer-hydrate-v2", "framer", "Framer v2 hydration marker"),
+        ("data-framer-name", "framer", "Framer component naming marker"),
+        ("framer.site", "framer", "Framer site runtime domain marker"),
+        ("framerusercontent.com", "framer", "Framer user content domain reference"),
+        ("framerstatic.com", "framer", "Framer static runtime domain reference"),
     ]
 
     COMMENT_MARKER_PATTERNS = [
@@ -190,6 +199,27 @@ class HTMLTechnologyExtractor:
         if soup.find(attrs={"data-wf-page": True}) or soup.find(attrs={"data-wf-site": True}):
             evidence.dom_markers.append("webflow:data-wf")
 
+        # Framer DOM attributes and badges
+        framer_name_elem = soup.find(attrs={"data-framer-name": True})
+        if framer_name_elem:
+            val = str(framer_name_elem.get("data-framer-name", ""))[:50].strip()
+            marker = f"framer:data-framer-name:{val}" if val else "framer:data-framer-name"
+            if marker not in seen_dom:
+                seen_dom.add(marker)
+                evidence.dom_markers.append(marker)
+        if soup.find(attrs={"data-framer-hydrate-v2": True}):
+            if "framer:data-framer-hydrate-v2" not in seen_dom:
+                seen_dom.add("framer:data-framer-hydrate-v2")
+                evidence.dom_markers.append("framer:data-framer-hydrate-v2")
+        if soup.find(attrs={"data-framer-component": True}):
+            if "framer:data-framer-component" not in seen_dom:
+                seen_dom.add("framer:data-framer-component")
+                evidence.dom_markers.append("framer:data-framer-component")
+        if soup.find(attrs={"id": "__framer-badge-container"}):
+            if "id:__framer-badge-container" not in seen_dom:
+                seen_dom.add("id:__framer-badge-container")
+                evidence.dom_markers.append("id:__framer-badge-container")
+
         # Vue scoped CSS attributes (e.g. data-v-xxxx)
         for tag in soup.find_all(True, limit=100):
             for a in tag.attrs:
@@ -199,7 +229,32 @@ class HTMLTechnologyExtractor:
                         evidence.dom_markers.append("vue:data-v")
                         break
 
-        # 5. Inline script inspection & HTML comments
+        # 5. Framer asset and image URL extraction (bounded, safe)
+        seen_assets = set()
+        for img in soup.find_all("img", src=True, limit=50):
+            src = img.get("src", "").strip()
+            if src and src not in seen_assets and len(src) <= 500:
+                low_src = src.lower()
+                if any(d in low_src for d in ("framerusercontent.com", "framerstatic.com", "framercdn.com")):
+                    seen_assets.add(src)
+                    evidence.asset_urls.append(src)
+                    if len(evidence.asset_urls) >= 50:
+                        break
+
+        if len(evidence.asset_urls) < 50:
+            for source in soup.find_all("source", srcset=True, limit=50):
+                srcset = source.get("srcset", "").strip()
+                if srcset and any(d in srcset.lower() for d in ("framerusercontent.com", "framerstatic.com", "framercdn.com")):
+                    match = re.search(r"(https?://[^\s,]+)", srcset)
+                    if match:
+                        u = match.group(1).strip()
+                        if u not in seen_assets and len(u) <= 500:
+                            seen_assets.add(u)
+                            evidence.asset_urls.append(u)
+                            if len(evidence.asset_urls) >= 50:
+                                break
+
+        # 6. Inline script inspection & HTML comments
         # Look for inline scripts
         for script in soup.find_all("script", src=False):
             content = script.string or script.get_text()
