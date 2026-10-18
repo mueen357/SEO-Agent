@@ -173,7 +173,10 @@ class UniversalFingerprintEngine:
             if fp.signatures.cookies and "set-cookie" in lowered_headers:
                 sc_val = lowered_headers["set-cookie"]
                 for cookie_sig in fp.signatures.cookies:
-                    if cookie_sig.lower() in sc_val.lower():
+                    c_pattern = r"(?:^|[;, ]\s*)" + re.escape(cookie_sig.lower())
+                    if not cookie_sig.endswith("_"):
+                        c_pattern += r"(?:=|[; ]|$)"
+                    if re.search(c_pattern, sc_val.lower()):
                         matched_items.append(
                             EvidenceItem(
                                 evidence_type=EvidenceType.header.value,
