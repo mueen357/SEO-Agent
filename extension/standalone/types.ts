@@ -41,6 +41,7 @@ export interface StandaloneCrawlPage {
   htmlSize: number;
   responseTimeMs: number;
   fetchedAt: number;
+  evidence?: import('./audit/domParserEngine').ParsedHtmlEvidence;
 }
 
 export interface StandaloneSeoFinding {

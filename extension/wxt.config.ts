@@ -1,4 +1,4 @@
-﻿import { defineConfig } from 'wxt';
+import { defineConfig } from 'wxt';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -12,7 +12,12 @@ export default defineConfig({
       'storage',
       'sidePanel',
       'scripting',
-      'tabs'
+      'tabs',
+      'alarms'
+    ],
+    optional_host_permissions: [
+      'https://*/*',
+      'http://*/*'
     ],
     host_permissions: [
       'http://127.0.0.1:8000/*',

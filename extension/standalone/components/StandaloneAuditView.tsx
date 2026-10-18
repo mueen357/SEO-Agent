@@ -28,21 +28,40 @@ import { StandaloneAuditStorage } from '../persistence/indexedDb';
 import { standaloneCoordinator } from '../coordinator';
 import { StandaloneExporter } from '../export/exporter';
 
-export function StandaloneAuditView() {
-  const [targetUrl, setTargetUrl] = useState('');
-  const [maxPages, setMaxPages] = useState(10);
+export interface StandaloneAuditViewProps {
+  activeUrl?: string;
+}
+
+export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}) {
+  const [targetUrl, setTargetUrl] = useState(activeUrl || '');
+  const [maxPages, setMaxPages] = useState(5);
   const [permissionGranted, setPermissionGranted] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<StandaloneAuditJob | null>(null);
   const [crawledPages, setCrawledPages] = useState<StandaloneCrawlPage[]>([]);
   const [findings, setFindings] = useState<StandaloneSeoFinding[]>([]);
   const [technologies, setTechnologies] = useState<StandaloneTechFinding[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'tech' | 'issues'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'tech' | 'issues' | 'coverage'>('overview');
   const [loading, setLoading] = useState(false);
+
+  // Sync activeUrl if targetUrl is empty
+  useEffect(() => {
+    if (activeUrl && !targetUrl) {
+      setTargetUrl(activeUrl);
+    }
+  }, [activeUrl]);
+
+  // Check initial permission status if targetUrl changes
+  useEffect(() => {
+    if (targetUrl) {
+      standaloneCoordinator.checkHostPermission(targetUrl).then(setPermissionGranted);
+    }
+  }, [targetUrl]);
 
   // 1. Initial load: detect active tab URL and check latest stored audit
   useEffect(() => {
-    // Try to get active tab URL
-    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+    // Try to get active tab URL if not provided via props
+    if (!activeUrl && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]?.url && tabs[0].url.startsWith('http')) {
           setTargetUrl(tabs[0].url);
@@ -55,7 +74,10 @@ export function StandaloneAuditView() {
       .then(async (job) => {
         if (job) {
           setActiveJob(job);
-          setTargetUrl(job.targetUrl);
+          if (!targetUrl) setTargetUrl(job.targetUrl);
+          if (job.status === 'crawling' || job.status === 'analyzing') {
+            setLoading(true);
+          }
           const [pages, issueList, techList] = await Promise.all([
             StandaloneAuditStorage.getPagesForAudit(job.id),
             StandaloneAuditStorage.getFindingsForAudit(job.id),
@@ -75,7 +97,7 @@ export function StandaloneAuditView() {
         const pages = await StandaloneAuditStorage.getPagesForAudit(job.id);
         setCrawledPages(pages);
       }
-      if (job.status === 'completed') {
+      if (job.status === 'completed' || job.status === 'cancelled' || job.status === 'error') {
         setLoading(false);
         const [issueList, techList] = await Promise.all([
           StandaloneAuditStorage.getFindingsForAudit(job.id),
@@ -86,22 +108,65 @@ export function StandaloneAuditView() {
       }
     });
 
-    return () => unsubscribe();
+    // Listen for background worker messages
+    const messageListener = (msg: any) => {
+      if (msg && msg.type === 'STANDALONE_AUDIT_PROGRESS' && msg.job) {
+        setActiveJob({ ...msg.job });
+        if (msg.job.status === 'completed') {
+          setLoading(false);
+          StandaloneAuditStorage.getPagesForAudit(msg.job.id).then(setCrawledPages);
+          StandaloneAuditStorage.getFindingsForAudit(msg.job.id).then(setFindings);
+          StandaloneAuditStorage.getTechnologiesForAudit(msg.job.id).then(setTechnologies);
+        }
+      }
+    };
+    if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+      chrome.runtime.onMessage.addListener(messageListener);
+    }
+
+    return () => {
+      unsubscribe();
+      if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+        chrome.runtime.onMessage.removeListener(messageListener);
+      }
+    };
   }, []);
 
   const handleRequestPermission = async () => {
     if (!targetUrl) return;
+    setPermissionError(null);
     const granted = await standaloneCoordinator.requestHostPermission(targetUrl);
     setPermissionGranted(granted);
+    if (!granted) {
+      setPermissionError('Permission was denied. Manifest V3 requires explicit host permission to crawl this website.');
+    }
   };
 
   const handleStartAudit = async () => {
     if (!targetUrl) return;
+    setPermissionError(null);
+
+    // Verify permission first
+    const hasPerm = await standaloneCoordinator.checkHostPermission(targetUrl);
+    if (!hasPerm) {
+      const granted = await standaloneCoordinator.requestHostPermission(targetUrl);
+      if (!granted) {
+        setPermissionError('Permission was denied. Please grant host permission to start the in-browser audit.');
+        return;
+      }
+      setPermissionGranted(true);
+    }
+
     setLoading(true);
     setCrawledPages([]);
     setFindings([]);
     setTechnologies([]);
-    await standaloneCoordinator.startAudit(targetUrl, { maxPages });
+    try {
+      await standaloneCoordinator.startAudit(targetUrl, { maxPages });
+    } catch (err: any) {
+      setPermissionError(err?.message || 'Audit start failed.');
+      setLoading(false);
+    }
   };
 
   const handleCancelAudit = () => {
@@ -129,7 +194,7 @@ export function StandaloneAuditView() {
           <div className="flex items-center space-x-2">
             <h2 className="text-base font-semibold text-slate-100">Standalone In-Browser Audit</h2>
             <span className="px-1.5 py-0.5 text-[10px] font-medium tracking-wide bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded">
-              Zero Backend
+              Beta • Zero Localhost
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -137,6 +202,28 @@ export function StandaloneAuditView() {
           </p>
         </div>
       </div>
+
+      {/* Engine Indicator Banner */}
+      <div className="flex items-center justify-between p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-800/60 text-xs">
+        <div className="flex items-center space-x-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="font-medium text-indigo-200">
+            Engine: Standalone Chrome MV3 (Zero Localhost / Zero FastAPI)
+          </span>
+        </div>
+        <span className="text-[10px] text-slate-400 font-mono">100% Client-Side</span>
+      </div>
+
+      {/* Permission Error Banner */}
+      {permissionError && (
+        <div className="p-3 rounded-lg bg-rose-950/60 border border-rose-800 text-xs text-rose-300 flex items-start space-x-2">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold text-rose-200">Permission Action Required</div>
+            <div className="mt-0.5">{permissionError}</div>
+          </div>
+        </div>
+      )}
 
       {/* Target URL & Controls */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-3">
@@ -284,6 +371,16 @@ export function StandaloneAuditView() {
             >
               SEO Issues ({findings.length})
             </button>
+            <button
+              onClick={() => setActiveTab('coverage')}
+              className={`px-3 py-1.5 rounded-t font-medium transition-colors ${
+                activeTab === 'coverage'
+                  ? 'text-indigo-400 border-b-2 border-indigo-500 bg-slate-900/40'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Coverage & Rules (9/51)
+            </button>
           </div>
 
           {/* Tab: Overview */}
@@ -430,6 +527,42 @@ export function StandaloneAuditView() {
                   </div>
                 ))
               )}
+            </div>
+          )}
+
+          {/* Tab: Coverage */}
+          {activeTab === 'coverage' && (
+            <div className="space-y-3 text-xs bg-slate-900/60 border border-slate-800 p-3 rounded-lg">
+              <div>
+                <h4 className="font-semibold text-indigo-300 mb-1">SEO Rule Coverage: 9 / 51 Rules Implemented</h4>
+                <p className="text-[11px] text-slate-400 mb-2">
+                  Client-side evaluation of essential on-page and technical SEO rules:
+                </p>
+                <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
+                  <span className="text-emerald-400">✓ title_presence</span>
+                  <span className="text-emerald-400">✓ title_length</span>
+                  <span className="text-emerald-400">✓ meta_description_presence</span>
+                  <span className="text-emerald-400">✓ meta_description_length</span>
+                  <span className="text-emerald-400">✓ h1_presence</span>
+                  <span className="text-emerald-400">✓ image_alt_missing</span>
+                  <span className="text-emerald-400">✓ canonical_match</span>
+                  <span className="text-emerald-400">✓ robots_txt_valid</span>
+                  <span className="text-emerald-400">✓ http_status_ok</span>
+                </div>
+                <div className="mt-2 text-[10px] text-slate-500">
+                  42 Backend Rules (Hreflang, Schema.org, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, etc.) require Local Backend Audit mode.
+                </div>
+              </div>
+
+              <div className="border-t border-slate-800 pt-2">
+                <h4 className="font-semibold text-indigo-300 mb-1">Technology Signatures: 25 / 173 Catalog Signatures</h4>
+                <p className="text-[11px] text-slate-400 mb-1">
+                  Core CMS and Framework signatures available in standalone browser mode:
+                </p>
+                <div className="text-[10px] text-slate-400 leading-relaxed">
+                  WordPress, WooCommerce, Elementor, Shopify, Webflow, Squarespace, Wix, Framer, Ghost, Drupal, Joomla, Next.js, Nuxt.js, React, Vue, Angular, Svelte, Astro, Tailwind, Bootstrap, Google Analytics, GTM, Meta Pixel, Cloudflare.
+                </div>
+              </div>
             </div>
           )}
         </div>

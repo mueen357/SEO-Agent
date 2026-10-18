@@ -33,6 +33,7 @@ import { SeoFindingsView } from '../../components/audit/SeoFindingsView';
 import { SiteWideIntelligenceView } from '../../components/audit/SiteWideIntelligenceView';
 import { SeoHealthDashboard } from '../../components/audit/SeoHealthDashboard';
 import { TechnologyDashboard } from '../../components/audit/TechnologyDashboard';
+import { StandaloneAuditView } from '../../standalone/components/StandaloneAuditView';
 
 import { getActiveTab } from '../../services/tab';
 import {
@@ -59,7 +60,7 @@ import type {
   CrawlPageItem,
 } from '../../types/audit';
 
-type AuditModeSelection = 'quick' | 'full';
+type AuditModeSelection = 'quick' | 'full' | 'standalone';
 
 type ActiveTabNav =
   | 'overview'
@@ -316,12 +317,12 @@ export default function App() {
       {/* Top Header */}
       <Header tab={tab} />
 
-      {/* Mode Selector Bar: Quick Page Audit vs Full Website Audit */}
+      {/* Mode Selector Bar: Quick Page Audit vs Standalone Audit (Beta) vs Local Backend Audit */}
       <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
           <button
             onClick={() => setAuditMode('quick')}
-            className={`px-3 py-1 rounded-md font-medium transition-all ${
+            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
               auditMode === 'quick'
                 ? 'bg-cyan-500 text-slate-950 shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -330,22 +331,39 @@ export default function App() {
             Quick Page Audit
           </button>
           <button
+            onClick={() => setAuditMode('standalone')}
+            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+              auditMode === 'standalone'
+                ? 'bg-indigo-600 text-white shadow-sm font-semibold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Standalone Audit (Beta)
+          </button>
+          <button
             onClick={() => setAuditMode('full')}
-            className={`px-3 py-1 rounded-md font-medium transition-all ${
+            className={`px-2.5 py-1 rounded-md font-medium transition-all ${
               auditMode === 'full'
                 ? 'bg-cyan-500 text-slate-950 shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Full Website Audit
+            Local Backend Audit
           </button>
         </div>
 
-        <BackendIndicator
-          health={health}
-          loading={healthLoading}
-          onRefresh={refreshHealth}
-        />
+        {auditMode === 'standalone' ? (
+          <div className="flex items-center space-x-1.5 px-2 py-1 rounded bg-indigo-950/60 border border-indigo-800 text-[11px] text-indigo-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Zero Localhost</span>
+          </div>
+        ) : (
+          <BackendIndicator
+            health={health}
+            loading={healthLoading}
+            onRefresh={refreshHealth}
+          />
+        )}
       </div>
 
       {/* Error Banner */}
@@ -356,8 +374,12 @@ export default function App() {
         </div>
       )}
 
-      {/* VIEW A: FULL WEBSITE AUDIT */}
-      {auditMode === 'full' ? (
+      {/* VIEW C: STANDALONE IN-BROWSER AUDIT */}
+      {auditMode === 'standalone' ? (
+        <main className="flex-1 max-w-4xl mx-auto w-full">
+          <StandaloneAuditView activeUrl={tab?.url} />
+        </main>
+      ) : auditMode === 'full' ? (
         <main className="flex-1 p-4 max-w-4xl mx-auto w-full space-y-4">
           <FullAuditOverview
             audit={fullAudit}

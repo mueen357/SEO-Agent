@@ -74,9 +74,9 @@ export class StandaloneScoringCalculator {
       };
     }
 
-    // Weighted composite: OnPage (40%), Technical (35%), SiteWide (25%)
+    // Weighted composite: OnPage (35%), Technical (40%), SiteWide (25%) aligned with backend policy
     const overallScore = Math.round(
-      onPageScore * 0.4 + technicalScore * 0.35 + sitewideScore * 0.25
+      onPageScore * 0.35 + technicalScore * 0.4 + sitewideScore * 0.25
     );
 
     let grade: 'A' | 'B' | 'C' | 'D' | 'F' = 'F';
