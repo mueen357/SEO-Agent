@@ -1,21 +1,30 @@
 # Full-Site Audit Pipeline Performance Benchmark Report
 
-## 1. Executive Summary
+## 1. Executive Summary & Benchmark Methodology
 
-This benchmark reports empirical measurements of the **entire 11-stage Website Audit Agent pipeline**. Unlike isolated micro-benchmarks that evaluate only static pattern matching, this report measures the complete lifecycle from URL discovery to final report generation across real multi-page budgets: **1 page**, **10 pages**, **50 pages**, and **250 pages**.
+> [!IMPORTANT]
+> **Methodology & Scope Notice**:
+> The 18.22-second 250-page measurements reported below reflect a **Synthetic In-Process Component Workload Benchmark**. In this harness, HTTP transport is simulated in-process and database persistence constructs ORM objects in memory without measuring physical SQLite disk sync / fsync commits. Real-world full-site crawl durations are predominantly bounded by network round-trip time, origin rate limits, and SSL/TLS handshakes.
+
+### Benchmark Taxonomy
+To provide clear, reproducible evaluations without misrepresenting synthetic component speed as live full-site crawling speed, benchmarks in this repository are categorized into four distinct tiers:
+1. **Tier 1: Synthetic Component Unit Benchmark** (This Report): Measures pure CPU and algorithmic processing limits (HTML parsing, rule evaluations, technology regex matching, graph algorithms) under zero network latency.
+2. **Tier 2: Local HTTP Integration Benchmark**: Measures real TCP/HTTP socket transport, header parsing, and connection pooling using a local static fixture server.
+3. **Tier 3: Real Authorized Website Benchmark**: Measures real-world external HTTP crawling against user-authorized production domains with CDN, DNS, and latency dynamics.
+4. **Tier 4: Real Chrome In-Browser Benchmark**: Measures real Manifest V3 execution inside the Chromium browser, evaluating V8 engine speed, asynchronous service worker lifecycle, and IndexedDB storage.
 
 ### Key Pipeline Insights
-- **Linear Scaling**: The complete pipeline executes with high throughput (~14 pages per second in-process).
-- **Bottlenecks Identified**:
-  - **HTML Parsing (BeautifulSoup)**: Represents ~35% of total execution time.
-  - **Multi-Vector Technology Detection**: Represents ~60% of CPU time when running 173 fingerprints sequentially across every page.
+- **Component Processing Throughput**: Pure in-process computation scales linearly at ~14 pages/sec.
+- **Measured Bottlenecks**:
+  - **HTML Parsing (BeautifulSoup in Python)**: Represents ~35% of CPU time.
+  - **Multi-Vector Technology Detection**: Represents ~60% of CPU time across 173 signatures.
   - **Graph, SEO Rules & Scoring**: Highly optimized; evaluating 51 SEO rules and directed link graphs takes **< 300 ms even for 250 pages** (< 2% of total pipeline time).
-- **Memory Footprint**: Extremely lean. Peak heap allocation remains under **19 MB even at 250 crawled pages**.
-- **Cancellation Latency**: **4.30 microseconds**, proving that abort controllers and cancellation tokens cleanly halt execution instantaneously.
+- **Memory Footprint**: Bounded; peak heap allocation remains under **19 MB for 250 crawled pages**.
+- **Cancellation Latency**: **4.30 microseconds**, proving cooperative cancellation tokens halt processing promptly.
 
 ---
 
-## 2. Pipeline Stage Breakdown Across Budgets
+## 2. Pipeline Stage Breakdown Across Budgets (Synthetic Component Workload)
 
 Each budget was evaluated across 3 iterations with `time.perf_counter()`, `time.process_time()`, and `tracemalloc`.
 

@@ -1,20 +1,25 @@
 # Technology Detection Accuracy Benchmark Report
 
-## 1. Executive Summary
+## 1. Executive Summary & Benchmark Methodology
 
-This benchmark reports empirical accuracy, precision, recall, and false-positive resilience for the Universal Technology Stack Fingerprinting Engine. The benchmark was executed against 12 independently verified, representative website fixtures spanning modern CMS platforms, headless architectures, reactive frameworks, server-side runtimes, static sites, mixed third-party embeds, and hidden backends.
+> [!IMPORTANT]
+> **Methodology & Fixture Notice**:
+> The results below are derived from **12 Curated Multi-Vector Component Fixtures** constructed to validate specific edge cases (WordPress plugins, Framer hydration, Shopify CDN, Next.js script chunks, Cloudflare proxy, and plain HTML). While they rigorously evaluate regex boundaries and prevent common regressions, they represent **curated test suites** rather than an independent, third-party real-world web dataset.
+
+### False-Positive Methodology Correction
+In this updated methodology, any technology detected by the engine that is **not** present in the ground-truth definition is explicitly recorded as a **False Positive (FP)**, unless the target category is documented as explicitly unobservable (e.g. unobservable backend database). Guesses on unverified or third-party assets are strictly penalized.
 
 ### Key Benchmark Metrics
-- **Overall Precision:** **100.00%** (0 false positives across all 12 fixtures)
-- **Overall Recall:** **85.11%** (40 true positives detected out of 47 expected ground-truth signals)
+- **Curated Fixture Precision:** **100.00%** (0 false positives across the 12 curated test fixtures)
+- **Curated Fixture Recall:** **85.11%** (40 true positives detected out of 47 expected ground-truth signals)
 - **Overall F1 Score:** **91.95%**
-- **False Positives:** **0** (All prohibited platform guesses and private backend languages strictly guarded)
+- **False Positives:** **0** (prohibited platform guesses and unobservable private backend languages strictly rejected)
 
 ---
 
 ## 2. Benchmark Methodology & Fixture Design
 
-To ensure scientific rigor and eliminate synthetic inflation, each fixture models authentic HTTP headers and bounded `RawPageEvidence` extracted from public HTML:
+To ensure scientific rigor and eliminate synthetic inflation, each curated fixture models authentic HTTP headers and bounded `RawPageEvidence` extracted from public HTML:
 
 1. **WordPress Store**: WordPress 6.4.2, WooCommerce 8.5.1, Elementor 3.18.3, PHP 8.2, Nginx, jQuery, Google Analytics (GA4).
 2. **Framer Landing Page**: Framer meta generator, Framer CDN (`framerusercontent.com`), hydration markers (`data-framer-hydrate-v2`, `__framer__`), Cloudflare edge.

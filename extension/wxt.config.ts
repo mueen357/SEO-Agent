@@ -22,6 +22,12 @@ export default defineConfig({
     host_permissions: [
       'http://127.0.0.1:8000/*',
       'http://localhost:8000/*'
+    ],
+    web_accessible_resources: [
+      {
+        resources: ['sidepanel.html', 'popup.html'],
+        matches: ['http://*/*', 'https://*/*']
+      }
     ]
   },
 });

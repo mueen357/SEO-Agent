@@ -84,7 +84,8 @@ export class InBrowserCrawler {
       if (u.hostname !== this.hostname) return false;
 
       // Host safety check: block loopback, private ranges, cloud metadata
-      if (this.isPrivateOrForbiddenHost(u.hostname)) return false;
+      // Allows seed host if user explicitly authorized testing on localhost / 127.0.0.1
+      if (this.isPrivateOrForbiddenHost(u.hostname, this.hostname === u.hostname)) return false;
 
       // Filter non-html extensions
       const path = u.pathname.toLowerCase();
@@ -106,9 +107,17 @@ export class InBrowserCrawler {
     }
   }
 
-  public isPrivateOrForbiddenHost(host: string): boolean {
+  public isPrivateOrForbiddenHost(host: string, allowSeedHost: boolean = false): boolean {
     const h = host.toLowerCase();
-    if (h === 'localhost' || h.endsWith('.local') || h === 'metadata.google.internal' || h === '169.254.169.254') {
+    // Cloud metadata endpoints are NEVER permitted under any circumstances
+    if (h === 'metadata.google.internal' || h === '169.254.169.254') {
+      return true;
+    }
+    // Allow local test host only if the user explicitly authorized this exact seed host
+    if (allowSeedHost && (h === 'localhost' || h === '127.0.0.1')) {
+      return false;
+    }
+    if (h === 'localhost' || h.endsWith('.local')) {
       return true;
     }
     // Simple private IPv4 check

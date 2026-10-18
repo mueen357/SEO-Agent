@@ -42,6 +42,17 @@ export default defineBackground(() => {
       return true;
     }
 
+    if (message.action === 'OPEN_SIDEPANEL_TAB') {
+      if (chrome.tabs && chrome.tabs.create) {
+        chrome.tabs.create({ url: chrome.runtime.getURL('sidepanel.html') })
+          .then((tab) => sendResponse({ success: true, tabId: tab.id }))
+          .catch((err: Error) => sendResponse({ success: false, error: err.message }));
+        return true;
+      }
+      sendResponse({ success: false, error: 'tabs.create not available' });
+      return true;
+    }
+
     if (message.action === 'START_STANDALONE_AUDIT') {
       const { targetUrl, options } = message.payload || {};
       if (!targetUrl) {
