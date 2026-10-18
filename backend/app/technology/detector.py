@@ -13,6 +13,7 @@ from app.technology.models import (
     TechnologyFinding,
     TechnologySummary,
 )
+from app.technology.fingerprints.engine import UniversalFingerprintEngine
 from app.technology.registry import TechnologyRegistry
 
 
@@ -20,6 +21,7 @@ class TechnologyDetector:
     """Central engine running classifiers and aggregating findings across crawl pages."""
 
     def __init__(self):
+        self.engine = UniversalFingerprintEngine()
         self.cms_classifier = CMSClassifier()
         self.frontend_classifier = FrontendClassifier()
         self.backend_classifier = BackendClassifier()
@@ -31,30 +33,61 @@ class TechnologyDetector:
         page_url: str = "",
     ) -> List[TechnologyFinding]:
         """Analyze a single page's HTML evidence and headers."""
-        findings: List[TechnologyFinding] = []
+        findings_map: Dict[str, TechnologyFinding] = {}
 
-        # 1. CMS Classification
+        # 1. Run universal fingerprint engine across all cataloged technologies
+        engine_findings = self.engine.match_page(
+            evidence=evidence,
+            headers=headers,
+            page_url=page_url,
+        )
+        for f in engine_findings:
+            findings_map[f.technology_id] = f
+
+        # 2. CMS Classification (WordPress deep candidates, page builders, etc.)
         cms_findings = self.cms_classifier.classify(
             evidence=evidence,
             headers=headers,
             page_url=page_url,
         )
-        findings.extend(cms_findings)
+        for f in cms_findings:
+            if f.technology_id not in findings_map:
+                findings_map[f.technology_id] = f
+            else:
+                existing = findings_map[f.technology_id]
+                if not existing.version_or_null and f.version_or_null:
+                    existing.version_or_null = f.version_or_null
+                    existing.version_type = f.version_type
+                if f.confidence > existing.confidence:
+                    existing.confidence = f.confidence
+                    existing.confidence_level = f.confidence_level
+                    existing.status = f.status
 
         # Check if WordPress is detected for PHP runtime implication
-        wp_finding = next((f for f in cms_findings if f.technology_id == "wordpress"), None)
+        wp_finding = findings_map.get("wordpress")
         implied_php = wp_finding is not None and wp_finding.confidence >= 0.5
         wp_conf = wp_finding.confidence if wp_finding else 0.0
 
-        # 2. Frontend Frameworks
+        # 3. Frontend Frameworks
         frontend_findings = self.frontend_classifier.classify(
             evidence=evidence,
             headers=headers,
             page_url=page_url,
         )
-        findings.extend(frontend_findings)
+        for f in frontend_findings:
+            if f.technology_id not in findings_map:
+                findings_map[f.technology_id] = f
+            else:
+                existing = findings_map[f.technology_id]
+                if not existing.version_or_null and f.version_or_null:
+                    existing.version_or_null = f.version_or_null
+                    existing.version_type = f.version_type
+                if f.confidence > existing.confidence:
+                    existing.confidence = f.confidence
+                    existing.confidence_level = f.confidence_level
+                    existing.status = f.status
 
-        # 3. Backend Runtimes & Frameworks
+        # 4. Backend Runtimes & Frameworks
         backend_findings = self.backend_classifier.classify(
             evidence=evidence,
             headers=headers,
@@ -62,9 +95,20 @@ class TechnologyDetector:
             implied_php=implied_php,
             parent_conf=wp_conf,
         )
-        findings.extend(backend_findings)
+        for f in backend_findings:
+            if f.technology_id not in findings_map:
+                findings_map[f.technology_id] = f
+            else:
+                existing = findings_map[f.technology_id]
+                if not existing.version_or_null and f.version_or_null:
+                    existing.version_or_null = f.version_or_null
+                    existing.version_type = f.version_type
+                if f.confidence > existing.confidence:
+                    existing.confidence = f.confidence
+                    existing.confidence_level = f.confidence_level
+                    existing.status = f.status
 
-        return findings
+        return list(findings_map.values())
 
     def aggregate_findings(
         self,
@@ -170,9 +214,19 @@ class TechnologyDetector:
             TechnologyCategory.cms.value: 1,
             TechnologyCategory.frontend.value: 2,
             TechnologyCategory.backend.value: 3,
-            TechnologyCategory.ecommerce.value: 4,
-            TechnologyCategory.hosting.value: 5,
-            TechnologyCategory.other.value: 6,
+            TechnologyCategory.language.value: 4,
+            TechnologyCategory.ecommerce.value: 5,
+            TechnologyCategory.hosting.value: 6,
+            TechnologyCategory.database.value: 7,
+            TechnologyCategory.analytics.value: 8,
+            TechnologyCategory.advertising.value: 9,
+            TechnologyCategory.payments.value: 10,
+            TechnologyCategory.security.value: 11,
+            TechnologyCategory.ux.value: 12,
+            TechnologyCategory.marketing.value: 13,
+            TechnologyCategory.search.value: 14,
+            TechnologyCategory.fonts.value: 15,
+            TechnologyCategory.other.value: 16,
         }
 
         aggregated.sort(
@@ -221,18 +275,26 @@ class TechnologyDetector:
                 if f.technology_name not in frontend_frameworks:
                     frontend_frameworks.append(f.technology_name)
 
-            if f.technology_category == TechnologyCategory.backend.value and f.status in (
+            is_backend_candidate = (
+                f.technology_category == TechnologyCategory.backend.value
+                or (
+                    f.technology_category == TechnologyCategory.language.value
+                    and f.technology_id in ("php", "python", "ruby", "java", "csharp", "dotnet", "go", "rust", "elixir", "erlang", "scala", "perl", "node")
+                )
+            )
+            if is_backend_candidate and f.status in (
                 DetectionStatus.detected.value,
                 DetectionStatus.possible.value,
             ):
                 if f.technology_name not in backend_runtimes:
                     backend_runtimes.append(f.technology_name)
 
+        total_findings_count = detected_count + possible_count
         return TechnologySummary(
             primary_cms=primary_cms,
             frontend_frameworks=frontend_frameworks,
             backend_runtimes=backend_runtimes,
-            total_detected=detected_count,
+            total_detected=total_findings_count,
             detected_technologies_count=detected_count,
             possible_technologies_count=possible_count,
             confidence_distribution=confidence_dist,

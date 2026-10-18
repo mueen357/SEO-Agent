@@ -439,6 +439,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Responsive website builder platform designed for digital agencies.",
             confidence_weight=0.95,
             signatures=FingerprintSignatures(
+                meta_generators=[r"Duda"],
                 script_sources=[r"static\.duda\.co", r"irp\.cdn-website\.com"],
                 stylesheet_hrefs=[r"static\.duda\.co", r"irp\.cdn-website\.com"],
                 dom_markers=["id:dmRoot"],
@@ -476,6 +477,8 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Simple, fully responsive one-page site builder.",
             confidence_weight=0.95,
             signatures=FingerprintSignatures(
+                meta_generators=[r"Carrd"],
+                script_sources=[r"carrd(\.min)?\.js"],
                 dom_markers=["id:wrapper", "class:is-carrd"],
                 stylesheet_hrefs=[r"assets/main\.css"],
                 html_comments=["<!-- Carrd site -->"],
@@ -511,6 +514,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="E-commerce and visual website builder platform.",
             confidence_weight=0.95,
             signatures=FingerprintSignatures(
+                meta_generators=[r"Weebly"],
                 script_sources=[r"cdn2\.editmysite\.com"],
                 stylesheet_hrefs=[r"cdn2\.editmysite\.com"],
                 dom_markers=["body[class*=weebly]"],
@@ -636,6 +640,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             implies=["laravel", "php"],
             confidence_weight=0.90,
             signatures=FingerprintSignatures(
+                meta_generators=[r"October\s*CMS"],
                 cookies=["october_session"],
                 script_sources=[r"/modules/system/assets/js/framework\.js"],
             ),
@@ -656,6 +661,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Composable content platform for enterprise digital products.",
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
+                script_sources=[r"ctfassets\.net"],
                 asset_urls=[r"images\.ctfassets\.net", r"downloads\.ctfassets\.net", r"assets\.ctfassets\.net"],
                 min_assets_for_detection=2,
             ),
@@ -675,7 +681,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
                 asset_urls=[r"cdn\.sanity\.io"],
-                script_sources=[r"@sanity/client"],
+                script_sources=[r"@sanity/client", r"cdn\.sanity\.io"],
                 min_assets_for_detection=2,
             ),
             limitations="Headless backend; detected only when public assets or client SDK are observable.",
@@ -694,7 +700,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
                 asset_urls=[r"images\.prismic\.io", r"prismic-io\.s3\.amazonaws\.com"],
-                script_sources=[r"static\.cdn\.prismic\.io/prismic\.js"],
+                script_sources=[r"static\.cdn\.prismic\.io/prismic\.js", r"images\.prismic\.io"],
                 min_assets_for_detection=2,
             ),
         )
@@ -712,7 +718,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
                 asset_urls=[r"a\.storyblok\.com"],
-                script_sources=[r"storyblok-js-client", r"app\.storyblok\.com"],
+                script_sources=[r"storyblok-js-client", r"app\.storyblok\.com", r"a\.storyblok\.com"],
                 min_assets_for_detection=2,
             ),
         )
@@ -764,7 +770,8 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             implies=["nodejs"],
             confidence_weight=0.80,
             signatures=FingerprintSignatures(
-                headers={"x-payload-cms": r".*"},
+                headers={"x-payload-cms": r".*", "x-payload-version": r".*"},
+                script_sources=[r"payload-client"],
             ),
         )
     )
@@ -780,6 +787,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Federated content platform formerly known as GraphCMS.",
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
+                script_sources=[r"media\.graphassets\.com"],
                 asset_urls=[r"media\.graphassets\.com"],
                 min_assets_for_detection=2,
             ),
@@ -797,7 +805,8 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="API-based headless content management system.",
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
-                asset_urls=[r"www\.datocms-assets\.com"],
+                script_sources=[r"datocms-assets\.com"],
+                asset_urls=[r"datocms-assets\.com"],
                 min_assets_for_detection=2,
             ),
         )
@@ -1004,7 +1013,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Open source programming language supported by Google for performant backend services.",
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
-                headers={"server": r"gin|fiber|caddy"},
+                headers={"server": r"\b(gin-gonic|fiber|caddy)\b|^gin(/[\d\.]+)?"},
             ),
         )
     )
@@ -1039,6 +1048,77 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
                 headers={"server": r"cowboy", "x-powered-by": r"phoenix"},
                 cookies=["_csrf_token"],
             ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="kotlin",
+            name="Kotlin",
+            category=TechnologyCategory.language,
+            subcategory="server_language",
+            vendor_or_type="JetBrains",
+            website="https://kotlinlang.org",
+            description="Modern multiplatform programming language targeting JVM, JS, and Native.",
+            confidence_weight=0.85,
+            signatures=FingerprintSignatures(
+                headers={"server": r"Ktor(/[\d\.]+)?", "x-powered-by": r"Ktor"},
+                script_sources=[r"kotlin(\.min)?\.js"],
+            ),
+            limitations="Observable via Ktor server headers or Kotlin/JS script bundles.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="erlang",
+            name="Erlang",
+            category=TechnologyCategory.language,
+            subcategory="runtime_language",
+            vendor_or_type="Ericsson",
+            website="https://www.erlang.org",
+            description="Programming language used to build massively scalable soft real-time systems.",
+            confidence_weight=0.85,
+            signatures=FingerprintSignatures(
+                headers={"server": r"(Cowboy|MochiWeb|Yaws)"},
+            ),
+            limitations="Observable only when underlying Erlang HTTP server headers are disclosed.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="perl",
+            name="Perl",
+            category=TechnologyCategory.language,
+            subcategory="scripting_language",
+            vendor_or_type="The Perl Foundation",
+            website="https://www.perl.org",
+            description="Highly capable, feature-rich programming language with over 36 years of development.",
+            confidence_weight=0.85,
+            signatures=FingerprintSignatures(
+                headers={"x-powered-by": r"Perl", "server": r"mod_perl(/[\d\.]+)?"},
+                cookies=["dancer.session"],
+            ),
+            limitations="Identifiable via mod_perl headers or legacy Perl framework cookies.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="scala",
+            name="Scala",
+            category=TechnologyCategory.language,
+            subcategory="server_language",
+            vendor_or_type="EPFL / Lightbend",
+            website="https://www.scala-lang.org",
+            description="Scala combines object-oriented and functional programming in one concise, high-level language.",
+            confidence_weight=0.85,
+            signatures=FingerprintSignatures(
+                headers={"server": r"akka-http(/[\d\.]+)?", "x-powered-by": r"Play Framework"},
+                cookies=["PLAY_SESSION"],
+            ),
+            limitations="Observable via Play Framework or Akka HTTP server response headers.",
         )
     )
 
@@ -1202,11 +1282,19 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="The web framework for content-driven websites.",
             confidence_weight=0.95,
             signatures=FingerprintSignatures(
+                meta_generators=[r"Astro(\s*v[0-9\.]+)?"],
                 dom_markers=["astro-island"],
                 script_sources=[r"/_astro/"],
                 stylesheet_hrefs=[r"/_astro/"],
                 inline_markers=["astro:hydrate"],
             ),
+            version_rules=[
+                VersionExtractionRule(
+                    source_type="meta_generator",
+                    regex=r"Astro\s*v?([0-9\.]+)",
+                    version_type=VersionType.explicit_version,
+                )
+            ],
         )
     )
 
@@ -1248,7 +1336,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             implies=["react", "javascript"],
             confidence_weight=0.95,
             signatures=FingerprintSignatures(
-                inline_markers=["window.__remixContext"],
+                inline_markers=["window.__remixContext", "__remixContext"],
                 script_sources=[r"/build/root-"],
             ),
         )
@@ -1353,6 +1441,255 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
                     version_type=VersionType.asset_hint_unverified,
                 )
             ],
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="qwik",
+            name="Qwik",
+            category=TechnologyCategory.frontend,
+            subcategory="framework",
+            vendor_or_type="Builder.io",
+            website="https://qwik.dev",
+            description="Resumable web framework delivering instant page loads through HTML serialization.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                dom_markers=["q:container", "q:id", "q:version", "q:base"],
+                script_sources=[r"/build/q-.*\.js"],
+                inline_markers=["window.qwikevents"],
+            ),
+            limitations="Passive identification via Qwik DOM attributes and container serialization markers.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="solidjs",
+            name="SolidJS",
+            category=TechnologyCategory.frontend,
+            subcategory="ui_library",
+            vendor_or_type="Ryan Carniato",
+            website="https://www.solidjs.com",
+            description="Declarative, efficient, and flexible JavaScript library for building user interfaces.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                dom_markers=["data-hk"],
+                script_sources=[r"solid(-js)?(\.production)?\.js"],
+                inline_markers=["_$HY"],
+            ),
+            limitations="Observable via Solid hydration markers and client bundle signatures.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="preact",
+            name="Preact",
+            category=TechnologyCategory.frontend,
+            subcategory="ui_library",
+            vendor_or_type="Jason Miller",
+            website="https://preactjs.com",
+            description="Fast 3kB alternative to React with the same modern API.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"preact(\.min)?\.js", r"preact/hooks"],
+                inline_markers=["preact.h", "window.preact"],
+            ),
+            limitations="Client-side observation of Preact bundle or runtime global.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="bulma",
+            name="Bulma",
+            category=TechnologyCategory.frontend,
+            subcategory="css_framework",
+            vendor_or_type="Jeremy Thomas",
+            website="https://bulma.io",
+            description="Free, open source CSS framework based on Flexbox.",
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                stylesheet_hrefs=[r"bulma(\.min)?\.css"],
+                body_classes=[r"is-primary", r"navbar-item", r"hero-body"],
+            ),
+            version_rules=[
+                VersionExtractionRule(
+                    source_type="stylesheet_url",
+                    regex=r"bulma/([0-9\.]+)/",
+                    version_type=VersionType.asset_hint_unverified,
+                )
+            ],
+            limitations="Identifiable via Bulma stylesheet link or characteristic class patterns.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="foundation",
+            name="Foundation",
+            category=TechnologyCategory.frontend,
+            subcategory="css_framework",
+            vendor_or_type="ZURB",
+            website="https://get.foundation",
+            description="Responsive frontend framework family for site and email development.",
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                stylesheet_hrefs=[r"foundation(\.min)?\.css"],
+                script_sources=[r"foundation(\.min)?\.js"],
+                dom_markers=["data-dropdown-menu", "data-topbar", "data-off-canvas"],
+            ),
+            limitations="Identifiable via Foundation stylesheet or data-attribute markers.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="material_ui",
+            name="Material UI",
+            category=TechnologyCategory.frontend,
+            subcategory="ui_library",
+            vendor_or_type="MUI",
+            website="https://mui.com",
+            description="Comprehensive suite of UI tools implementing Google Material Design in React.",
+            implies=["react"],
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                body_classes=[r"MuiButton-", r"MuiTypography-", r"MuiBox-", r"MuiGrid-"],
+                dom_markers=["MuiButton", "MuiTypography", "MuiBox"],
+            ),
+            limitations="Identifiable via Mui class name conventions on rendered elements.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="chakra_ui",
+            name="Chakra UI",
+            category=TechnologyCategory.frontend,
+            subcategory="ui_library",
+            vendor_or_type="Chakra Systems",
+            website="https://chakra-ui.com",
+            description="Modular and accessible component library providing building blocks for React apps.",
+            implies=["react"],
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                body_classes=[r"chakra-button", r"chakra-stack", r"chakra-ui-"],
+                dom_markers=["chakra-button", "chakra-stack"],
+            ),
+            limitations="Identifiable via chakra class name conventions.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="ant_design",
+            name="Ant Design",
+            category=TechnologyCategory.frontend,
+            subcategory="ui_library",
+            vendor_or_type="Ant Group",
+            website="https://ant.design",
+            description="Enterprise-class UI design language and React component library.",
+            implies=["react"],
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                body_classes=[r"ant-btn", r"ant-layout", r"ant-menu", r"ant-row"],
+                stylesheet_hrefs=[r"antd(\.min)?\.css"],
+                dom_markers=["ant-btn", "ant-layout"],
+            ),
+            limitations="Identifiable via Ant Design CSS or class name prefixes.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="gsap",
+            name="GSAP",
+            category=TechnologyCategory.frontend,
+            subcategory="animation_library",
+            vendor_or_type="GreenSock",
+            website="https://greensock.com/gsap/",
+            description="Professional-grade JavaScript animation library for modern web performance.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"gsap(\.min)?\.js", r"TweenMax(\.min)?\.js", r"ScrollTrigger(\.min)?\.js"],
+                inline_markers=["gsap.timeline", "window.gsap", "TweenMax"],
+            ),
+            limitations="Observable via GreenSock script bundles or runtime global object.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="threejs",
+            name="Three.js",
+            category=TechnologyCategory.frontend,
+            subcategory="3d_graphics",
+            vendor_or_type="Three.js Authors",
+            website="https://threejs.org",
+            description="JavaScript 3D library rendering WebGL graphics directly in the browser.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"three(\.min)?\.js", r"three\.module\.js"],
+                inline_markers=["THREE.WebGLRenderer", "THREE.Scene"],
+            ),
+            limitations="Observable via Three.js library script or WebGL scene construction globals.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="d3",
+            name="D3.js",
+            category=TechnologyCategory.frontend,
+            subcategory="data_visualization",
+            vendor_or_type="Mike Bostock",
+            website="https://d3js.org",
+            description="JavaScript library for bespoke data-driven document manipulation and visualization.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"d3(\.v[0-9]+)?(\.min)?\.js", r"d3-selection"],
+                inline_markers=["d3.select", "window.d3"],
+            ),
+            limitations="Observable via D3 script reference or d3 global object.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="swiper",
+            name="Swiper",
+            category=TechnologyCategory.frontend,
+            subcategory="ui_library",
+            vendor_or_type="Vladimir Kharlampidi",
+            website="https://swiperjs.com",
+            description="Modern mobile touch slider with hardware-accelerated transitions.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                stylesheet_hrefs=[r"swiper(-bundle)?(\.min)?\.css"],
+                script_sources=[r"swiper(-bundle)?(\.min)?\.js"],
+                dom_markers=["swiper-container", "swiper-slide", "swiper-wrapper"],
+            ),
+            limitations="Observable via Swiper slider CSS/JS bundles or container markup classes.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="lodash",
+            name="Lodash",
+            category=TechnologyCategory.frontend,
+            subcategory="utility_library",
+            vendor_or_type="OpenJS Foundation",
+            website="https://lodash.com",
+            description="Modern JavaScript utility library delivering modularity, performance, and extras.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"lodash(\.min)?\.js"],
+                inline_markers=["window._.debounce", "window.lodash"],
+            ),
+            limitations="Observable via Lodash script reference or runtime namespace.",
         )
     )
 

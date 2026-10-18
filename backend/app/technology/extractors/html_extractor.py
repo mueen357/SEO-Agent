@@ -75,6 +75,14 @@ class HTMLTechnologyExtractor:
         ("framer.site", "framer", "Framer site runtime domain marker"),
         ("framerusercontent.com", "framer", "Framer user content domain reference"),
         ("framerstatic.com", "framer", "Framer static runtime domain reference"),
+        ("__remixContext", "remix", "Remix hydration context object"),
+        ("qwikevents", "qwik", "Qwik event handling runtime"),
+        ("_$HY", "solidjs", "SolidJS hydration runtime marker"),
+        ("window.Alpine", "alpinejs", "Alpine.js runtime global"),
+        ("gsap.timeline", "gsap", "GSAP timeline constructor"),
+        ("THREE.WebGLRenderer", "threejs", "Three.js WebGL renderer"),
+        ("d3.select", "d3", "D3.js DOM selection runtime"),
+        ("window.lodash", "lodash", "Lodash utility library"),
     ]
 
     COMMENT_MARKER_PATTERNS = [
@@ -229,13 +237,72 @@ class HTMLTechnologyExtractor:
                         evidence.dom_markers.append("vue:data-v")
                         break
 
-        # 5. Framer asset and image URL extraction (bounded, safe)
+        # Qwik DOM container
+        if soup.find(attrs={"q:container": True}) or soup.find(attrs={"q:version": True}):
+            if "q:container" not in seen_dom:
+                seen_dom.add("q:container")
+                evidence.dom_markers.append("q:container")
+
+        # SolidJS hydration marker
+        if soup.find(attrs={"data-hk": True}):
+            if "data-hk" not in seen_dom:
+                seen_dom.add("data-hk")
+                evidence.dom_markers.append("data-hk")
+
+        # Swiper slider container
+        if soup.find(class_=re.compile(r"swiper-(container|wrapper|slide)")):
+            if "swiper-container" not in seen_dom:
+                seen_dom.add("swiper-container")
+                evidence.dom_markers.append("swiper-container")
+
+        # Alpine.js x-data / x-init
+        if soup.find(attrs={"x-data": True}) or soup.find(attrs={"x-init": True}):
+            if "x-data" not in seen_dom:
+                seen_dom.add("x-data")
+                evidence.dom_markers.append("x-data")
+
+        # HTMX attributes
+        if soup.find(lambda el: any(isinstance(k, str) and k.startswith("hx-") for k in el.attrs) if hasattr(el, 'attrs') else False):
+            if "hx-get" not in seen_dom:
+                seen_dom.add("hx-get")
+                evidence.dom_markers.append("hx-get")
+
+        # Material UI class conventions
+        if soup.find(class_=re.compile(r"Mui[A-Z][a-zA-Z]+-")):
+            if "MuiButton" not in seen_dom:
+                seen_dom.add("MuiButton")
+                evidence.dom_markers.append("MuiButton")
+
+        # Chakra UI class conventions
+        if soup.find(class_=re.compile(r"chakra-")):
+            if "chakra-button" not in seen_dom:
+                seen_dom.add("chakra-button")
+                evidence.dom_markers.append("chakra-button")
+
+        # Ant Design class conventions
+        if soup.find(class_=re.compile(r"ant-(btn|layout|menu|row)")):
+            if "ant-btn" not in seen_dom:
+                seen_dom.add("ant-btn")
+                evidence.dom_markers.append("ant-btn")
+
+        # 5. Asset and image URL extraction (bounded, safe)
+        TARGET_ASSET_DOMAINS = (
+            "framerusercontent.com",
+            "framerstatic.com",
+            "framercdn.com",
+            "ctfassets.net",
+            "cdn.sanity.io",
+            "storyblok.com",
+            "graphassets.com",
+            "datocms-assets.com",
+            "shopify.com",
+        )
         seen_assets = set()
         for img in soup.find_all("img", src=True, limit=50):
             src = img.get("src", "").strip()
             if src and src not in seen_assets and len(src) <= 500:
                 low_src = src.lower()
-                if any(d in low_src for d in ("framerusercontent.com", "framerstatic.com", "framercdn.com")):
+                if any(d in low_src for d in TARGET_ASSET_DOMAINS):
                     seen_assets.add(src)
                     evidence.asset_urls.append(src)
                     if len(evidence.asset_urls) >= 50:
@@ -244,7 +311,7 @@ class HTMLTechnologyExtractor:
         if len(evidence.asset_urls) < 50:
             for source in soup.find_all("source", srcset=True, limit=50):
                 srcset = source.get("srcset", "").strip()
-                if srcset and any(d in srcset.lower() for d in ("framerusercontent.com", "framerstatic.com", "framercdn.com")):
+                if srcset and any(d in srcset.lower() for d in TARGET_ASSET_DOMAINS):
                     match = re.search(r"(https?://[^\s,]+)", srcset)
                     if match:
                         u = match.group(1).strip()

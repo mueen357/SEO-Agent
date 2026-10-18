@@ -160,13 +160,14 @@ class UniversalFingerprintEngine:
                                 )
                             )
                             # Check version from header
-                            for vrule in fp.version_rules:
-                                if vrule.source_type == "header" and vrule.compiled:
-                                    vm = vrule.compiled.search(val)
-                                    if vm and vm.groups():
-                                        extracted_version = vm.group(1)
-                                        extracted_version_type = vrule.version_type
-                                        break
+                            if not extracted_version:
+                                for vrule in fp.version_rules:
+                                    if vrule.source_type == "header" and vrule.compiled:
+                                        vm = vrule.compiled.search(val)
+                                        if vm and vm.groups():
+                                            extracted_version = vm.group(1)
+                                            extracted_version_type = vrule.version_type
+                                            break
 
             # --- C. Cookies ---
             if fp.signatures.cookies and "set-cookie" in lowered_headers:
@@ -265,6 +266,15 @@ class UniversalFingerprintEngine:
                                 provenance=fp.default_provenance.value,
                             )
                         )
+                        # Check version rules for dom_marker
+                        if not extracted_version:
+                            for vrule in fp.version_rules:
+                                if vrule.source_type == "dom_marker" and vrule.compiled:
+                                    vm = vrule.compiled.search(marker)
+                                    if vm and vm.groups():
+                                        extracted_version = vm.group(1)
+                                        extracted_version_type = vrule.version_type
+                                        break
                         break
 
             # --- G. Inline Markers & Comments ---
@@ -425,9 +435,9 @@ class UniversalFingerprintEngine:
             if len(strong_items) > 1 or moderate_items:
                 base_conf = min(1.0, round(base_conf + 0.05, 4))
         elif len(moderate_items) >= 2:
-            base_conf = min(0.85, round(fp.confidence_weight * 0.85, 4))
+            base_conf = min(0.80, round(fp.confidence_weight * 0.75, 4))
         elif len(moderate_items) == 1:
-            base_conf = 0.60
+            base_conf = 0.45
         elif weak_items:
             # Only weak items
             base_conf = 0.40
