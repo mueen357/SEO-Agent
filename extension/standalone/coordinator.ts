@@ -416,15 +416,11 @@ export class StandaloneAuditCoordinator {
         job.stageCheckpoints.seoStarted = true;
         this.notify(job, 'AUDIT_PROGRESS');
 
-        const allFindings: StandaloneSeoFinding[] = [];
-        for (const p of usablePages) {
-          const pageFindings = StandaloneRulesEngine.evaluatePage(p, auditId);
-          allFindings.push(...pageFindings);
-        }
-        const sitewideFindings = StandaloneRulesEngine.evaluateSitewide(usablePages, auditId);
-        allFindings.push(...sitewideFindings);
+        const { findings: allFindings, ledgerRecords: allLedger } =
+          StandaloneRulesEngine.evaluateAudit(crawledPages, auditId);
 
         await StandaloneAuditStorage.saveFindings(allFindings);
+        await StandaloneAuditStorage.saveExecutionLedger(allLedger);
         job.stageCheckpoints.seoFinished = true;
         await StandaloneAuditStorage.saveJob(job);
       }
@@ -469,7 +465,8 @@ export class StandaloneAuditCoordinator {
         this.notify(job, 'AUDIT_PROGRESS');
 
         const findings = await StandaloneAuditStorage.getFindingsForAudit(auditId);
-        const scorecard = StandaloneScoringCalculator.calculate(findings, crawledPages);
+        const ledger = await StandaloneAuditStorage.getExecutionLedgerForAudit(auditId);
+        const scorecard = StandaloneScoringCalculator.calculate(findings, crawledPages, ledger);
         job.scorecard = scorecard;
         job.stageCheckpoints.scoringFinished = true;
         await StandaloneAuditStorage.saveJob(job);

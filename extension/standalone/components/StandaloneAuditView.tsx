@@ -298,14 +298,24 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
     setLoading(false);
   };
 
-  const handleExportJson = () => {
+  const handleExportJson = async () => {
     if (!activeJob) return;
-    StandaloneExporter.downloadJson(activeJob, crawledPages, findings, technologies);
+    try {
+      const ledger = await StandaloneAuditStorage.getExecutionLedgerForAudit(activeJob.id);
+      StandaloneExporter.downloadJson(activeJob, crawledPages, findings, technologies, ledger);
+    } catch {
+      StandaloneExporter.downloadJson(activeJob, crawledPages, findings, technologies);
+    }
   };
 
-  const handleExportCsv = () => {
+  const handleExportCsv = async () => {
     if (!activeJob) return;
-    StandaloneExporter.downloadCsv(activeJob, crawledPages, findings);
+    try {
+      const ledger = await StandaloneAuditStorage.getExecutionLedgerForAudit(activeJob.id);
+      StandaloneExporter.downloadCsv(activeJob, crawledPages, findings, ledger);
+    } catch {
+      StandaloneExporter.downloadCsv(activeJob, crawledPages, findings);
+    }
   };
 
   const scorecard = activeJob?.scorecard;
@@ -543,18 +553,38 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                 </div>
               ) : null}
 
-              {scorecard.coverage && scorecard.coverage.scoreState === 'provisional' && (
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-amber-950/40 border border-amber-800/80 text-xs">
+              {scorecard.coverage && (
+                <div
+                  className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${
+                    scorecard.coverage.scoreState === 'fully_evaluated'
+                      ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-200'
+                      : scorecard.coverage.scoreState === 'substantial_coverage'
+                      ? 'bg-blue-950/40 border-blue-800/80 text-blue-200'
+                      : 'bg-amber-950/40 border-amber-800/80 text-amber-200'
+                  }`}
+                >
                   <div className="flex items-center space-x-2">
-                    <span className="px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded">
-                      PROVISIONAL SCORE
+                    <span
+                      className={`px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase border rounded ${
+                        scorecard.coverage.scoreState === 'fully_evaluated'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : scorecard.coverage.scoreState === 'substantial_coverage'
+                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                      }`}
+                    >
+                      {scorecard.coverage.scoreState === 'fully_evaluated'
+                        ? 'FULLY EVALUATED'
+                        : scorecard.coverage.scoreState === 'substantial_coverage'
+                        ? 'SUBSTANTIAL COVERAGE'
+                        : 'PROVISIONAL SCORE'}
                     </span>
                     <span className="text-slate-300 font-medium">
                       Coverage: {scorecard.coverage.executedRulesTotal}/{scorecard.coverage.expectedRulesTotal} canonical rules ({Math.round(scorecard.coverage.coverageRatio * 100)}%)
                     </span>
                   </div>
-                  <span className="text-[10px] font-mono text-amber-400/90">
-                    {scorecard.coverage.policyVersion || 'v1.0-provisional'}
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {scorecard.coverage.policyVersion || 'v2.0.0-standalone'}
                   </span>
                 </div>
               )}
@@ -609,7 +639,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                 <div className="bg-slate-900/60 border border-slate-800/80 rounded p-2">
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide">Coverage</div>
                   <div className="text-base font-bold text-indigo-400 mt-0.5">
-                    {scorecard.coverage ? `${scorecard.coverage.executedRulesTotal}/${scorecard.coverage.expectedRulesTotal}` : '9/51'}
+                    {scorecard.coverage ? `${scorecard.coverage.executedRulesTotal}/${scorecard.coverage.expectedRulesTotal}` : '0/51'}
                   </div>
                 </div>
               </div>

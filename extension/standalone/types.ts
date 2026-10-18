@@ -101,15 +101,57 @@ export interface StandaloneFindingsSummary {
   };
 }
 
-export type StandaloneScoreState = 'fully_evaluated' | 'provisional' | 'unavailable';
+export type StandaloneRuleExecutionStatus =
+  | 'executed_pass'
+  | 'executed_fail'
+  | 'executed_warning'
+  | 'not_applicable'
+  | 'not_evaluated'
+  | 'unknown'
+  | 'error';
+
+export interface StandaloneRuleExecutionRecord {
+  id: string;
+  auditId: string;
+  canonicalRuleId: string;
+  ruleVersion: string;
+  scope: 'page' | 'site';
+  targetUrl: string;
+  executionStatus: StandaloneRuleExecutionStatus;
+  result: 'pass' | 'fail' | 'warning' | 'na' | 'unknown' | 'error';
+  evidenceAvailable: boolean;
+  reason?: string;
+  executedAt: number;
+  engineVersion: string;
+}
+
+export interface StandaloneExecutionLedger {
+  auditId: string;
+  records: StandaloneRuleExecutionRecord[];
+  summary: {
+    totalEvaluations: number;
+    distinctCanonicalRulesExecuted: number;
+    executedPassCount: number;
+    executedFailCount: number;
+    executedWarningCount: number;
+    notApplicableCount: number;
+    notEvaluatedCount: number;
+    unknownCount: number;
+    errorCount: number;
+  };
+}
+
+export type StandaloneScoreState = 'fully_evaluated' | 'substantial_coverage' | 'provisional' | 'unavailable';
 
 export interface StandaloneScoreCoverage {
   scoreState: StandaloneScoreState;
   scoreStateLabel: string;
-  coverageRatio: number;          // e.g. 9/51 = 0.176
+  coverageRatio: number;          // e.g. 14/51 = 0.275
   expectedRulesTotal: number;     // Canonical 51
-  implementedRulesCount: number;  // Number of standalone-implemented rules
-  executedRulesTotal: number;     // Distinct rules actually evaluated in audit
+  implementedRulesCount: number;  // Number of standalone-implemented canonical rules
+  executedRulesTotal: number;     // Distinct canonical rules actually evaluated in audit
+  distinctExecutedCanonicalRules?: string[];
+  applicableRulesCount: number;   // Rules applicable to this audit target
   missingRulesTotal: number;      // 51 - executedRulesTotal
   passedRulesCount: number;
   failedRulesCount: number;
@@ -117,11 +159,16 @@ export interface StandaloneScoreCoverage {
   notApplicableRulesCount: number;
   notEvaluatedRulesCount: number;
   unavailableEvidenceCount: number;
+  passedChecksCount: number;      // Total check evaluations that passed
+  failedChecksCount: number;      // Total check evaluations that failed
+  warningChecksCount: number;     // Total check evaluations with warnings
+  unknownCount: number;
   familyCoverage: {
     on_page: { executed: number; total: number; ratio: number };
     technical: { executed: number; total: number; ratio: number };
     sitewide: { executed: number; total: number; ratio: number };
   };
+  executionLedgerSummary?: StandaloneExecutionLedger['summary'];
   policyVersion: string;
 }
 

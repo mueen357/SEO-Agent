@@ -1,29 +1,41 @@
 /**
  * Client-Side SEO Health Scorecard & Coverage Calculator.
  * Computes deterministic category scores, findings classification, and honest coverage in-browser.
+ * Uses Canonical Rule Manifest and Authoritative Execution Ledger.
  */
 
 import type {
   StandaloneAuditScorecard,
   StandaloneCrawlPage,
+  StandaloneExecutionLedger,
+  StandaloneRuleExecutionRecord,
   StandaloneScoreCoverage,
   StandaloneScoreState,
   StandaloneSeoFinding,
 } from '../types';
 import { StandaloneFindingsClassifier } from './findingsClassifier';
+import {
+  CANONICAL_51_RULES,
+  CANONICAL_IMPLEMENTED_RULES,
+  getCanonicalRuleCategory,
+  migrateLegacyFinding,
+} from './ruleMapping';
 
 export const CANONICAL_RULE_TOTALS = {
-  on_page: 16,
-  technical: 22,
-  sitewide: 13,
+  on_page: CANONICAL_51_RULES.on_page.length, // 16
+  technical: CANONICAL_51_RULES.technical.length, // 22
+  sitewide: CANONICAL_51_RULES.sitewide.length, // 13
   total: 51,
 };
 
 export class StandaloneScoringCalculator {
+  public static readonly POLICY_VERSION = '2.0.0-standalone';
+
   public static calculate(
-    findings: StandaloneSeoFinding[],
+    rawFindings: StandaloneSeoFinding[],
     pages: StandaloneCrawlPage[] | number,
-    attemptedCount?: number
+    executionLedgerOrAttempted?: StandaloneExecutionLedger | StandaloneRuleExecutionRecord[] | number,
+    legacyAttemptedCount?: number
   ): StandaloneAuditScorecard {
     let usablePagesCount = 0;
     let attemptedPagesCount = 0;
@@ -39,31 +51,96 @@ export class StandaloneScoringCalculator {
       ).length;
     } else {
       usablePagesCount = pages;
-      attemptedPagesCount = attemptedCount ?? pages;
+      if (typeof executionLedgerOrAttempted === 'number') {
+        attemptedPagesCount = executionLedgerOrAttempted;
+      } else {
+        attemptedPagesCount = legacyAttemptedCount ?? pages;
+      }
       failedPagesCount = Math.max(0, attemptedPagesCount - usablePagesCount);
     }
 
-    const summary = StandaloneFindingsClassifier.classify(findings);
+    // Determine execution ledger if provided
+    let executionLedger: StandaloneRuleExecutionRecord[] | undefined = undefined;
+    if (Array.isArray(executionLedgerOrAttempted)) {
+      executionLedger = executionLedgerOrAttempted;
+    } else if (
+      executionLedgerOrAttempted &&
+      typeof executionLedgerOrAttempted === 'object' &&
+      'records' in executionLedgerOrAttempted
+    ) {
+      executionLedger = (executionLedgerOrAttempted as StandaloneExecutionLedger).records;
+    }
 
-    // Compute distinct executed rules per canonical scoring family
+    // Adapt any historical legacy findings to canonical IDs for scoring
+    const canonicalFindings: StandaloneSeoFinding[] = [];
+    for (const f of rawFindings) {
+      canonicalFindings.push(...migrateLegacyFinding(f));
+    }
+
+    const summary = StandaloneFindingsClassifier.classify(canonicalFindings);
+
+    // Track executed canonical rules by family
     const executedRulesByFamily: Record<'on_page' | 'technical' | 'sitewide', Set<string>> = {
       on_page: new Set<string>(),
       technical: new Set<string>(),
       sitewide: new Set<string>(),
     };
 
-    for (const f of findings) {
-      if (!f.ruleId) continue;
-      const cat = f.category as 'on_page' | 'technical' | 'sitewide';
-      if (cat in executedRulesByFamily) {
-        executedRulesByFamily[cat].add(f.ruleId);
+    let passedChecksCount = 0;
+    let failedChecksCount = 0;
+    let warningChecksCount = 0;
+    let notApplicableChecksCount = 0;
+    let unknownChecksCount = 0;
+
+    if (executionLedger && executionLedger.length > 0) {
+      // Authoritative Ledger-based Coverage Calculation
+      const distinctNotApplicableRules = new Set<string>();
+
+      for (const record of executionLedger) {
+        const cat = getCanonicalRuleCategory(record.canonicalRuleId);
+        const status = record.executionStatus;
+
+        if (status === 'executed_pass') {
+          passedChecksCount++;
+          if (cat !== 'unknown') executedRulesByFamily[cat].add(record.canonicalRuleId);
+        } else if (status === 'executed_fail') {
+          failedChecksCount++;
+          if (cat !== 'unknown') executedRulesByFamily[cat].add(record.canonicalRuleId);
+        } else if (status === 'executed_warning') {
+          warningChecksCount++;
+          if (cat !== 'unknown') executedRulesByFamily[cat].add(record.canonicalRuleId);
+        } else if (status === 'not_applicable') {
+          notApplicableChecksCount++;
+          distinctNotApplicableRules.add(record.canonicalRuleId);
+        } else if (status === 'unknown') {
+          unknownChecksCount++;
+        }
       }
+    } else {
+      // Fallback for callers that only pass findings (legacy or test mocks)
+      for (const f of canonicalFindings) {
+        if (!f.ruleId) continue;
+        const cat = getCanonicalRuleCategory(f.ruleId);
+        if (cat !== 'unknown') {
+          executedRulesByFamily[cat].add(f.ruleId);
+        }
+      }
+      passedChecksCount = summary.passedCount;
+      failedChecksCount = summary.failedCount;
+      warningChecksCount = summary.warningCount;
+      notApplicableChecksCount = summary.notApplicableCount;
+      unknownChecksCount = summary.unknownCount;
     }
 
     const executedOnPage = executedRulesByFamily.on_page.size;
     const executedTech = executedRulesByFamily.technical.size;
     const executedSite = executedRulesByFamily.sitewide.size;
-    const executedRulesTotal = summary.distinctRulesEvaluated;
+    const executedRulesTotal = executedOnPage + executedTech + executedSite;
+    const distinctExecutedCanonicalRules = [
+      ...Array.from(executedRulesByFamily.on_page),
+      ...Array.from(executedRulesByFamily.technical),
+      ...Array.from(executedRulesByFamily.sitewide),
+    ];
     const coverageRatio = Number((executedRulesTotal / CANONICAL_RULE_TOTALS.total).toFixed(3));
 
     // Rule family coverage breakdown
@@ -93,8 +170,9 @@ export class StandaloneScoringCalculator {
         scoreStateLabel: 'Unavailable (Insufficient Evidence)',
         coverageRatio: 0,
         expectedRulesTotal: CANONICAL_RULE_TOTALS.total,
-        implementedRulesCount: 9, // Core standalone rules implemented
+        implementedRulesCount: CANONICAL_IMPLEMENTED_RULES.size, // 14
         executedRulesTotal: 0,
+        applicableRulesCount: 0,
         missingRulesTotal: CANONICAL_RULE_TOTALS.total,
         passedRulesCount: 0,
         failedRulesCount: 0,
@@ -102,12 +180,16 @@ export class StandaloneScoringCalculator {
         notApplicableRulesCount: 0,
         notEvaluatedRulesCount: CANONICAL_RULE_TOTALS.total,
         unavailableEvidenceCount: attemptedPagesCount,
+        passedChecksCount: 0,
+        failedChecksCount: 0,
+        warningChecksCount: 0,
+        unknownCount: attemptedPagesCount,
         familyCoverage: {
           on_page: { executed: 0, total: CANONICAL_RULE_TOTALS.on_page, ratio: 0 },
           technical: { executed: 0, total: CANONICAL_RULE_TOTALS.technical, ratio: 0 },
           sitewide: { executed: 0, total: CANONICAL_RULE_TOTALS.sitewide, ratio: 0 },
         },
-        policyVersion: '2.4.0-standalone',
+        policyVersion: this.POLICY_VERSION,
       };
 
       return {
@@ -128,7 +210,7 @@ export class StandaloneScoringCalculator {
         mediumIssuesCount: 0,
         lowIssuesCount: 0,
         coverage: unavailableCoverage,
-        scoringVersion: '2.4.0-standalone',
+        scoringVersion: this.POLICY_VERSION,
         calculatedAt: Date.now(),
       };
     }
@@ -137,7 +219,7 @@ export class StandaloneScoringCalculator {
     let technicalDeduction = 0;
     let sitewideDeduction = 0;
 
-    for (const f of findings) {
+    for (const f of canonicalFindings) {
       const status = (f.status as string)?.toLowerCase();
       if (status === 'pass' || status === 'passed' || status === 'not_applicable' || status === 'info') {
         continue;
@@ -154,9 +236,10 @@ export class StandaloneScoringCalculator {
         pts = Math.round(pts * 0.5);
       }
 
-      if (f.category === 'on_page') onPageDeduction += pts;
-      else if (f.category === 'technical') technicalDeduction += pts;
-      else if (f.category === 'sitewide') sitewideDeduction += pts;
+      const cat = f.category || getCanonicalRuleCategory(f.ruleId);
+      if (cat === 'on_page') onPageDeduction += pts;
+      else if (cat === 'technical') technicalDeduction += pts;
+      else if (cat === 'sitewide') sitewideDeduction += pts;
     }
 
     // Category scores clamped 0 to 100
@@ -180,34 +263,48 @@ export class StandaloneScoringCalculator {
     else if (overallScore >= 70) grade = 'C';
     else if (overallScore >= 60) grade = 'D';
 
-    // Coverage State classification
-    const isFullyEvaluated =
+    // Coverage State classification:
+    // Reserve FULLY EVALUATED strictly for when all 51 canonical rules were completed (or legitimate N/A)
+    // Use SUBSTANTIAL COVERAGE for >= 80% coverage
+    // Use PROVISIONAL for partial evaluation
+    let scoreState: StandaloneScoreState = 'provisional';
+    let scoreStateLabel = `Provisional (${executedRulesTotal}/${CANONICAL_RULE_TOTALS.total} Rules Evaluated)`;
+
+    if (executedRulesTotal >= CANONICAL_RULE_TOTALS.total) {
+      scoreState = 'fully_evaluated';
+      scoreStateLabel = 'Fully Evaluated (51/51 Rules Completed)';
+    } else if (
       coverageRatio >= 0.8 &&
       familyCoverage.on_page.ratio >= 0.8 &&
       familyCoverage.technical.ratio >= 0.8 &&
-      familyCoverage.sitewide.ratio >= 0.8;
-
-    const scoreState: StandaloneScoreState = isFullyEvaluated ? 'fully_evaluated' : 'provisional';
-    const scoreStateLabel = isFullyEvaluated
-      ? 'Fully Evaluated'
-      : `Provisional (${executedRulesTotal}/${CANONICAL_RULE_TOTALS.total} Rules Evaluated)`;
+      familyCoverage.sitewide.ratio >= 0.8
+    ) {
+      scoreState = 'substantial_coverage';
+      scoreStateLabel = `Substantial Coverage (${executedRulesTotal}/${CANONICAL_RULE_TOTALS.total} Rules Evaluated)`;
+    }
 
     const coverage: StandaloneScoreCoverage = {
       scoreState,
       scoreStateLabel,
       coverageRatio,
       expectedRulesTotal: CANONICAL_RULE_TOTALS.total,
-      implementedRulesCount: 9,
+      implementedRulesCount: CANONICAL_IMPLEMENTED_RULES.size, // 14
       executedRulesTotal,
+      distinctExecutedCanonicalRules,
+      applicableRulesCount: Math.max(executedRulesTotal, CANONICAL_IMPLEMENTED_RULES.size),
       missingRulesTotal: Math.max(0, CANONICAL_RULE_TOTALS.total - executedRulesTotal),
       passedRulesCount: summary.passedCount,
       failedRulesCount: summary.failedCount,
       warningRulesCount: summary.warningCount,
-      notApplicableRulesCount: summary.notApplicableCount,
+      notApplicableRulesCount: notApplicableChecksCount,
       notEvaluatedRulesCount: Math.max(0, CANONICAL_RULE_TOTALS.total - executedRulesTotal),
       unavailableEvidenceCount: 0,
+      passedChecksCount,
+      failedChecksCount,
+      warningChecksCount,
+      unknownCount: unknownChecksCount,
       familyCoverage,
-      policyVersion: '2.4.0-standalone',
+      policyVersion: this.POLICY_VERSION,
     };
 
     return {
@@ -227,7 +324,7 @@ export class StandaloneScoringCalculator {
       mediumIssuesCount: summary.bySeverity.medium,
       lowIssuesCount: summary.bySeverity.low,
       coverage,
-      scoringVersion: '2.4.0-standalone',
+      scoringVersion: this.POLICY_VERSION,
       calculatedAt: Date.now(),
     };
   }

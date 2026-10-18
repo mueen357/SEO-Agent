@@ -44,7 +44,7 @@ The export pipeline is implemented in:
 1. **Sorted Keys & Entries**: Technologies and rules are sorted alphabetically by their canonical identifier (`id` or `rule_id`) to ensure reproducible git diffs.
 2. **Signature Completeness**: Direct dataclass inspection extracts private and nested signature fields (`meta_generators`, `headers`, `script_sources`, `stylesheet_hrefs`, `dom_markers`, `version_rules`, `min_assets_for_detection`).
 3. **Cross-Language Type Normalization**: Enum values (e.g. `TechnologyCategory.cms`) are converted to clean lowercase strings.
-4. **Version Tagging**: Every exported bundle includes `catalog_version: "2.4.0"` and an `exported_at` ISO timestamp.
+4. **Version Tagging**: Every exported bundle includes `catalog_version: "2.0.0"` and `engine_version: "2.0.0"` with an `exported_at` ISO timestamp.
 
 ---
 
@@ -76,8 +76,8 @@ The export pipeline is implemented in:
 - **Schema**:
 ```json
 {
-  "catalog_version": "2.4.0",
-  "engine_version": "1.1.0",
+  "catalog_version": "2.0.0",
+  "engine_version": "2.0.0",
   "total": 173,
   "technologies": [
     {

@@ -6,12 +6,13 @@
 import type {
   StandaloneAuditJob,
   StandaloneCrawlPage,
+  StandaloneRuleExecutionRecord,
   StandaloneSeoFinding,
   StandaloneTechFinding,
 } from '../types';
 
 const DB_NAME = 'WebsiteAuditAgent_StandaloneDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export class StandaloneAuditStorage {
   private static dbPromise: Promise<IDBDatabase> | null = null;
@@ -19,12 +20,14 @@ export class StandaloneAuditStorage {
   private static inMemoryPages = new Map<string, StandaloneCrawlPage[]>();
   private static inMemoryFindings = new Map<string, StandaloneSeoFinding[]>();
   private static inMemoryTechnologies = new Map<string, StandaloneTechFinding[]>();
+  private static inMemoryExecutionLedger = new Map<string, StandaloneRuleExecutionRecord[]>();
 
   public static clearInMemoryForTesting(): void {
     this.inMemoryAudits.clear();
     this.inMemoryPages.clear();
     this.inMemoryFindings.clear();
     this.inMemoryTechnologies.clear();
+    this.inMemoryExecutionLedger.clear();
   }
 
   public static async getDb(): Promise<IDBDatabase> {
@@ -67,6 +70,13 @@ export class StandaloneAuditStorage {
           const store = db.createObjectStore('technologies', { keyPath: 'id' });
           store.createIndex('auditId', 'auditId', { unique: false });
           store.createIndex('technologyId', 'technologyId', { unique: false });
+        }
+
+        // 5. SEO Rule Execution Ledger store
+        if (!db.objectStoreNames.contains('execution_ledger')) {
+          const store = db.createObjectStore('execution_ledger', { keyPath: 'id' });
+          store.createIndex('auditId', 'auditId', { unique: false });
+          store.createIndex('canonicalRuleId', 'canonicalRuleId', { unique: false });
         }
       };
 
@@ -233,4 +243,43 @@ export class StandaloneAuditStorage {
       req.onerror = () => reject(req.error);
     });
   }
+
+  public static async saveExecutionLedger(records: StandaloneRuleExecutionRecord[]): Promise<void> {
+    if (!records.length) return;
+    if (typeof indexedDB === 'undefined') {
+      const first = records[0];
+      if (!first) return;
+      const auditId = first.auditId;
+      const existing = this.inMemoryExecutionLedger.get(auditId) || [];
+      const map = new Map(existing.map((r) => [r.id, r]));
+      for (const r of records) map.set(r.id, { ...r });
+      this.inMemoryExecutionLedger.set(auditId, Array.from(map.values()));
+      return;
+    }
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('execution_ledger', 'readwrite');
+      const store = tx.objectStore('execution_ledger');
+      for (const r of records) {
+        store.put(r);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  public static async getExecutionLedgerForAudit(auditId: string): Promise<StandaloneRuleExecutionRecord[]> {
+    if (typeof indexedDB === 'undefined') {
+      return (this.inMemoryExecutionLedger.get(auditId) || []).map((r) => ({ ...r }));
+    }
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('execution_ledger', 'readonly');
+      const index = tx.objectStore('execution_ledger').index('auditId');
+      const req = index.getAll(IDBKeyRange.only(auditId));
+      req.onsuccess = () => resolve((req.result as StandaloneRuleExecutionRecord[]) || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
 }
+

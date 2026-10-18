@@ -4,6 +4,9 @@
  * Evaluates the full 173-technology catalog in-browser without external network calls,
  * APIs, or Python runtime. Pre-compiles signatures, validates regex patterns,
  * extracts versions, enforces defensive asset thresholds, and resolves technology implications.
+ * 
+ * Implements multi-signal confidence calibration, weak asset isolation (e.g. Framer embed on WordPress),
+ * structured DOM marker matching, and corroboration rules.
  */
 
 import type { StandaloneTechFinding } from '../types';
@@ -68,11 +71,35 @@ interface CompiledSignatures {
   domMarkers: string[];
   inlineMarkers: string[];
   bodyClasses: string[];
+  htmlAttributes: Record<string, RegExp>;
+  linkRels: RegExp[];
+  cookies: RegExp[];
+  minAssets: number;
+  requiresCorroboration: boolean;
+  excludedDomains: string[];
   versionRules: Array<{
     source_type: string;
     regex: RegExp;
     version_type: string;
   }>;
+}
+
+interface MatchedSignal {
+  type:
+    | 'meta_generator'
+    | 'header'
+    | 'dom_marker'
+    | 'html_attribute'
+    | 'html_comment'
+    | 'inline_marker'
+    | 'script_source'
+    | 'stylesheet_href'
+    | 'asset_url'
+    | 'link_rel'
+    | 'cookie';
+  strength: 'strong' | 'moderate' | 'weak';
+  summary: string;
+  version?: string | null;
 }
 
 export class UniversalTechEngine {
@@ -91,9 +118,7 @@ export class UniversalTechEngine {
       for (const pat of sigs.meta_generators || []) {
         try {
           metaGenerators.push(new RegExp(pat, 'i'));
-        } catch (e) {
-          // Safe error handling for incompatible regexes
-        }
+        } catch {}
       }
 
       // 2. Headers
@@ -101,7 +126,7 @@ export class UniversalTechEngine {
       for (const [hName, hPat] of Object.entries(sigs.headers || {})) {
         try {
           headersMap[hName.toLowerCase()] = new RegExp(hPat, 'i');
-        } catch (e) {}
+        } catch {}
       }
 
       // 3. Script sources
@@ -109,7 +134,7 @@ export class UniversalTechEngine {
       for (const pat of sigs.script_sources || []) {
         try {
           scriptSources.push(new RegExp(pat, 'i'));
-        } catch (e) {}
+        } catch {}
       }
 
       // 4. Stylesheet hrefs
@@ -117,7 +142,7 @@ export class UniversalTechEngine {
       for (const pat of sigs.stylesheet_hrefs || []) {
         try {
           stylesheetHrefs.push(new RegExp(pat, 'i'));
-        } catch (e) {}
+        } catch {}
       }
 
       // 5. Asset URLs
@@ -125,10 +150,34 @@ export class UniversalTechEngine {
       for (const pat of sigs.asset_urls || []) {
         try {
           assetUrls.push(new RegExp(pat, 'i'));
-        } catch (e) {}
+        } catch {}
       }
 
-      // 6. Version extraction rules
+      // 6. HTML Attributes
+      const htmlAttributes: Record<string, RegExp> = {};
+      for (const [aName, aPat] of Object.entries(sigs.html_attributes || {})) {
+        try {
+          htmlAttributes[aName.toLowerCase()] = new RegExp(aPat, 'i');
+        } catch {}
+      }
+
+      // 7. Link Rels
+      const linkRels: RegExp[] = [];
+      for (const pat of sigs.link_rels || []) {
+        try {
+          linkRels.push(new RegExp(pat, 'i'));
+        } catch {}
+      }
+
+      // 8. Cookies
+      const cookies: RegExp[] = [];
+      for (const pat of sigs.cookies || []) {
+        try {
+          cookies.push(new RegExp(pat, 'i'));
+        } catch {}
+      }
+
+      // 9. Version extraction rules
       const versionRules: Array<{ source_type: string; regex: RegExp; version_type: string }> = [];
       for (const vr of tech.version_rules || []) {
         try {
@@ -137,7 +186,7 @@ export class UniversalTechEngine {
             regex: new RegExp(vr.regex, 'i'),
             version_type: vr.version_type,
           });
-        } catch (e) {}
+        } catch {}
       }
 
       this.compiledCatalog.set(tech.id, {
@@ -152,6 +201,12 @@ export class UniversalTechEngine {
           domMarkers: sigs.dom_markers || [],
           inlineMarkers: sigs.inline_markers || [],
           bodyClasses: sigs.body_classes || [],
+          htmlAttributes,
+          linkRels,
+          cookies,
+          minAssets: sigs.min_assets_for_detection ?? 1,
+          requiresCorroboration: sigs.requires_corroboration ?? false,
+          excludedDomains: sigs.excluded_domains || [],
           versionRules,
         },
       });
@@ -163,6 +218,67 @@ export class UniversalTechEngine {
   public static getCatalogSize(): number {
     if (!this.isInitialized) this.initialize();
     return this.compiledCatalog.size;
+  }
+
+  public static getCatalogVersion(): string {
+    return (catalogJson as any).catalog_version || '2.0.0';
+  }
+
+  public static getEngineVersion(): string {
+    return (catalogJson as any).engine_version || '2.0.0';
+  }
+
+  /**
+   * Structured DOM marker matching to avoid false positives from loose substring checks.
+   */
+  private static matchDomMarker(
+    marker: string,
+    evidence: ParsedHtmlEvidence
+  ): boolean {
+    const normMarker = marker.trim();
+
+    // 1. Exact match in observed DOM markers
+    if (evidence.domMarkers && evidence.domMarkers.includes(normMarker)) {
+      return true;
+    }
+
+    // 2. id selector (e.g. "id:__next")
+    if (normMarker.startsWith('id:')) {
+      const id = normMarker.slice(3);
+      return evidence.domMarkers?.includes(`id:${id}`) || false;
+    }
+
+    // 3. class selector (e.g. "class:wp-embed-responsive")
+    if (normMarker.startsWith('class:')) {
+      const cls = normMarker.slice(6);
+      return (
+        evidence.domMarkers?.includes(normMarker) ||
+        evidence.bodyClasses?.includes(cls) ||
+        false
+      );
+    }
+
+    // 4. attribute selector e.g. "html[data-wf-site]", "[data-wf-site]", or "data-wf-site"
+    if (normMarker.includes('[') && normMarker.endsWith(']')) {
+      const openIdx = normMarker.indexOf('[');
+      const closeIdx = normMarker.lastIndexOf(']');
+      const inside = normMarker.slice(openIdx + 1, closeIdx);
+      const attrName = inside.split(/[=*~|^$]/)[0]?.toLowerCase().trim();
+      if (attrName) {
+        if (evidence.htmlAttributes && attrName in evidence.htmlAttributes) return true;
+        if (evidence.domMarkers?.includes(attrName) || evidence.domMarkers?.includes(`[${attrName}]`)) return true;
+      }
+    } else if (normMarker.startsWith('data-') || normMarker.startsWith('ng-')) {
+      if (evidence.htmlAttributes && normMarker in evidence.htmlAttributes) return true;
+      if (evidence.domMarkers?.includes(normMarker)) return true;
+    }
+
+    // 5. custom tag e.g. "astro-island"
+    if (evidence.domMarkers?.includes(normMarker)) {
+      return true;
+    }
+
+    return false;
   }
 
   public static evaluate(
@@ -180,21 +296,38 @@ export class UniversalTechEngine {
       loweredHeaders[k.toLowerCase()] = v;
     }
 
-    for (const [techId, { tech, compiled }] of this.compiledCatalog.entries()) {
-      let matched = false;
-      let summary = '';
-      let extractedVersion: string | null = null;
-      let assetMatchesCount = 0;
+    // Extract cookie names safely from set-cookie headers (values are strictly ignored for security)
+    const observedCookieNames = new Set<string>();
+    if (evidence.cookieNames) {
+      for (const cn of evidence.cookieNames) observedCookieNames.add(cn.toLowerCase());
+    }
+    const setCookieHeader = loweredHeaders['set-cookie'];
+    if (setCookieHeader) {
+      const rawCookies = setCookieHeader.split(/[,;\n]/);
+      for (const rc of rawCookies) {
+        const eqIdx = rc.indexOf('=');
+        if (eqIdx > 0) {
+          const cName = rc.slice(0, eqIdx).trim().toLowerCase();
+          if (cName) observedCookieNames.add(cName);
+        }
+      }
+    }
 
-      // 1. Meta generators (highest confidence explicit declaration)
+    for (const [techId, { tech, compiled }] of this.compiledCatalog.entries()) {
+      const matchedSignals: MatchedSignal[] = [];
+      let extractedVersion: string | null = null;
+
+      // 1. Meta generators (Strong signal: explicit declaration)
       if (compiled.metaGenerators.length > 0 && evidence.metaGenerators) {
         for (const gen of evidence.metaGenerators) {
           for (const rx of compiled.metaGenerators) {
             if (rx.test(gen)) {
-              matched = true;
-              summary = `Declared in meta generator tag: "${gen}"`;
+              matchedSignals.push({
+                type: 'meta_generator',
+                strength: 'strong',
+                summary: `Declared in meta generator tag: "${gen}"`,
+              });
 
-              // Check version rule
               for (const vr of compiled.versionRules) {
                 if (vr.source_type === 'meta_generator') {
                   const m = gen.match(vr.regex);
@@ -211,17 +344,20 @@ export class UniversalTechEngine {
               break;
             }
           }
-          if (matched) break;
+          if (matchedSignals.some((s) => s.type === 'meta_generator')) break;
         }
       }
 
-      // 2. HTTP Response Headers
-      if (!matched && Object.keys(compiled.headers).length > 0) {
+      // 2. HTTP Response Headers (Strong signal: direct server response)
+      if (Object.keys(compiled.headers).length > 0) {
         for (const [hName, rx] of Object.entries(compiled.headers)) {
           const headerVal = loweredHeaders[hName];
           if (headerVal && rx.test(headerVal)) {
-            matched = true;
-            summary = `Disclosed in HTTP response header "${hName}: ${headerVal}"`;
+            matchedSignals.push({
+              type: 'header',
+              strength: 'strong',
+              summary: `Disclosed in HTTP response header "${hName}: ${headerVal}"`,
+            });
 
             for (const vr of compiled.versionRules) {
               if (vr.source_type === 'header') {
@@ -241,16 +377,87 @@ export class UniversalTechEngine {
         }
       }
 
-      // 3. Script sources (with asset threshold check)
-      if (!matched && compiled.scriptSources.length > 0 && evidence.scriptSources) {
+      // 3. HTML Attributes (Moderate signal: structured markup)
+      if (Object.keys(compiled.htmlAttributes).length > 0 && evidence.htmlAttributes) {
+        for (const [attrName, rx] of Object.entries(compiled.htmlAttributes)) {
+          const attrVal = evidence.htmlAttributes[attrName];
+          if (attrVal !== undefined && rx.test(attrVal)) {
+            matchedSignals.push({
+              type: 'html_attribute',
+              strength: 'moderate',
+              summary: `Matched structured HTML attribute [${attrName}="${attrVal.slice(0, 30)}"]`,
+            });
+            break;
+          }
+        }
+      }
+
+      // 4. HTML Comments (Moderate signal: embedded build/optimization signatures)
+      if (compiled.htmlComments.length > 0 && evidence.htmlComments) {
+        for (const comment of evidence.htmlComments) {
+          for (const sig of compiled.htmlComments) {
+            if (comment.includes(sig)) {
+              matchedSignals.push({
+                type: 'html_comment',
+                strength: 'moderate',
+                summary: `Matched HTML comment signature: "${sig.slice(0, 40)}"`,
+              });
+              break;
+            }
+          }
+          if (matchedSignals.some((s) => s.type === 'html_comment')) break;
+        }
+      }
+
+      // 5. DOM Markers (Moderate signal: structured DOM elements)
+      if (compiled.domMarkers.length > 0 && evidence.domMarkers) {
+        for (const marker of compiled.domMarkers) {
+          if (this.matchDomMarker(marker, evidence)) {
+            matchedSignals.push({
+              type: 'dom_marker',
+              strength: 'moderate',
+              summary: `Identified DOM signature marker: "${marker}"`,
+            });
+            break;
+          }
+        }
+      }
+
+      // 6. Inline JavaScript Runtime Tokens (Moderate signal: runtime tokens)
+      if (compiled.inlineMarkers.length > 0 && evidence.inlineMarkers) {
+        for (const marker of compiled.inlineMarkers) {
+          if (evidence.inlineMarkers.includes(marker)) {
+            matchedSignals.push({
+              type: 'inline_marker',
+              strength: 'moderate',
+              summary: `Identified runtime JavaScript token: "${marker}"`,
+            });
+            break;
+          }
+        }
+      }
+
+      // 7. Body Classes (Moderate signal: CMS/theme body classes)
+      if (compiled.bodyClasses.length > 0 && evidence.bodyClasses) {
+        for (const bc of evidence.bodyClasses) {
+          if (compiled.bodyClasses.some((sig) => bc === sig || bc.startsWith(sig))) {
+            matchedSignals.push({
+              type: 'body_classes' as any,
+              strength: 'moderate',
+              summary: `Matched body class: "${bc}"`,
+            });
+            break;
+          }
+        }
+      }
+
+      // 8. Script Sources (Moderate signal: bundles and framework scripts)
+      if (compiled.scriptSources.length > 0 && evidence.scriptSources) {
+        const matchingScripts = new Set<string>();
         for (const src of evidence.scriptSources) {
           for (const rx of compiled.scriptSources) {
             if (rx.test(src)) {
-              assetMatchesCount++;
-              if (!matched) {
-                summary = `Referenced script resource: "${src.slice(0, 60)}"`;
-              }
-              // Version check
+              matchingScripts.add(src);
               if (!extractedVersion) {
                 for (const vr of compiled.versionRules) {
                   if (vr.source_type === 'script_url') {
@@ -266,102 +473,198 @@ export class UniversalTechEngine {
             }
           }
         }
-        const minAssets = tech.signatures.min_assets_for_detection ?? 1;
-        if (assetMatchesCount >= minAssets) {
-          matched = true;
+
+        if (matchingScripts.size > 0) {
+          const hasOtherSignals = matchedSignals.length > 0;
+          if (matchingScripts.size >= compiled.minAssets || hasOtherSignals) {
+            const firstScript = Array.from(matchingScripts)[0] || '';
+            matchedSignals.push({
+              type: 'script_source',
+              strength: 'moderate',
+              summary: `Referenced script resource: "${firstScript.slice(0, 60)}" (${matchingScripts.size} matching)`,
+            });
+          }
         }
       }
 
-      // 4. Stylesheet hrefs (with asset threshold check)
-      if (!matched && compiled.stylesheetHrefs.length > 0 && evidence.stylesheetHrefs) {
-        let styleMatchesCount = 0;
-        let firstStyleSummary = '';
+      // 9. Stylesheet Hrefs (Moderate signal)
+      if (compiled.stylesheetHrefs.length > 0 && evidence.stylesheetHrefs) {
+        const matchingStyles = new Set<string>();
         for (const href of evidence.stylesheetHrefs) {
           for (const rx of compiled.stylesheetHrefs) {
             if (rx.test(href)) {
-              styleMatchesCount++;
-              if (!firstStyleSummary) {
-                firstStyleSummary = `Referenced stylesheet: "${href.slice(0, 60)}"`;
-              }
+              matchingStyles.add(href);
               break;
             }
           }
         }
-        const minAssets = tech.signatures.min_assets_for_detection ?? 1;
-        if (styleMatchesCount >= minAssets) {
-          matched = true;
-          summary = firstStyleSummary;
-        }
-      }
 
-      // 5. DOM Markers
-      if (!matched && compiled.domMarkers.length > 0 && evidence.domMarkers) {
-        for (const marker of compiled.domMarkers) {
-          const hasMarker =
-            evidence.domMarkers.includes(marker) ||
-            evidence.domMarkers.some(
-              (evm) =>
-                marker.includes(evm) ||
-                evm.includes(marker) ||
-                (marker.includes('[') && marker.includes(evm.replace(/^[a-z]+:/i, '')))
-            );
-          if (hasMarker) {
-            matched = true;
-            summary = `Identified DOM signature marker: "${marker}"`;
-            break;
-          }
-        }
-      }
-
-      // 6. Inline Markers
-      if (!matched && compiled.inlineMarkers.length > 0 && evidence.inlineMarkers) {
-        for (const marker of compiled.inlineMarkers) {
-          if (evidence.inlineMarkers.includes(marker)) {
-            matched = true;
-            summary = `Identified runtime JavaScript token: "${marker}"`;
-            break;
-          }
-        }
-      }
-
-      if (matched) {
-        const confidence = tech.confidence_weight ?? 0.95;
-        const status =
-          confidence >= 0.95 ? 'confirmed' : confidence >= 0.75 ? 'detected' : 'possible';
-        const provenance = (tech.default_provenance || 'first_party') as any;
-
-        detectedMap.set(tech.id, {
-          id: `${auditId}-${tech.id}`,
-          auditId,
-          technologyId: tech.id,
-          name: tech.name,
-          category: tech.category,
-          confidence,
-          status,
-          provenance,
-          evidenceSummary: summary,
-          version: extractedVersion || undefined,
-          versionOrNull: extractedVersion || null,
-        });
-
-        // 7. Resolve technology implications (e.g., wordpress implies php)
-        for (const impliedId of tech.implies || []) {
-          if (!detectedMap.has(impliedId) && this.compiledCatalog.has(impliedId)) {
-            const impliedTech = this.compiledCatalog.get(impliedId)!.tech;
-            detectedMap.set(impliedId, {
-              id: `${auditId}-${impliedId}`,
-              auditId,
-              technologyId: impliedId,
-              name: impliedTech.name,
-              category: impliedTech.category,
-              confidence: 0.85,
-              status: 'inferred',
-              provenance: 'inferred_dependency',
-              evidenceSummary: `Inferred dependency of detected technology "${tech.name}"`,
-              version: undefined,
-              versionOrNull: null,
+        if (matchingStyles.size > 0) {
+          const hasOtherSignals = matchedSignals.length > 0;
+          if (matchingStyles.size >= compiled.minAssets || hasOtherSignals) {
+            const firstStyle = Array.from(matchingStyles)[0] || '';
+            matchedSignals.push({
+              type: 'stylesheet_href',
+              strength: 'moderate',
+              summary: `Referenced stylesheet: "${firstStyle.slice(0, 60)}" (${matchingStyles.size} matching)`,
             });
           }
+        }
+      }
+
+      // 10. Link Rels (Weak signal: preconnect/dns-prefetch)
+      if (compiled.linkRels.length > 0 && evidence.linkRels) {
+        for (const lr of evidence.linkRels) {
+          for (const rx of compiled.linkRels) {
+            if (rx.test(lr.href)) {
+              matchedSignals.push({
+                type: 'link_rel',
+                strength: 'weak',
+                summary: `Referenced link relation [rel="${lr.rel}"]: "${lr.href.slice(0, 50)}"`,
+              });
+              break;
+            }
+          }
+          if (matchedSignals.some((s) => s.type === 'link_rel')) break;
+        }
+      }
+
+      // 11. Asset URLs (Weak signal: third-party images/fonts/assets)
+      // Deduplicate asset URLs: do NOT count duplicate asset URLs as independent evidence!
+      if (compiled.assetUrls.length > 0 && evidence.assetUrls) {
+        const matchingAssetUrls = new Set<string>();
+        for (const aUrl of evidence.assetUrls) {
+          for (const rx of compiled.assetUrls) {
+            if (rx.test(aUrl)) {
+              matchingAssetUrls.add(aUrl);
+              break;
+            }
+          }
+        }
+
+        if (matchingAssetUrls.size > 0) {
+          const hasOtherSignals = matchedSignals.length > 0;
+          if (matchingAssetUrls.size >= compiled.minAssets || hasOtherSignals) {
+            const firstAsset = Array.from(matchingAssetUrls)[0] || '';
+            matchedSignals.push({
+              type: 'asset_url',
+              strength: 'weak',
+              summary: `Loaded asset resource: "${firstAsset.slice(0, 60)}" (${matchingAssetUrls.size} distinct URLs)`,
+            });
+          }
+        }
+      }
+
+      // 12. Cookies (Weak signal: session/tracking cookie names)
+      if (compiled.cookies.length > 0 && observedCookieNames.size > 0) {
+        for (const cName of observedCookieNames) {
+          for (const rx of compiled.cookies) {
+            if (rx.test(cName)) {
+              matchedSignals.push({
+                type: 'cookie',
+                strength: 'weak',
+                summary: `Observed session cookie name: "${cName}" (values strictly unread)`,
+              });
+              break;
+            }
+          }
+          if (matchedSignals.some((s) => s.type === 'cookie')) break;
+        }
+      }
+
+      // Corroboration & Threshold Check
+      if (matchedSignals.length === 0) continue;
+
+      const hasStrong = matchedSignals.some((s) => s.strength === 'strong');
+      const hasModerate = matchedSignals.some((s) => s.strength === 'moderate');
+      const onlyWeak = matchedSignals.every((s) => s.strength === 'weak');
+
+      // If corroboration is required, single weak signals or uncorroborated moderate signals are insufficient
+      if (compiled.requiresCorroboration) {
+        const distinctSignalTypes = new Set(matchedSignals.map((s) => s.type)).size;
+        if (!hasStrong && distinctSignalTypes < 2) {
+          continue; // Rejected: corroboration required but not met
+        }
+      }
+
+      // Confidence & Provenance Calculation
+      let confidence = tech.confidence_weight ?? 0.95;
+      let provenance: StandaloneTechFinding['provenance'] = (tech.default_provenance || 'first_party') as any;
+
+      if (onlyWeak) {
+        // Weak asset-only signal (e.g. single embedded Framer asset or font link)
+        confidence = 0.40;
+        provenance = 'third_party_embed';
+      } else if (hasStrong || matchedSignals.length >= 2) {
+        // Strong explicit declaration or multiple corroborated signals
+        confidence = tech.confidence_weight ?? 0.95;
+      } else {
+        // Single moderate signal without corroboration
+        confidence = Math.min(confidence, 0.75);
+      }
+
+      let status: StandaloneTechFinding['status'] =
+        confidence >= 0.95 ? 'confirmed' : confidence >= 0.70 ? 'detected' : 'possible';
+
+      const primarySignal = matchedSignals[0];
+      const summaryText = matchedSignals.map((s) => s.summary).join('; ');
+
+      detectedMap.set(tech.id, {
+        id: `${auditId}-${tech.id}`,
+        auditId,
+        technologyId: tech.id,
+        name: tech.name,
+        category: tech.category,
+        confidence,
+        status,
+        provenance,
+        evidenceSummary: summaryText,
+        version: extractedVersion || undefined,
+        versionOrNull: extractedVersion || null,
+      });
+    }
+
+    // False-Positive Protection: Primary CMS vs Weak Embed (e.g. Framer asset on WordPress)
+    const confirmedCms = Array.from(detectedMap.values()).find(
+      (t) => t.category === 'cms' && t.confidence >= 0.90 && t.provenance === 'first_party'
+    );
+
+    if (confirmedCms) {
+      for (const [techId, finding] of detectedMap.entries()) {
+        if (
+          finding.category === 'cms' &&
+          techId !== confirmedCms.technologyId &&
+          finding.provenance === 'third_party_embed'
+        ) {
+          // Downgrade weak third-party asset match when a full primary CMS is confirmed
+          finding.confidence = 0.35;
+          finding.status = 'possible';
+          finding.evidenceSummary = `Third-party embedded asset only on ${confirmedCms.name} site; ${finding.evidenceSummary}`;
+        }
+      }
+    }
+
+    // Technology Implications Resolution (e.g., WordPress implies PHP)
+    for (const [techId, finding] of Array.from(detectedMap.entries())) {
+      const entry = this.compiledCatalog.get(techId);
+      if (!entry) continue;
+
+      for (const impliedId of entry.tech.implies || []) {
+        if (!detectedMap.has(impliedId) && this.compiledCatalog.has(impliedId)) {
+          const impliedTech = this.compiledCatalog.get(impliedId)!.tech;
+          detectedMap.set(impliedId, {
+            id: `${auditId}-${impliedId}`,
+            auditId,
+            technologyId: impliedId,
+            name: impliedTech.name,
+            category: impliedTech.category,
+            confidence: 0.60,
+            status: 'inferred',
+            provenance: 'inferred_dependency',
+            evidenceSummary: `Inferred architectural dependency from confirmed ${finding.name}`,
+            version: undefined,
+            versionOrNull: null,
+          });
         }
       }
     }

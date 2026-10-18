@@ -1,16 +1,59 @@
-# Honest SEO Score Coverage & Provenance Semantics
+# Honest SEO Score Coverage & Authoritative Execution Ledger
 
 ## Executive Summary
 
-Prior to Phase 1, the standalone in-browser audit engine evaluated a subset of rules and awarded a score of `100/100` without communicating that only ~18% of the canonical rules had been executed. Furthermore, 5 passed checks on the 5-page test fixture were misleadingly displayed as `SEO Issues (5)`.
+Prior to this reliability checkpoint, SEO rule coverage was derived inversely from findings (assuming that if a rule had no finding, it passed or wasn't evaluated). That flawed approach conflated passing rules with missing rules and distorted coverage ratios.
 
-This document establishes the **Honest Score Coverage System**, ensuring that audit scores reflect true evaluation depth, separate issues from passed checks, and prevent misleading representations of site health.
+This document establishes the **Authoritative Execution Ledger Architecture** and **Honest Score Coverage System**, ensuring that:
+1. Every evaluated check produces an immutable execution ledger record (`StandaloneRuleExecutionRecord`), independent of whether it passes, fails, warns, or is not applicable.
+2. Rule execution coverage is computed exclusively from the execution ledger.
+3. Score states reflect true evaluation depth across all 51 canonical rules.
+4. Failed crawl attempts and unreachable hosts trigger an explicit evidence availability gate, preventing misleading default scores (like `100/100`) from being rendered.
 
 ---
 
-## 1. Score States and Classifications
+## 1. Authoritative Execution Ledger Architecture
 
-The scoring engine classifies every audit result into one of three explicit states:
+The execution ledger is recorded at the check level and persisted to IndexedDB store `execution_ledger`:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   In-Browser Rules Engine                   │
+│   evaluatePageDetailed() & evaluateSitewideDetailed()       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                Emits Findings │ Emits Authoritative Records
+                               ▼
+┌──────────────────────────────┬──────────────────────────────┐
+│       SEO Findings           │   Execution Ledger Records   │
+│  - Failures & Warnings       │  - canonicalRuleId           │
+│  - Severity & Deductions     │  - executionStatus           │
+│  - Target URL & Evidence     │  - pageUrl / siteScope       │
+│  - User-facing message       │  - executionTimeMs & Details │
+└──────────────────────────────┴──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Authoritative Scorecard                     │
+│  - Honest Rule Coverage (14/51 evaluated)                   │
+│  - Score State: 'provisional' (< 80%)                       │
+│  - Deductions applied only for observed issues              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Execution Status Codes
+- `executed_pass`: Rule was applicable and evaluated; passed all assertions.
+- `executed_fail`: Rule was applicable and evaluated; failed assertions.
+- `executed_warning`: Rule was applicable and evaluated; sub-optimal configuration.
+- `not_applicable`: Rule was evaluated but is not applicable to this page type or context (e.g. localhost HTTPS policy).
+- `not_evaluated`: Rule is cataloged in the canonical 51 but engine implementation is pending.
+- `unknown`: Evaluation attempted but evidence was unavailable or network failed.
+
+---
+
+## 2. Four-State Score Classification
+
+The scoring engine classifies every audit result into one of four explicit states:
 
 ```
                           ┌─────────────────────────────┐
@@ -19,63 +62,46 @@ The scoring engine classifies every audit result into one of three explicit stat
                                          │
                         [Usable HTML Pages Crawled > 0?]
                                   /            \
-                               No               Yes
-                              /                   \
+                                No               Yes
+                               /                   \
         ┌────────────────────────────┐    [Coverage Ratio >= 80%
         │     UNAVAILABLE SCORE      │     across all 3 families?]
         │  - Overall: null           │          /            \
         │  - Grade: N/A              │        No              Yes
         │  - Reason: Insufficient    │       /                  \
-        │    Evidence                │  ┌──────────────┐  ┌──────────────┐
-        └────────────────────────────┘  │ PROVISIONAL  │  │    FULLY     │
-                                        │    SCORE     │  │  EVALUATED   │
-                                        │ (Phase 1 MVP)│  │ (Future P4)  │
-                                        └──────────────┘  └──────────────┘
+        │    Evidence                │  ┌──────────────┐  [Coverage = 100%?]
+        └────────────────────────────┘  │ PROVISIONAL  │      /       \
+                                        │    SCORE     │    No         Yes
+                                        │  (< 80%)     │   /             \
+                                        └──────────────┘┌──────────────┐┌──────────────┐
+                                                        │ SUBSTANTIAL  ││    FULLY     │
+                                                        │  COVERAGE    ││  EVALUATED   │
+                                                        │  (>= 80%)    ││   (100%)     │
+                                                        └──────────────┘└──────────────┘
 ```
 
-### A. PROVISIONAL SCORE
-- **Trigger**: Valid crawl data exists, but fewer than 80% of canonical rules (or fewer than 80% of any single rule family) were evaluated.
-- **UI Treatment**: Displays an amber **PROVISIONAL SCORE** badge showing exact coverage: `Coverage: 9/51 canonical rules (18%)`.
-- **Purpose**: Accurately communicates that while the evaluated rules passed, 42 canonical checks (e.g. Hreflang reciprocity, Schema.org, OpenGraph, TTFB latency) remain unassessed.
-
-### B. FULLY EVALUATED SCORE
-- **Trigger**: Coverage ratio ≥ 80% across On-Page (≥ 13/16), Technical (≥ 18/22), and Site-Wide (≥ 11/13).
-- **UI Treatment**: Displays a standard verified grade badge without provisional disclaimers.
-
-### C. UNAVAILABLE SCORE
-- **Trigger**: 0 usable HTML pages were retrieved (e.g. network timeout, DNS failure, 500 server error, blocked crawl).
-- **UI Treatment**:
+### A. UNAVAILABLE SCORE (`'unavailable'`)
+- **Trigger**: 0 usable HTML pages retrieved (e.g. network timeout, fetch error, DNS error, 500 server outage, blocked crawler).
+- **Behavior**:
   - `overallScore: null`
   - `grade: 'N/A'`
-  - Amber warning banner: `SEO Scorecard Unavailable (Grade: N/A): Crawl failed / insufficient evidence to compute reliable score.`
-  - Attempted URLs and usable page counts are explicitly reported.
+  - `available: false`
+  - Banner: `SEO Scorecard Unavailable (Grade: N/A): Crawl failed / insufficient evidence to compute reliable score.`
+  - Zero false content findings are emitted (early gating prevents missing title/description errors when page content was never fetched).
 
----
+### B. PROVISIONAL SCORE (`'provisional'`)
+- **Trigger**: Valid crawl data exists, but fewer than 80% of canonical rules (or fewer than 80% in any single family) were evaluated.
+- **Current Standalone Status**: 14/51 canonical rules evaluated (27.5% coverage).
+- **Behavior**:
+  - Amber `PROVISIONAL SCORE` badge displayed.
+  - Transparently communicates: `Provisional (14/51 Rules Evaluated)`.
 
-## 2. Metric Separation: Issues vs Passed Checks
+### C. SUBSTANTIAL COVERAGE (`'substantial_coverage'`)
+- **Trigger**: Coverage ratio ≥ 80% across On-Page (≥ 13/16), Technical (≥ 18/22), and Site-Wide (≥ 11/13).
+- **Behavior**: Evaluated grade badge displayed without provisional disclaimers.
 
-To eliminate misleading counters, raw findings are strictly classified into mutually exclusive typed categories:
-
-| Status Code | Semantics | Contributes to `totalIssuesCount`? | UI Section |
-|---|---|---|---|
-| `fail` | Check evaluated and failed | **YES** (by severity: critical, high, medium, low) | Issues Tab (Failed) |
-| `warning` | Partial issue or sub-optimal configuration | **YES** (half deduction penalty) | Issues Tab (Warning) |
-| `pass` | Check evaluated and successfully passed | **NO** | Passed Checks Tab |
-| `not_applicable` | Check does not apply to this site/page type | **NO** | All Records Tab |
-| `not_evaluated` | Rule is registered in catalog but not executed | **NO** | Coverage & Rules Tab |
-| `unknown` | Evidence inconclusive | **NO** | All Records Tab |
-
-### Real Chrome 5-Page Fixture Example
-- **Previous Flawed Display**:
-  - `findings.length = 5` (5 pass findings for `TECH_HTTPS_SECURITY`)
-  - Rendered: `SEO Issues (5)` ❌ *(Misleading: zero issues existed!)*
-- **Corrected Honest Display**:
-  - `findingsSummary.issueCount = 0`
-  - `findingsSummary.passedCount = 5`
-  - `findingsSummary.failedCount = 0`
-  - `findingsSummary.warningCount = 0`
-  - Rendered: `SEO Issues (0)` ✅
-  - Success Banner: `✓ Zero SEO issues detected across evaluated pages! (5 checks passed)`
+### D. FULLY EVALUATED (`'fully_evaluated'`)
+- **Trigger**: Strictly reserved for when all 51 canonical rules were completed (or confirmed legitimate not_applicable).
 
 ---
 
@@ -96,35 +122,55 @@ Overall Score = (On-Page Score × 0.35) + (Technical Score × 0.40) + (Site-Wide
 | `low` / `info` | -3 points | -2 points |
 
 ### Category Scores Clamping
-All category scores are clamped between 0 and 100.
-If fewer than 3 pages are crawled, the Site-Wide score is capped at `75` due to insufficient sample size for cluster and sitewide duplicate detection.
+All category scores are clamped between 0 and 100. If fewer than 3 pages are crawled, the Site-Wide score is capped at `75` due to insufficient sample size for cluster and sitewide duplicate detection.
 
 ---
 
-## 4. Provenance & Calculation Versioning
+## 4. Authoritative Scorecard Schema
 
 Every computed scorecard persists immutable provenance metadata:
 ```json
 {
-  "scoringVersion": "2.4.0-standalone",
+  "scoringVersion": "2.0.0-standalone",
   "calculatedAt": 1729245600000,
+  "overallScore": 92,
+  "grade": "A",
+  "available": true,
   "coverage": {
     "scoreState": "provisional",
-    "scoreStateLabel": "Provisional (9/51 Rules Evaluated)",
-    "coverageRatio": 0.176,
+    "scoreStateLabel": "Provisional (14/51 Rules Evaluated)",
+    "coverageRatio": 0.275,
     "expectedRulesTotal": 51,
-    "executedRulesTotal": 9,
-    "missingRulesTotal": 42,
-    "passedRulesCount": 5,
-    "failedRulesCount": 0,
-    "warningRulesCount": 0,
+    "implementedRulesCount": 14,
+    "executedRulesTotal": 14,
+    "distinctExecutedCanonicalRules": [
+      "ONPAGE_TITLE_PRESENT",
+      "ONPAGE_TITLE_LENGTH",
+      "ONPAGE_META_DESC_PRESENT",
+      "ONPAGE_META_DESC_LENGTH",
+      "ONPAGE_H1_PRESENCE",
+      "ONPAGE_H1_MULTIPLE",
+      "ONPAGE_CANONICAL_PRESENCE",
+      "ONPAGE_CANONICAL_VALID",
+      "ONPAGE_IMAGE_ALT_MISSING",
+      "TECH_HTTP_4XX",
+      "TECH_HTTP_5XX",
+      "TECH_HTTPS_USAGE",
+      "SITE_TITLE_DUPLICATE",
+      "SITE_NO_OBSERVED_INTERNAL_INLINKS"
+    ],
+    "applicableRulesCount": 14,
+    "missingRulesTotal": 37,
+    "passedChecksCount": 42,
+    "failedChecksCount": 0,
+    "warningChecksCount": 3,
+    "notApplicableChecksCount": 5,
     "familyCoverage": {
-      "on_page": { "executed": 6, "total": 16, "ratio": 0.375 },
-      "technical": { "executed": 2, "total": 22, "ratio": 0.091 },
-      "sitewide": { "executed": 1, "total": 13, "ratio": 0.077 }
+      "on_page": { "executed": 9, "total": 16, "ratio": 0.563 },
+      "technical": { "executed": 3, "total": 22, "ratio": 0.136 },
+      "sitewide": { "executed": 2, "total": 13, "ratio": 0.154 }
     },
-    "policyVersion": "2.4.0-standalone"
+    "policyVersion": "2.0.0-standalone"
   }
 }
 ```
-Historical audits remain completely intact with their original score provenance preserved.

@@ -60,21 +60,29 @@ describe('Standalone Live Fixture Acceptance (http://127.0.0.1:4321/)', () => {
     expect(wp?.confidence).toBeGreaterThanOrEqual(0.9);
     expect(wp?.version).toBe('6.4.3');
 
-    // 4. SEO findings & Localhost HTTP policy
+    // 4. Canonical SEO findings & Localhost HTTP policy
     const findings = await StandaloneAuditStorage.getFindingsForAudit(job.id);
     // Should NOT report false missing title, missing description, or missing H1
-    const missingTitle = findings.find((f) => f.ruleId === 'ONPAGE_TITLE_TAG' && f.status === 'fail');
-    const missingH1 = findings.find((f) => f.ruleId === 'ONPAGE_H1_PRIMARY' && f.status === 'fail');
+    const missingTitle = findings.find((f) => f.ruleId === 'ONPAGE_TITLE_PRESENT' && f.status === 'fail');
+    const missingH1 = findings.find((f) => f.ruleId === 'ONPAGE_H1_PRESENCE' && f.status === 'fail');
     expect(missingTitle).toBeUndefined();
     expect(missingH1).toBeUndefined();
 
     // Localhost policy: Should NOT report critical defect for HTTP on 127.0.0.1
     const criticalHttps = findings.find(
-      (f) => f.ruleId === 'TECH_HTTPS_SECURITY' && f.status === 'fail'
+      (f) => f.ruleId === 'TECH_HTTPS_USAGE' && f.status === 'fail'
     );
     expect(criticalHttps).toBeUndefined();
 
-    // 5. Scorecard evidence and availability gate
+    // 5. Authoritative Execution Ledger
+    const ledgerRecords = await StandaloneAuditStorage.getExecutionLedgerForAudit(job.id);
+    expect(ledgerRecords).toBeDefined();
+    expect(ledgerRecords.length).toBeGreaterThan(0);
+    // 14 distinct canonical rules evaluated across crawled pages and site graph
+    const distinctRules = new Set(ledgerRecords.map((r) => r.canonicalRuleId));
+    expect(distinctRules.size).toBe(14);
+
+    // 6. Scorecard evidence and availability gate
     expect(job.scorecard).toBeDefined();
     expect(job.scorecard?.available).toBe(true);
     expect(job.scorecard?.overallScore).toBeGreaterThanOrEqual(80);
@@ -83,5 +91,13 @@ describe('Standalone Live Fixture Acceptance (http://127.0.0.1:4321/)', () => {
     expect(job.scorecard?.usablePagesCount).toBe(5);
     expect(job.scorecard?.attemptedPagesCount).toBe(5);
     expect(job.scorecard?.failedPagesCount).toBe(0);
+
+    // 7. Honest Score Coverage (Provisional state when 14/51 canonical rules evaluated)
+    expect(job.scorecard?.coverage).toBeDefined();
+    expect(job.scorecard?.coverage?.scoreState).toBe('provisional');
+    expect(job.scorecard?.coverage?.executedRulesTotal).toBe(14);
+    expect(job.scorecard?.coverage?.expectedRulesTotal).toBe(51);
+    expect(job.scorecard?.coverage?.distinctExecutedCanonicalRules).toHaveLength(14);
+    expect(job.scorecard?.coverage?.coverageRatio).toBeCloseTo(14 / 51, 2);
   });
 });

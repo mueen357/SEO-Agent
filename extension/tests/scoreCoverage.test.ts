@@ -49,7 +49,7 @@ describe('StandaloneScoringCalculator & Score Coverage Parity', () => {
       {
         id: 'f-1',
         auditId: 'job-1',
-        ruleId: 'TECH_HTTPS_SECURITY',
+        ruleId: 'TECH_HTTPS_USAGE',
         category: 'technical',
         severity: 'info',
         status: 'pass',
@@ -75,8 +75,8 @@ describe('StandaloneScoringCalculator & Score Coverage Parity', () => {
     expect(scorecard.coverage.executedRulesTotal).toBe(1);
     expect(scorecard.coverage.missingRulesTotal).toBe(50);
     expect(scorecard.coverage.coverageRatio).toBeLessThan(0.8);
-    expect(scorecard.scoringVersion).toBe('2.4.0-standalone');
-    expect(scorecard.coverage.policyVersion).toBe('2.4.0-standalone');
+    expect(scorecard.scoringVersion).toBe('2.0.0-standalone');
+    expect(scorecard.coverage.policyVersion).toBe('2.0.0-standalone');
   });
 
   it('marks scorecard as UNAVAILABLE with grade N/A when 0 usable pages are crawled', () => {

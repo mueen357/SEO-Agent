@@ -7,6 +7,7 @@
 import type {
   StandaloneAuditJob,
   StandaloneCrawlPage,
+  StandaloneRuleExecutionRecord,
   StandaloneSeoFinding,
   StandaloneTechFinding,
 } from '../types';
@@ -17,12 +18,13 @@ export class StandaloneExporter {
     job: StandaloneAuditJob,
     pages: StandaloneCrawlPage[],
     findings: StandaloneSeoFinding[],
-    technologies: StandaloneTechFinding[]
+    technologies: StandaloneTechFinding[],
+    executionLedger?: StandaloneRuleExecutionRecord[]
   ): string {
     const findingsSummary = StandaloneFindingsClassifier.classify(findings);
 
     const data = {
-      exportVersion: '1.1.0',
+      exportVersion: '2.0.0',
       exportedAt: new Date().toISOString(),
       audit: job,
       scorecard: job.scorecard,
@@ -36,6 +38,7 @@ export class StandaloneExporter {
         distinctRulesEvaluated: findingsSummary.distinctRulesEvaluated,
         pagesEvaluated: findingsSummary.pagesEvaluated,
         totalTechnologiesDetected: technologies.length,
+        distinctExecutionEvaluations: executionLedger ? executionLedger.length : undefined,
         findingsSummary,
       },
       pages: pages.map((p) => ({
@@ -53,14 +56,28 @@ export class StandaloneExporter {
       })),
       technologies,
       findings,
+      executionLedger: executionLedger || [],
     };
     return JSON.stringify(data, null, 2);
+  }
+
+  public static exportJson(
+    job: StandaloneAuditJob,
+    pages: StandaloneCrawlPage[],
+    findings: StandaloneSeoFinding[],
+    technologies: StandaloneTechFinding[],
+    scorecard?: any,
+    executionLedger?: any
+  ): string {
+    const records = executionLedger?.records || (Array.isArray(executionLedger) ? executionLedger : undefined);
+    return this.generateJson(job, pages, findings, technologies, records);
   }
 
   public static generateCsv(
     job: StandaloneAuditJob,
     pages: StandaloneCrawlPage[],
-    findings: StandaloneSeoFinding[]
+    findings: StandaloneSeoFinding[],
+    executionLedger?: StandaloneRuleExecutionRecord[]
   ): string {
     const rows: string[] = [];
 
@@ -105,16 +122,45 @@ export class StandaloneExporter {
       );
     }
 
-    return rows.join('\n');
+    // Execution Ledger (Authoritative evaluation records)
+    if (executionLedger && executionLedger.length > 0) {
+      for (const rec of executionLedger) {
+        rows.push(
+          [
+            'RULE_EXECUTION',
+            this.escapeCsv(rec.targetUrl),
+            this.escapeCsv(`${rec.canonicalRuleId} [${rec.executionStatus.toUpperCase()}]`),
+            this.escapeCsv(rec.result.toUpperCase()),
+            this.escapeCsv(`Engine: ${rec.engineVersion} | RuleVer: ${rec.ruleVersion}`),
+            this.escapeCsv(rec.reason || 'Authoritative rule evaluation completed'),
+          ].join(',')
+        );
+      }
+    }
+
+    return rows.join('\r\n');
+  }
+
+  public static exportCsv(
+    job: StandaloneAuditJob,
+    pages: StandaloneCrawlPage[],
+    findings: StandaloneSeoFinding[],
+    technologies?: StandaloneTechFinding[],
+    scorecard?: any,
+    executionLedger?: any
+  ): string {
+    const records = executionLedger?.records || (Array.isArray(executionLedger) ? executionLedger : undefined);
+    return this.generateCsv(job, pages, findings, records);
   }
 
   public static downloadJson(
     job: StandaloneAuditJob,
     pages: StandaloneCrawlPage[],
     findings: StandaloneSeoFinding[],
-    technologies: StandaloneTechFinding[]
+    technologies: StandaloneTechFinding[],
+    executionLedger?: StandaloneRuleExecutionRecord[]
   ): void {
-    const jsonString = this.generateJson(job, pages, findings, technologies);
+    const jsonString = this.generateJson(job, pages, findings, technologies, executionLedger);
     const blob = new Blob([jsonString], { type: 'application/json' });
     this.triggerDownload(blob, `audit-${job.hostname}-${Date.now()}.json`);
   }
@@ -122,9 +168,10 @@ export class StandaloneExporter {
   public static downloadCsv(
     job: StandaloneAuditJob,
     pages: StandaloneCrawlPage[],
-    findings: StandaloneSeoFinding[]
+    findings: StandaloneSeoFinding[],
+    executionLedger?: StandaloneRuleExecutionRecord[]
   ): void {
-    const csvContent = this.generateCsv(job, pages, findings);
+    const csvContent = this.generateCsv(job, pages, findings, executionLedger);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     this.triggerDownload(blob, `audit-${job.hostname}-${Date.now()}.csv`);
   }

@@ -193,19 +193,19 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
 
     const findings = StandaloneRulesEngine.evaluatePage(brokenPage, 'audit-test');
 
-    const titleMissing = findings.find((f) => f.ruleId === 'ONPAGE_TITLE_TAG' && f.status === 'fail');
+    const titleMissing = findings.find((f) => f.ruleId === 'ONPAGE_TITLE_PRESENT' && f.status === 'fail');
     expect(titleMissing).toBeDefined();
 
-    const descMissing = findings.find((f) => f.ruleId === 'ONPAGE_META_DESC' && f.status === 'fail');
+    const descMissing = findings.find((f) => f.ruleId === 'ONPAGE_META_DESC_PRESENT' && f.status === 'fail');
     expect(descMissing).toBeDefined();
 
-    const h1Missing = findings.find((f) => f.ruleId === 'ONPAGE_H1_PRIMARY' && f.status === 'fail');
+    const h1Missing = findings.find((f) => f.ruleId === 'ONPAGE_H1_PRESENCE' && f.status === 'fail');
     expect(h1Missing).toBeDefined();
 
-    const imgMissingAlt = findings.find((f) => f.ruleId === 'ONPAGE_IMAGES' && f.status === 'warning');
+    const imgMissingAlt = findings.find((f) => f.ruleId === 'ONPAGE_IMAGE_ALT_MISSING' && f.status === 'warning');
     expect(imgMissingAlt).toBeDefined();
 
-    const httpInsecure = findings.find((f) => f.ruleId === 'TECH_HTTPS_SECURITY' && f.status === 'fail');
+    const httpInsecure = findings.find((f) => f.ruleId === 'TECH_HTTPS_USAGE' && f.status === 'fail');
     expect(httpInsecure).toBeDefined();
   });
 
@@ -244,11 +244,11 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
 
     const findings = StandaloneRulesEngine.evaluatePage(error500Page, 'audit-test');
     expect(findings).toHaveLength(1);
-    expect(findings[0]?.ruleId).toBe('TECH_HTTP_STATUS');
+    expect(findings[0]?.ruleId).toBe('TECH_HTTP_5XX');
     expect(findings[0]?.severity).toBe('critical');
     // Ensure no false on-page HTML findings on 500 error
-    expect(findings.some((f) => f.ruleId === 'ONPAGE_TITLE_TAG')).toBe(false);
-    expect(findings.some((f) => f.ruleId === 'ONPAGE_H1_PRIMARY')).toBe(false);
+    expect(findings.some((f) => f.ruleId === 'ONPAGE_TITLE_PRESENT')).toBe(false);
+    expect(findings.some((f) => f.ruleId === 'ONPAGE_H1_PRESENCE')).toBe(false);
   });
 
   it('permits HTTP for explicitly authorized local development fixture without critical defect', () => {
@@ -260,7 +260,7 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
     };
 
     const findings = StandaloneRulesEngine.evaluatePage(localDevPage, 'audit-test');
-    const httpsFinding = findings.find((f) => f.ruleId === 'TECH_HTTPS_SECURITY');
+    const httpsFinding = findings.find((f) => f.ruleId === 'TECH_HTTPS_USAGE');
 
     expect(httpsFinding).toBeDefined();
     expect(httpsFinding?.status).toBe('pass'); // Pass, not critical defect
@@ -280,7 +280,7 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
 
     const sitewideFindings = StandaloneRulesEngine.evaluateSitewide(pages, 'audit-test');
 
-    const orphanFinding = sitewideFindings.find((f) => f.ruleId === 'SITE_ORPHAN_PAGES');
+    const orphanFinding = sitewideFindings.find((f) => f.ruleId === 'SITE_NO_OBSERVED_INTERNAL_INLINKS');
     expect(orphanFinding).toBeDefined();
     expect(orphanFinding?.pageUrl).toBe('https://example.com/orphan');
   });

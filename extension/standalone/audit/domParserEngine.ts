@@ -17,6 +17,11 @@ export interface ParsedHtmlEvidence {
   domMarkers: string[];
   bodyClasses: string[];
   inlineMarkers: string[];
+  assetUrls?: string[];
+  htmlAttributes?: Record<string, string>;
+  linkRels?: Array<{ rel: string; href: string }>;
+  htmlComments?: string[];
+  cookieNames?: string[];
 }
 
 let creatingOffscreenPromise: Promise<void> | null = null;
@@ -188,6 +193,55 @@ export class StandaloneDomParser {
       if (content.includes('wp.apiFetch') || content.includes('wp =') || content.includes('wp.')) inlineMarkers.push('wp.apiFetch');
     });
 
+    // HTML Comments
+    const htmlComments: string[] = [];
+    const commentRegex = /<!--([\s\S]*?)-->/g;
+    let cmMatch: RegExpExecArray | null;
+    while ((cmMatch = commentRegex.exec(html)) !== null) {
+      if (cmMatch[0]) htmlComments.push(cmMatch[0]);
+    }
+
+    // Link rels
+    const linkRels: Array<{ rel: string; href: string }> = [];
+    doc.querySelectorAll('link[href]').forEach((l) => {
+      const rel = l.getAttribute('rel') || '';
+      const href = l.getAttribute('href') || '';
+      if (href) linkRels.push({ rel, href });
+    });
+
+    // HTML Attributes
+    const htmlAttributes: Record<string, string> = {};
+    if (doc.documentElement) {
+      for (let i = 0; i < doc.documentElement.attributes.length; i++) {
+        const attr = doc.documentElement.attributes[i];
+        if (attr) htmlAttributes[attr.name.toLowerCase()] = attr.value;
+      }
+    }
+    doc.querySelectorAll('[data-wf-page], [data-wf-site], [data-framer-hydrate-v2], [ng-version]').forEach((el) => {
+      for (let i = 0; i < el.attributes.length; i++) {
+        const attr = el.attributes[i];
+        if (attr) htmlAttributes[attr.name.toLowerCase()] = attr.value;
+      }
+    });
+
+    // Asset URLs (deduplicated)
+    const assetUrlSet = new Set<string>();
+    images.forEach((img) => { if (img.src) assetUrlSet.add(img.src); });
+    scriptSources.forEach((s) => assetUrlSet.add(s));
+    stylesheetHrefs.forEach((s) => assetUrlSet.add(s));
+    linkRels.forEach((l) => assetUrlSet.add(l.href));
+    doc.querySelectorAll('video[src], audio[src], source[src], iframe[src]').forEach((el) => {
+      const src = el.getAttribute('src');
+      if (src) {
+        try {
+          assetUrlSet.add(new URL(src, baseHref).href);
+        } catch {
+          assetUrlSet.add(src);
+        }
+      }
+    });
+    const assetUrls = Array.from(assetUrlSet);
+
     return {
       title,
       metaDescription,
@@ -202,6 +256,10 @@ export class StandaloneDomParser {
       domMarkers,
       bodyClasses,
       inlineMarkers,
+      assetUrls,
+      htmlAttributes,
+      linkRels,
+      htmlComments,
     };
   }
 
@@ -304,6 +362,48 @@ export class StandaloneDomParser {
     if (html.includes('window.dataLayer')) inlineMarkers.push('window.dataLayer');
     if (html.includes('wp.apiFetch')) inlineMarkers.push('wp.apiFetch');
 
+    // HTML Comments
+    const htmlComments: string[] = [];
+    const commentMatches = html.matchAll(/<!--([\s\S]*?)-->/gi);
+    for (const cm of commentMatches) {
+      if (cm[0]) htmlComments.push(cm[0]);
+    }
+
+    // Link Rels
+    const linkRels: Array<{ rel: string; href: string }> = [];
+    for (const m of linkTagMatches) {
+      const tag = m[0];
+      const relMatch = tag.match(/rel=["']([^"']+)["']/i);
+      const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+      if (hrefMatch && hrefMatch[1]) {
+        const relStr = (relMatch && relMatch[1]) ? relMatch[1] : '';
+        const hrefStr = hrefMatch[1] as string;
+        linkRels.push({ rel: relStr, href: hrefStr });
+      }
+    }
+
+    // HTML Attributes
+    const htmlAttributes: Record<string, string> = {};
+    const htmlTagMatch = html.match(/<html\s+([^>]+)>/i);
+    if (htmlTagMatch && htmlTagMatch[1]) {
+      const attrMatches = htmlTagMatch[1].matchAll(/([a-zA-Z0-9_\-]+)=["']([^"']*)["']/g);
+      for (const am of attrMatches) {
+        if (am[1]) htmlAttributes[am[1].toLowerCase()] = am[2] || '';
+      }
+    }
+    const dataWfMatches = html.matchAll(/(data-wf-[a-zA-Z0-9_\-]+)=["']([^"']*)["']/gi);
+    for (const dm of dataWfMatches) {
+      if (dm[1]) htmlAttributes[dm[1].toLowerCase()] = dm[2] || '';
+    }
+
+    // Asset URLs (deduplicated)
+    const assetUrlSet = new Set<string>();
+    images.forEach((img) => { if (img.src) assetUrlSet.add(img.src); });
+    scriptSources.forEach((s) => assetUrlSet.add(s));
+    stylesheetHrefs.forEach((s) => assetUrlSet.add(s));
+    linkRels.forEach((l) => assetUrlSet.add(l.href));
+    const assetUrls = Array.from(assetUrlSet);
+
     return {
       title: titleMatch && titleMatch[1] ? titleMatch[1].trim() : undefined,
       metaDescription: metaDescMatch && metaDescMatch[1] ? metaDescMatch[1].trim() : undefined,
@@ -318,6 +418,10 @@ export class StandaloneDomParser {
       domMarkers,
       bodyClasses,
       inlineMarkers,
+      assetUrls,
+      htmlAttributes,
+      linkRels,
+      htmlComments,
     };
   }
 }

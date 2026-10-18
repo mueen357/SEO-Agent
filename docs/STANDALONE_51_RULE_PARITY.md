@@ -2,84 +2,124 @@
 
 ## Executive Summary
 
-This document establishes the canonical parity baseline between the backend Python SEO rule engine and the Manifest V3 client-side standalone extension.
+This document establishes the canonical parity baseline between the backend Python SEO rule engine (`backend/app/audit_engine/registry.py`, `backend/app/scoring/rule_mapping.py`) and the Manifest V3 client-side standalone extension (`extension/standalone/audit/clientRules.ts`, `extension/standalone/audit/ruleMapping.ts`).
 
-The authoritative backend registry (`backend/app/audit_engine/registry.py`, `backend/app/scoring/rule_mapping.py`) defines exactly **51 SEO rules** distributed across three canonical scoring families:
-- **On-Page SEO**: 16 rules (weight: 35%)
-- **Technical SEO**: 22 rules (weight: 40%)
-- **Site-Wide SEO**: 13 rules (weight: 25%)
+The authoritative backend registry defines exactly **51 canonical SEO rules** distributed across three canonical scoring families:
+- **On-Page SEO**: 16 rules (Scoring policy weight: 35%)
+- **Technical SEO**: 22 rules (Scoring policy weight: 40%)
+- **Site-Wide SEO**: 13 rules (Scoring policy weight: 25%)
 
 Total: **51 canonical rules**.
 
-In Phase 1, **9 rules** are fully implemented and verified in the standalone browser runtime, while **42 rules** have their canonical metadata, schemas, and parity tracking registered in the shared manifest (`extension/standalone/audit/canonical_seo_rules.json`). Scores computed with partial coverage are explicitly marked **`PROVISIONAL`**.
+In this targeted reliability checkpoint (`fix/standalone-canonical-parity-accuracy`), **14 canonical rules** are fully implemented, verified, and recorded in an authoritative execution ledger. The remaining **37 rules** are formally cataloged as unmapped/pending. Under the honest score coverage architecture, standalone evaluations with partial rule coverage are honestly classified as **`provisional`** (< 80% coverage), **`substantial_coverage`** (>= 80% coverage), or **`fully_evaluated`** (100% completed).
+
+---
+
+## The 14 Implemented Canonical Rules
+
+| # | Canonical Rule ID | Family | Evidence Vector | Standalone Behavior |
+|---|---|---|---|---|
+| 1 | `ONPAGE_TITLE_PRESENT` | On-Page | HTML `<title>` tag | PASS if `<title>` tag exists and has trimmed text; FAIL if missing or empty |
+| 2 | `ONPAGE_TITLE_LENGTH` | On-Page | `<title>` length | PASS if length between 30 and 60 chars; WARNING if < 30 (too short) or > 60 (too long) |
+| 3 | `ONPAGE_META_DESC_PRESENT` | On-Page | `<meta name="description">` | PASS if meta description present and non-empty; FAIL if missing |
+| 4 | `ONPAGE_META_DESC_LENGTH` | On-Page | Description length | PASS if between 70 and 160 chars; WARNING if < 70 (too short) or > 160 (too long) |
+| 5 | `ONPAGE_H1_PRESENCE` | On-Page | `<h1>` element count | PASS if at least one `<h1>` tag exists on page; FAIL if missing |
+| 6 | `ONPAGE_H1_MULTIPLE` | On-Page | `<h1>` element count | PASS if exactly 1 `<h1>`; WARNING if multiple `<h1>` tags found |
+| 7 | `ONPAGE_CANONICAL_PRESENCE` | On-Page | `<link rel="canonical">` | PASS if canonical tag exists; FAIL if missing |
+| 8 | `ONPAGE_CANONICAL_VALID` | On-Page | Canonical URL validity | PASS if canonical href is valid absolute HTTP(S) URL; FAIL if malformed |
+| 9 | `ONPAGE_IMAGE_ALT_MISSING` | On-Page | `<img>` elements `alt` | PASS if all content images have non-empty `alt`; FAIL with count of missing alts |
+| 10 | `TECH_HTTP_4XX` | Technical | Response status code | PASS if status is not 4xx; FAIL if client error 400–499 |
+| 11 | `TECH_HTTP_5XX` | Technical | Response status code | PASS if status is not 5xx; FAIL if server error 500–599 |
+| 12 | `TECH_HTTPS_USAGE` | Technical | URL protocol | PASS if `https:`; FAIL if insecure `http:`. Guard: skips fail on localhost / 127.0.0.1 |
+| 13 | `SITE_TITLE_DUPLICATE` | Site-Wide | Crawled pages title map | PASS if titles are unique across crawl; FAIL if duplicate titles shared by >= 2 pages |
+| 14 | `SITE_NO_OBSERVED_INTERNAL_INLINKS` | Site-Wide | Link graph in-degree | PASS if pages have >= 1 incoming internal link; WARNING if orphan page detected |
 
 ---
 
 ## Authoritative 51-Rule Parity Matrix
 
-| # | Canonical Rule ID | Family / Category | Version | Evidence Required | Browser Feasibility | Standalone Status | Evaluated Result States | Dependencies | False-Positive Risks & Guardrails |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 | `ONPAGE_TITLE_PRESENT` | On-Page | 1.0.0 | HTML `<title>` tag | High (Native DOM) | **Implemented** | PASS, FAIL | DOM Parser | Whitespace-only title tags guarded |
-| 2 | `ONPAGE_TITLE_LENGTH` | On-Page | 1.0.0 | `<title>` text content | High (Native DOM) | **Implemented** | PASS, WARN_SHORT, WARN_LONG | `ONPAGE_TITLE_PRESENT` | Character length 30–60 characters enforced |
-| 3 | `ONPAGE_TITLE_REPETITIVE` | On-Page | 1.0.0 | Title corpus across site | High (IndexedDB) | Pending Phase 2 | NOT_EVALUATED | Site crawl pages | Repetitive boilerplate phrases ignored |
-| 4 | `ONPAGE_META_DESC_PRESENT` | On-Page | 1.0.0 | `<meta name="description">` | High (Native DOM) | **Implemented** | PASS, FAIL | DOM Parser | Case-insensitive attribute matching |
-| 5 | `ONPAGE_META_DESC_LENGTH` | On-Page | 1.0.0 | Meta description content | High (Native DOM) | **Implemented** | PASS, WARN_SHORT, WARN_LONG | `ONPAGE_META_DESC_PRESENT` | 70–160 char range checked |
-| 6 | `ONPAGE_H1_PRIMARY` | On-Page | 1.0.0 | `<h1>` tags count and content | High (Native DOM) | **Implemented** | PASS, FAIL_MISSING, WARN_MULTIPLE | DOM Parser | Hidden/decorative H1s avoided |
-| 7 | `ONPAGE_H1_LENGTH` | On-Page | 1.0.0 | `<h1>` text length | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | `ONPAGE_H1_PRIMARY` | Overly long headings penalized |
-| 8 | `ONPAGE_HEADING_HIERARCHY` | On-Page | 1.0.0 | H1, H2, H3 order & counts | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Skipping levels (e.g. H1 -> H3) |
-| 9 | `ONPAGE_IMG_ALT_MISSING` | On-Page | 1.0.0 | `<img>` elements `alt` attribute | High (Native DOM) | **Implemented** | PASS, FAIL | DOM Parser | Decorative icons with `aria-hidden` excluded |
-| 10 | `ONPAGE_IMG_ALT_REPETITIVE` | On-Page | 1.0.0 | Alt text across page images | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | `ONPAGE_IMG_ALT_MISSING` | Identical alt on multiple images |
-| 11 | `ONPAGE_CONTENT_THIN` | On-Page | 1.0.0 | Word count in main text | High (DOM Readability) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Nav/footer text stripped before count |
-| 12 | `ONPAGE_KEYWORD_TITLE_ABSENT` | On-Page | 1.0.0 | Page keywords & title | Medium (Text NLP) | Pending Phase 2 | NOT_EVALUATED | Keyword extractor | Stop words excluded |
-| 13 | `ONPAGE_KEYWORD_H1_ABSENT` | On-Page | 1.0.0 | Page keywords & H1 | Medium (Text NLP) | Pending Phase 2 | NOT_EVALUATED | Keyword extractor | Stemming differences |
-| 14 | `ONPAGE_KEYWORD_FIRST_P` | On-Page | 1.0.0 | First paragraph text | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Intro hero text vs first `<p>` |
-| 15 | `ONPAGE_KEYWORD_STUFFING` | On-Page | 1.0.0 | Term frequency distribution | High (Text Stats) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Density threshold > 4.5% |
-| 16 | `ONPAGE_FAVICON_PRESENT` | On-Page | 1.0.0 | `<link rel="icon">` | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Default `/favicon.ico` fallback check |
-| 17 | `TECH_HTTPS_SECURITY` | Technical | 1.0.0 | URL protocol (`https:`) | High (Fetch URL) | **Implemented** | PASS, FAIL | Fetch observation | Mixed content warnings |
-| 18 | `TECH_HTTP_STATUS` | Technical | 1.0.0 | Response status code | High (Fetch HTTP) | **Implemented** | PASS, FAIL | Fetch observation | 200 vs 301/302 redirects vs 404/500 |
-| 19 | `TECH_ROBOTS_TXT` | Technical | 1.0.0 | `/robots.txt` content & syntax | High (HTTP Fetch) | **Implemented** | PASS, WARN, FAIL | Direct fetch | Empty or disallow-all directives |
-| 20 | `TECH_ROBOTS_TXT_VALID` | Technical | 1.0.0 | User-agent block syntax | High (String Parser) | Pending Phase 2 | NOT_EVALUATED | `TECH_ROBOTS_TXT` | Parser edge cases |
-| 21 | `TECH_XML_SITEMAP_PRESENT` | Technical | 1.0.0 | `/sitemap.xml` presence | High (HTTP Fetch) | Pending Phase 2 | NOT_EVALUATED | Direct fetch | Sitemap index recursion |
-| 22 | `TECH_XML_SITEMAP_VALID` | Technical | 1.0.0 | XML schema conformance | High (DOMParser XML) | Pending Phase 2 | NOT_EVALUATED | `TECH_XML_SITEMAP_PRESENT` | Namespace validation |
-| 23 | `TECH_CANONICAL_SPECIFIED` | Technical | 1.0.0 | `<link rel="canonical">` | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Relative vs absolute canonical URL |
-| 24 | `TECH_CANONICAL_SELF_REF` | Technical | 1.0.0 | Canonical URL matches self | High (URL Matcher) | **Implemented** | PASS, WARN | DOM Parser, Page URL | Trailing slash & query param normalizer |
-| 25 | `TECH_NOINDEX_LEAK` | Technical | 1.0.0 | `<meta name="robots" content="noindex">` | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Accidental production noindex |
-| 26 | `TECH_NOFOLLOW_DIRECTIVE` | Technical | 1.0.0 | Meta robots nofollow | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Page vs link-level nofollow |
-| 27 | `TECH_OPENGRAPH_TAGS` | Technical | 1.0.0 | `og:title`, `og:image`, `og:url` | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Partial OG tags vs complete bundle |
-| 28 | `TECH_TWITTER_CARDS` | Technical | 1.0.0 | `twitter:card`, `twitter:title` | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Fallback to OG tags |
-| 29 | `TECH_STRUCTURED_DATA_SYNTAX` | Technical | 1.0.0 | `<script type="application/ld+json">` | High (JSON.parse) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Malformed JSON vs schema type |
-| 30 | `TECH_STRUCTURED_DATA_TYPE` | Technical | 1.0.0 | Schema.org `@type` validation | High (JSON-LD Object) | Pending Phase 2 | NOT_EVALUATED | JSON-LD Parser | Organization, WebSite, Article |
-| 31 | `TECH_VIEWPORT_MOBILE` | Technical | 1.0.0 | `<meta name="viewport">` | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | `width=device-width` check |
-| 32 | `TECH_HREFLANG_PRESENT` | Technical | 1.0.0 | `<link rel="alternate" hreflang="...">` | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Language-country code validity |
-| 33 | `TECH_HREFLANG_XDEFAULT` | Technical | 1.0.0 | `hreflang="x-default"` check | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | `TECH_HREFLANG_PRESENT` | Multi-language sites without default |
-| 34 | `TECH_RESPONSE_TIME_LATENCY` | Technical | 1.0.0 | HTTP fetch response duration | High (Performance API) | Pending Phase 2 | NOT_EVALUATED | Fetch observation | TTFB vs full payload download |
-| 35 | `TECH_CONTENT_ENCODING` | Technical | 1.0.0 | `Content-Encoding: gzip/br` | High (Headers) | Pending Phase 2 | NOT_EVALUATED | Fetch headers | Missing compression |
-| 36 | `TECH_STRICT_TRANSPORT_SEC` | Technical | 1.0.0 | `Strict-Transport-Security` header | High (Headers) | Pending Phase 2 | NOT_EVALUATED | Fetch headers | `includeSubDomains` & `max-age` |
-| 37 | `TECH_MIXED_CONTENT_BLOCKS` | Technical | 1.0.0 | `http://` resources on HTTPS | High (URL Scanner) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | Active vs passive mixed content |
-| 38 | `TECH_HTML_LANG_ATTRIBUTE` | Technical | 1.0.0 | `<html lang="...">` present | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED | DOM Parser | ISO 639-1 code validity |
-| 39 | `SITE_CANONICAL_CONSISTENCY` | Site-Wide | 1.0.0 | Canonical URL consistency across site | High (IndexedDB crawl) | **Implemented** | PASS, WARN | Crawl repository | Cross-page link targets vs canonicals |
-| 40 | `SITE_DUPLICATE_TITLE` | Site-Wide | 1.0.0 | Title duplication across pages | High (Corpus analysis) | Pending Phase 2 | NOT_EVALUATED | Full crawl corpus | Paginated pages with identical titles |
-| 41 | `SITE_DUPLICATE_META_DESC` | Site-Wide | 1.0.0 | Meta description uniqueness | High (Corpus analysis) | Pending Phase 2 | NOT_EVALUATED | Full crawl corpus | Template descriptions across catalog |
-| 42 | `SITE_DUPLICATE_H1` | Site-Wide | 1.0.0 | H1 duplication across site | High (Corpus analysis) | Pending Phase 2 | NOT_EVALUATED | Full crawl corpus | Home vs category headers |
-| 43 | `SITE_ORPHAN_PAGES` | Site-Wide | 1.0.0 | Link graph in-degree = 0 | High (Link Graph) | Pending Phase 2 | NOT_EVALUATED | Link graph | Seed URL excluded from orphan check |
-| 44 | `SITE_DEEP_CLICK_DEPTH` | Site-Wide | 1.0.0 | Crawl depth > 3 from seed | High (Crawl Tree) | Pending Phase 2 | NOT_EVALUATED | Crawl tree | Flat vs deep site hierarchy |
-| 45 | `SITE_INTERNAL_BROKEN_LINKS` | Site-Wide | 1.0.0 | Internal 404/500 link targets | High (Crawl Statuses) | Pending Phase 2 | NOT_EVALUATED | Crawl status map | Anchors & mailto ignored |
-| 46 | `SITE_REDIRECT_CHAINS` | Site-Wide | 1.0.0 | > 1 hop redirects | High (Fetch Follower) | Pending Phase 2 | NOT_EVALUATED | Fetch redirect log | Hop count > 2 flagged |
-| 47 | `SITE_REDIRECT_LOOPS` | Site-Wide | 1.0.0 | Circular redirect loops | High (URL History) | Pending Phase 2 | NOT_EVALUATED | Fetch redirect log | Loop detection |
-| 48 | `SITE_UNIFORM_PROTOCOL` | Site-Wide | 1.0.0 | Mixed HTTP / HTTPS URLs | High (URL Corpus) | Pending Phase 2 | NOT_EVALUATED | URL Corpus | Non-standard port handling |
-| 49 | `SITE_UNIFORM_HOST` | Site-Wide | 1.0.0 | Consistent www vs non-www | High (Host Normalizer) | Pending Phase 2 | NOT_EVALUATED | Host Normalizer | Subdomain aliases |
-| 50 | `SITE_HREFLANG_RETURN_TAGS` | Site-Wide | 1.0.0 | Bi-directional hreflang verification | High (Graph Matcher) | Pending Phase 2 | NOT_EVALUATED | Multi-page crawl | Missing reverse confirmation tag |
-| 51 | `SITE_404_PAGE_QUALITY` | Site-Wide | 1.0.0 | Custom 404 page status & content | High (Synthetic Request) | Pending Phase 2 | NOT_EVALUATED | Direct probe | Soft 404 (returning 200 with error text) |
+### On-Page SEO (16 Rules — Weight: 35%)
+
+| # | Canonical Rule ID | Version | Browser Feasibility | Standalone Status | Evaluated Result States |
+|---|---|---|---|---|---|
+| 1 | `ONPAGE_TITLE_PRESENT` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, FAIL |
+| 2 | `ONPAGE_TITLE_LENGTH` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, WARNING |
+| 3 | `ONPAGE_TITLE_CHARACTER_SET` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 4 | `ONPAGE_META_DESC_PRESENT` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, FAIL |
+| 5 | `ONPAGE_META_DESC_LENGTH` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, WARNING |
+| 6 | `ONPAGE_H1_PRESENCE` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, FAIL |
+| 7 | `ONPAGE_H1_MULTIPLE` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, WARNING |
+| 8 | `ONPAGE_H1_EMPTY` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 9 | `ONPAGE_CANONICAL_PRESENCE` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, FAIL |
+| 10 | `ONPAGE_CANONICAL_VALID` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, FAIL |
+| 11 | `ONPAGE_CANONICAL_MULTIPLE` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 12 | `ONPAGE_ROBOTS_NOINDEX` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 13 | `ONPAGE_ROBOTS_NOFOLLOW` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 14 | `ONPAGE_OPENGRAPH_PRESENCE` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 15 | `ONPAGE_TWITTER_CARD_PRESENCE` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 16 | `ONPAGE_IMAGE_ALT_MISSING` | 2.0.0 | High (Native DOM) | **Implemented** | PASS, FAIL |
+
+### Technical SEO (22 Rules — Weight: 40%)
+
+| # | Canonical Rule ID | Version | Browser Feasibility | Standalone Status | Evaluated Result States |
+|---|---|---|---|---|---|
+| 17 | `TECH_HTTP_4XX` | 2.0.0 | High (Fetch HTTP) | **Implemented** | PASS, FAIL |
+| 18 | `TECH_HTTP_5XX` | 2.0.0 | High (Fetch HTTP) | **Implemented** | PASS, FAIL |
+| 19 | `TECH_HTTPS_USAGE` | 2.0.0 | High (Fetch URL) | **Implemented** | PASS, FAIL |
+| 20 | `TECH_CERTIFICATE_VALID` | 2.0.0 | Medium (Web API) | Pending Phase 2 | NOT_EVALUATED |
+| 21 | `TECH_TLS_VERSION` | 2.0.0 | Low (Chrome Net API) | Pending Phase 2 | NOT_EVALUATED |
+| 22 | `TECH_HSTS_HEADER` | 2.0.0 | High (Fetch Headers) | Pending Phase 2 | NOT_EVALUATED |
+| 23 | `TECH_X_CONTENT_TYPE_OPTIONS` | 2.0.0 | High (Fetch Headers) | Pending Phase 2 | NOT_EVALUATED |
+| 24 | `TECH_X_FRAME_OPTIONS` | 2.0.0 | High (Fetch Headers) | Pending Phase 2 | NOT_EVALUATED |
+| 25 | `TECH_CSP_HEADER` | 2.0.0 | High (Fetch Headers) | Pending Phase 2 | NOT_EVALUATED |
+| 26 | `TECH_RESPONSIVE_VIEWPORT` | 2.0.0 | High (Native DOM) | Pending Phase 2 | NOT_EVALUATED |
+| 27 | `TECH_MIXED_CONTENT` | 2.0.0 | High (DOM Asset URLs) | Pending Phase 2 | NOT_EVALUATED |
+| 28 | `TECH_MOBILE_TOUCH_TARGETS` | 2.0.0 | Medium (DOM Layout) | Pending Phase 2 | NOT_EVALUATED |
+| 29 | `TECH_REDIRECT_CHAIN_LENGTH` | 2.0.0 | High (Fetch Follower) | Pending Phase 2 | NOT_EVALUATED |
+| 30 | `TECH_CANONICAL_MISMATCH` | 2.0.0 | High (URL Matcher) | Pending Phase 2 | NOT_EVALUATED |
+| 31 | `TECH_SCHEMA_ORG_VALIDITY` | 2.0.0 | High (JSON.parse) | Pending Phase 2 | NOT_EVALUATED |
+| 32 | `TECH_BREADCRUMB_SCHEMA` | 2.0.0 | High (JSON-LD) | Pending Phase 2 | NOT_EVALUATED |
+| 33 | `TECH_COMPRESSION_ENABLED` | 2.0.0 | High (Fetch Headers) | Pending Phase 2 | NOT_EVALUATED |
+| 34 | `TECH_CACHE_CONTROL_PRESENT` | 2.0.0 | High (Fetch Headers) | Pending Phase 2 | NOT_EVALUATED |
+| 35 | `TECH_TIME_TO_FIRST_BYTE` | 2.0.0 | High (Performance API) | Pending Phase 2 | NOT_EVALUATED |
+| 36 | `TECH_DOM_SIZE_ACCEPTABLE` | 2.0.0 | High (DOM Elements) | Pending Phase 2 | NOT_EVALUATED |
+| 37 | `TECH_ROBOTS_TXT_VALID` | 2.0.0 | High (Robots Fetch) | Pending Phase 2 | NOT_EVALUATED |
+| 38 | `TECH_XML_SITEMAP_VALID` | 2.0.0 | High (DOMParser XML) | Pending Phase 2 | NOT_EVALUATED |
+
+### Site-Wide SEO (13 Rules — Weight: 25%)
+
+| # | Canonical Rule ID | Version | Browser Feasibility | Standalone Status | Evaluated Result States |
+|---|---|---|---|---|---|
+| 39 | `SITE_TITLE_DUPLICATE` | 2.0.0 | High (IndexedDB Corpus) | **Implemented** | PASS, FAIL |
+| 40 | `SITE_META_DESC_DUPLICATE` | 2.0.0 | High (IndexedDB Corpus) | Pending Phase 2 | NOT_EVALUATED |
+| 41 | `SITE_H1_DUPLICATE` | 2.0.0 | High (IndexedDB Corpus) | Pending Phase 2 | NOT_EVALUATED |
+| 42 | `SITE_CANONICAL_TARGET_INVALID` | 2.0.0 | High (Crawl Status Map) | Pending Phase 2 | NOT_EVALUATED |
+| 43 | `SITE_DEAD_ENDS` | 2.0.0 | High (Link Graph) | Pending Phase 2 | NOT_EVALUATED |
+| 44 | `SITE_MAX_CRAWL_DEPTH` | 2.0.0 | High (Crawl Tree) | Pending Phase 2 | NOT_EVALUATED |
+| 45 | `SITE_SITEMAP_ORPHANS` | 2.0.0 | High (Sitemap vs Crawl) | Pending Phase 2 | NOT_EVALUATED |
+| 46 | `SITE_ROBOTS_SITEMAP_LINKED` | 2.0.0 | High (Robots.txt Parser) | Pending Phase 2 | NOT_EVALUATED |
+| 47 | `SITE_CLEAN_URL_STRUCTURE` | 2.0.0 | High (URL Regex) | Pending Phase 2 | NOT_EVALUATED |
+| 48 | `SITE_CANONICAL_CHAINS` | 2.0.0 | High (Canonical Graph) | Pending Phase 2 | NOT_EVALUATED |
+| 49 | `SITE_CYCLIC_REDIRECT_CHAINS` | 2.0.0 | High (Redirect Graph) | Pending Phase 2 | NOT_EVALUATED |
+| 50 | `SITE_HTTP_TO_HTTPS_CONSISTENCY` | 2.0.0 | High (URL Scheme Map) | Pending Phase 2 | NOT_EVALUATED |
+| 51 | `SITE_NO_OBSERVED_INTERNAL_INLINKS` | 2.0.0 | High (Link Graph In-Degree) | **Implemented** | PASS, WARNING |
 
 ---
 
-## Shared Rule Metadata Manifest
+## Legacy Rule Mapping & Compatibility Layer
 
-The canonical definitions are exported from Python `RuleRegistry` to:
-`extension/standalone/audit/canonical_seo_rules.json`
+To ensure backwards compatibility with historical audits saved in IndexedDB or imported from older versions, `extension/standalone/audit/ruleMapping.ts` implements a bidirectional mapping:
 
-This shared manifest ensures:
-1. **Identical Rule IDs**: No camelCase or custom naming deviations between backend and client.
-2. **Version Pinning**: Every rule is tracked at version `1.0.0`.
-3. **Exact Scoring Weights**: On-Page 35%, Technical 40%, Site-Wide 25%.
-4. **Honest Coverage Enforcement**: The standalone engine reports progress against all 51 rules, keeping scores labeled `PROVISIONAL` until 80%+ coverage is reached.
+| Legacy Rule ID | Canonical Rule ID(s) | Split Decision Rationale |
+|---|---|---|
+| `ONPAGE_TITLE_TAG` | `ONPAGE_TITLE_PRESENT`, `ONPAGE_TITLE_LENGTH` | Splits presence check (critical error if missing) from length optimization (warning if short/long). |
+| `ONPAGE_META_DESCRIPTION` | `ONPAGE_META_DESC_PRESENT`, `ONPAGE_META_DESC_LENGTH` | Splits presence check from snippet display character length optimization. |
+| `ONPAGE_H1_PRIMARY` | `ONPAGE_H1_PRESENCE`, `ONPAGE_H1_MULTIPLE` | Splits missing primary heading from multiple heading structural warnings. |
+| `ONPAGE_CANONICAL_URL` | `ONPAGE_CANONICAL_PRESENCE`, `ONPAGE_CANONICAL_VALID` | Splits missing canonical tag from syntax/URL validity. |
+| `ONPAGE_IMG_ALT_MISSING` | `ONPAGE_IMAGE_ALT_MISSING` | Exact semantic equivalence; aligns with backend naming convention. |
+| `TECH_HTTP_STATUS` | `TECH_HTTP_4XX`, `TECH_HTTP_5XX` | Separates client errors (broken links/unauthorized) from server errors (server outages/500). |
+| `TECH_HTTPS_SECURITY` | `TECH_HTTPS_USAGE` | Direct rename matching backend rule registry. |
+| `SITE_DUPLICATE_TITLE` | `SITE_TITLE_DUPLICATE` | Direct rename matching backend sitewide rule registry. |
+| `SITE_ORPHAN_PAGES` | `SITE_NO_OBSERVED_INTERNAL_INLINKS` | Direct rename matching backend sitewide rule registry. |
+
+The `migrateLegacyFinding()` function seamlessly expands historical findings to canonical findings during audit loads and scorecard computation without mutating persistent historical data destructively.
