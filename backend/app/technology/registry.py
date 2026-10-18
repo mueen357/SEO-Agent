@@ -1,7 +1,11 @@
-"""Central registry of recognizable web technologies, categories, and signature patterns."""
+"""Central registry of recognizable web technologies, categories, and signature patterns.
+
+Provides an API-compatible layer on top of the versioned TechnologyCatalog.
+"""
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+from app.technology.fingerprints.catalog import TechnologyCatalog
 from app.technology.models import TechnologyCategory
 
 
@@ -14,136 +18,49 @@ class TechnologyDefinition:
     website: str
     description: str
     implies: List[str] = field(default_factory=list)  # e.g. nextjs implies react; nuxt implies vue
+    subcategory: str = ""
+    vendor_or_type: str = ""
+    limitations: str = ""
 
 
 class TechnologyRegistry:
     """Registry maintaining authoritative definitions of detectable technologies."""
 
-    _DEFINITIONS: Dict[str, TechnologyDefinition] = {
-        # CMS / Website Builders
-        "wordpress": TechnologyDefinition(
-            id="wordpress",
-            name="WordPress",
-            category=TechnologyCategory.cms,
-            website="https://wordpress.org",
-            description="Open-source Content Management System powering web publishing.",
-            implies=["php"],
-        ),
-        "shopify": TechnologyDefinition(
-            id="shopify",
-            name="Shopify",
-            category=TechnologyCategory.cms,
-            website="https://www.shopify.com",
-            description="E-commerce and online storefront platform.",
-        ),
-        "wix": TechnologyDefinition(
-            id="wix",
-            name="Wix",
-            category=TechnologyCategory.cms,
-            website="https://www.wix.com",
-            description="Cloud-based website builder platform.",
-        ),
-        "webflow": TechnologyDefinition(
-            id="webflow",
-            name="Webflow",
-            category=TechnologyCategory.cms,
-            website="https://webflow.com",
-            description="Visual website development and CMS platform.",
-        ),
-        "squarespace": TechnologyDefinition(
-            id="squarespace",
-            name="Squarespace",
-            category=TechnologyCategory.cms,
-            website="https://www.squarespace.com",
-            description="Website builder and hosting platform.",
-        ),
-        "framer": TechnologyDefinition(
-            id="framer",
-            name="Framer",
-            category=TechnologyCategory.cms,
-            website="https://www.framer.com",
-            description="Interactive website builder and CMS platform for designers and teams.",
-        ),
+    _DEFINITIONS: Optional[Dict[str, TechnologyDefinition]] = None
 
-        # Frontend Frameworks & Libraries
-        "react": TechnologyDefinition(
-            id="react",
-            name="React",
-            category=TechnologyCategory.frontend,
-            website="https://react.dev",
-            description="Declarative JavaScript library for building user interfaces.",
-        ),
-        "nextjs": TechnologyDefinition(
-            id="nextjs",
-            name="Next.js",
-            category=TechnologyCategory.frontend,
-            website="https://nextjs.org",
-            description="React framework for production-grade full-stack web applications.",
-            implies=["react"],
-        ),
-        "vue": TechnologyDefinition(
-            id="vue",
-            name="Vue.js",
-            category=TechnologyCategory.frontend,
-            website="https://vuejs.org",
-            description="Progressive JavaScript framework for building web user interfaces.",
-        ),
-        "nuxt": TechnologyDefinition(
-            id="nuxt",
-            name="Nuxt.js",
-            category=TechnologyCategory.frontend,
-            website="https://nuxt.com",
-            description="Intuitive Vue.js web development framework.",
-            implies=["vue"],
-        ),
-        "angular": TechnologyDefinition(
-            id="angular",
-            name="Angular",
-            category=TechnologyCategory.frontend,
-            website="https://angular.dev",
-            description="TypeScript-based open-source web application framework.",
-        ),
+    @classmethod
+    def _initialize(cls) -> None:
+        if cls._DEFINITIONS is not None:
+            return
 
-        # Backend Runtimes & Frameworks
-        "php": TechnologyDefinition(
-            id="php",
-            name="PHP",
-            category=TechnologyCategory.backend,
-            website="https://www.php.net",
-            description="Server-side web scripting language.",
-        ),
-        "nodejs": TechnologyDefinition(
-            id="nodejs",
-            name="Node.js",
-            category=TechnologyCategory.backend,
-            website="https://nodejs.org",
-            description="Asynchronous event-driven JavaScript backend runtime.",
-        ),
-        "laravel": TechnologyDefinition(
-            id="laravel",
-            name="Laravel",
-            category=TechnologyCategory.backend,
-            website="https://laravel.com",
-            description="PHP web framework with expressive, elegant syntax.",
-            implies=["php"],
-        ),
-        "django": TechnologyDefinition(
-            id="django",
-            name="Django",
-            category=TechnologyCategory.backend,
-            website="https://www.djangoproject.com",
-            description="High-level Python web framework.",
-        ),
-    }
+        defs: Dict[str, TechnologyDefinition] = {}
+        for tech_id, fp in TechnologyCatalog.get_catalog().items():
+            defs[tech_id] = TechnologyDefinition(
+                id=fp.id,
+                name=fp.name,
+                category=fp.category,
+                website=fp.website,
+                description=fp.description,
+                implies=list(fp.implies),
+                subcategory=fp.subcategory,
+                vendor_or_type=fp.vendor_or_type,
+                limitations=fp.limitations,
+            )
+        cls._DEFINITIONS = defs
 
     @classmethod
     def get(cls, tech_id: str) -> Optional[TechnologyDefinition]:
-        return cls._DEFINITIONS.get(tech_id)
+        cls._initialize()
+        return cls._DEFINITIONS.get(tech_id) if cls._DEFINITIONS else None
 
     @classmethod
     def get_all(cls) -> Dict[str, TechnologyDefinition]:
-        return dict(cls._DEFINITIONS)
+        cls._initialize()
+        return dict(cls._DEFINITIONS) if cls._DEFINITIONS else {}
 
     @classmethod
     def get_by_category(cls, category: TechnologyCategory) -> List[TechnologyDefinition]:
+        cls._initialize()
+        if not cls._DEFINITIONS:
+            return []
         return [t for t in cls._DEFINITIONS.values() if t.category == category]

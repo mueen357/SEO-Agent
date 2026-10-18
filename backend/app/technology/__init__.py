@@ -5,16 +5,21 @@ from app.technology.models import (
     DetectionMethod,
     DetectionStatus,
     EvidenceItem,
+    EvidenceProvenance,
     EvidenceType,
     TechnologyCategory,
     TechnologyFinding,
     TechnologySummary,
+    VersionType,
     WordPressPluginCandidate,
     WordPressThemeCandidate,
 )
 from app.technology.registry import TechnologyRegistry
 from app.technology.detector import TechnologyDetector
 from app.technology.wordpress import WordPressAssetDetector
+from app.technology.fingerprints.catalog import TechnologyCatalog
+from app.technology.fingerprints.engine import UniversalFingerprintEngine
+from app.technology.fingerprints.schema import TechnologyFingerprint
 from app.technology.classifiers import (
     BackendClassifier,
     BaseClassifier,
@@ -30,13 +35,18 @@ __all__ = [
     "DetectionMethod",
     "DetectionStatus",
     "EvidenceItem",
+    "EvidenceProvenance",
     "EvidenceType",
     "FrontendClassifier",
     "TechnologyCategory",
+    "TechnologyCatalog",
     "TechnologyDetector",
+    "TechnologyFingerprint",
     "TechnologyFinding",
     "TechnologySummary",
     "TechnologyRegistry",
+    "UniversalFingerprintEngine",
+    "VersionType",
     "WordPressAssetDetector",
     "WordPressPluginCandidate",
     "WordPressThemeCandidate",

@@ -12,6 +12,16 @@ class TechnologyCategory(str, Enum):
     backend = "backend"
     ecommerce = "ecommerce"
     hosting = "hosting"
+    language = "language"
+    database = "database"
+    analytics = "analytics"
+    advertising = "advertising"
+    ux = "ux"
+    payments = "payments"
+    security = "security"
+    search = "search"
+    marketing = "marketing"
+    fonts = "fonts"
     other = "other"
 
 
@@ -24,9 +34,27 @@ class ConfidenceLevel(str, Enum):
 
 class DetectionStatus(str, Enum):
     """Classification status based on accumulated evidence."""
-    detected = "detected"      # High confidence (>= 0.70)
-    possible = "possible"      # Moderate or single weak signal (0.40 - 0.69)
-    unknown = "unknown"        # Insufficient or conflicting evidence (< 0.40)
+    detected = "detected"          # High confidence (>= 0.70)
+    possible = "possible"          # Moderate or single weak signal (0.40 - 0.69)
+    inferred = "inferred"          # Indirect architectural implication
+    unknown = "unknown"            # Insufficient or conflicting evidence (< 0.40)
+    not_observed = "not_observed"  # No matching signals found in evidence
+
+
+class EvidenceProvenance(str, Enum):
+    """Source origin of observed evidence."""
+    first_party = "first_party"
+    third_party_embed = "third_party_embed"
+    asset_host = "asset_host"
+    inferred_dependency = "inferred_dependency"
+
+
+class VersionType(str, Enum):
+    """Verifiability class of extracted version numbers."""
+    explicit_version = "explicit_version"
+    asset_hint_unverified = "asset_hint_unverified"
+    inferred_version = "inferred_version"
+    unknown = "unknown"
 
 
 class EvidenceType(str, Enum):
@@ -61,6 +89,7 @@ class EvidenceItem:
     detection_method: str
     raw_signal: Optional[str] = None
     weight: float = 1.0
+    provenance: str = "first_party"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -113,16 +142,22 @@ class TechnologyFinding:
     evidence_items: List[EvidenceItem] = field(default_factory=list)
     page_count: int = 1
     affected_urls: List[str] = field(default_factory=list)
+    provenance: str = "first_party"
+    version_type: str = "unknown"
+    subcategory: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "technology_id": self.technology_id,
             "technology_name": self.technology_name,
             "technology_category": self.technology_category,
+            "subcategory": self.subcategory,
             "status": self.status,
             "confidence": round(self.confidence, 4),
             "confidence_level": self.confidence_level,
             "version_or_null": self.version_or_null,
+            "version_type": self.version_type,
+            "provenance": self.provenance,
             "evidence_type": self.evidence_type,
             "evidence_source": self.evidence_source,
             "evidence_summary": self.evidence_summary,
