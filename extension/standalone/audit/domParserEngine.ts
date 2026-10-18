@@ -110,13 +110,14 @@ export class StandaloneDomParser {
 
     // Bounded inline markers search
     const inlineMarkers: string[] = [];
-    doc.querySelectorAll('script:not([src])').forEach((s) => {
+    doc.querySelectorAll('script').forEach((s) => {
       const content = s.textContent || '';
-      if (content.includes('__NEXT_DATA__')) inlineMarkers.push('__NEXT_DATA__');
+      const id = s.getAttribute('id') || '';
+      if (content.includes('__NEXT_DATA__') || id === '__NEXT_DATA__') inlineMarkers.push('__NEXT_DATA__');
       if (content.includes('__framer__')) inlineMarkers.push('__framer__');
-      if (content.includes('Shopify.theme')) inlineMarkers.push('Shopify.theme');
-      if (content.includes('window.dataLayer')) inlineMarkers.push('window.dataLayer');
-      if (content.includes('wp.apiFetch')) inlineMarkers.push('wp.apiFetch');
+      if (content.includes('Shopify.theme') || content.includes('Shopify =') || content.includes('Shopify=')) inlineMarkers.push('Shopify.theme');
+      if (content.includes('window.dataLayer') || content.includes('dataLayer')) inlineMarkers.push('window.dataLayer');
+      if (content.includes('wp.apiFetch') || content.includes('wp =') || content.includes('wp.')) inlineMarkers.push('wp.apiFetch');
     });
 
     return {

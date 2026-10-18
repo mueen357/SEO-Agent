@@ -162,7 +162,24 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
     setFindings([]);
     setTechnologies([]);
     try {
-      await standaloneCoordinator.startAudit(targetUrl, { maxPages });
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage(
+          {
+            action: 'START_STANDALONE_AUDIT',
+            payload: { targetUrl, options: { maxPages } },
+          },
+          (res) => {
+            if (chrome.runtime.lastError || (res && !res.success)) {
+              standaloneCoordinator.startAudit(targetUrl, { maxPages }).catch((err) => {
+                setPermissionError(err?.message || 'Audit start failed.');
+                setLoading(false);
+              });
+            }
+          }
+        );
+      } else {
+        await standaloneCoordinator.startAudit(targetUrl, { maxPages });
+      }
     } catch (err: any) {
       setPermissionError(err?.message || 'Audit start failed.');
       setLoading(false);
@@ -170,6 +187,9 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
   };
 
   const handleCancelAudit = () => {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ action: 'CANCEL_STANDALONE_AUDIT' });
+    }
     standaloneCoordinator.cancelAudit();
     setLoading(false);
   };

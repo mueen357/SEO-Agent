@@ -62,7 +62,7 @@ const SIGNATURES: TechSignature[] = [
     confidence: 1.0,
     provenance: 'first_party',
     metaGenerators: [/Webflow/i],
-    scriptUrls: [/assets-global\.website-files\.com/i],
+    scriptUrls: [/website-files\.com/i, /webflow\.js/i],
     domMarkers: ['data-wf-site'],
   },
   {
@@ -364,10 +364,11 @@ export class StandaloneTechDetector {
           name: sig.name,
           category: sig.category,
           confidence: sig.confidence,
-          status: sig.confidence >= 0.7 ? 'detected' : 'possible',
+          status: sig.confidence >= 0.95 ? 'confirmed' : sig.confidence >= 0.7 ? 'detected' : 'inferred',
           provenance: sig.provenance,
           evidenceSummary: summary,
-          versionOrNull: version,
+          version: version || undefined,
+          versionOrNull: version || null,
         });
       }
     }

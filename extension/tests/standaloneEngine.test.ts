@@ -507,3 +507,225 @@ describe('Standalone Engine - Exporter', () => {
     expect(csvStr).toContain('""Quotes"" inside title');
   });
 });
+
+describe('Standalone Engine - Safe Browser Crawling & URL Scope Defenses', () => {
+  const config: StandaloneAuditConfig = {
+    maxPages: 5,
+    maxDepth: 2,
+    concurrency: 1,
+    delayMs: 0,
+    respectRobots: true,
+  };
+
+  it('rejects URLs containing embedded credentials', () => {
+    const crawler = new InBrowserCrawler('https://example.com/', config);
+    expect(crawler.isInScope('https://user:password@example.com/admin')).toBe(false);
+    expect(crawler.isInScope('https://alice@example.com/profile')).toBe(false);
+    expect(crawler.isInScope('https://example.com/safe/path')).toBe(true);
+  });
+
+  it('parses robots.txt directives and blocks disallowed paths', () => {
+    const crawler = new InBrowserCrawler('https://example.com/', config);
+    const robotsTxt = `
+      User-agent: Googlebot
+      Disallow: /google-only/
+
+      User-agent: *
+      Disallow: /admin/
+      Disallow: /private/secret.html
+      Allow: /public/
+    `;
+    crawler.parseRobotsTxt(robotsTxt);
+
+    expect(crawler.isAllowedByRobots('/admin/dashboard')).toBe(false);
+    expect(crawler.isAllowedByRobots('/private/secret.html')).toBe(false);
+    expect(crawler.isAllowedByRobots('/public/about')).toBe(true);
+    expect(crawler.isAllowedByRobots('/blog/article-1')).toBe(true);
+  });
+
+  it('resumes durable frontier from previous state without re-crawling seen URLs', () => {
+    const crawler = new InBrowserCrawler(
+      'https://example.com/',
+      config,
+      [{ url: 'https://example.com/page-2', depth: 1 }],
+      ['https://example.com/', 'https://example.com/page-2']
+    );
+
+    const pending = crawler.getPendingQueue();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.url).toBe('https://example.com/page-2');
+
+    const discovered = crawler.getDiscoveredUrls();
+    expect(discovered).toContain('https://example.com/');
+    expect(discovered).toContain('https://example.com/page-2');
+  });
+});
+
+describe('Standalone Engine - Technology Evidence Fidelity & CMS Fixtures', () => {
+  const auditId = 'test-tech-evidence-audit';
+
+  it('detects WordPress from original meta generator, wp-content assets, and inline markers', () => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>WordPress Blog</title>
+          <meta name="generator" content="WordPress 6.4.2" />
+          <link rel="stylesheet" href="https://example.com/wp-content/themes/twentytwentyfour/style.css" />
+          <script src="https://example.com/wp-includes/js/wp-embed.min.js"></script>
+        </head>
+        <body class="home blog wp-custom-logo">
+          <script>window.wp = { apiFetch: function() {} };</script>
+          <h1>Welcome to WordPress</h1>
+        </body>
+      </html>
+    `;
+    const evidence = StandaloneDomParser.parse(html, 'https://example.com/');
+    expect(evidence.metaGenerators).toContain('WordPress 6.4.2');
+    expect(evidence.stylesheetHrefs.some((h) => h.includes('wp-content'))).toBe(true);
+    expect(evidence.scriptSources.some((s) => s.includes('wp-includes'))).toBe(true);
+
+    const techs = StandaloneTechDetector.detect(evidence, {}, auditId);
+    const wp = techs.find((t) => t.technologyId === 'wordpress');
+    expect(wp).toBeDefined();
+    expect(wp?.version).toBe('6.4.2');
+    expect(wp?.status).toBe('confirmed');
+  });
+
+  it('detects Framer from hydration attribute and inline scripts', () => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head><title>Framer Portfolio</title></head>
+        <body>
+          <div data-framer-hydrate-v2="framer-root">
+            <script>window.__framer__ = { version: "v2" };</script>
+            <h1>Built with Framer</h1>
+          </div>
+        </body>
+      </html>
+    `;
+    const evidence = StandaloneDomParser.parse(html, 'https://example.com/');
+    expect(evidence.domMarkers).toContain('data-framer-hydrate-v2');
+    expect(evidence.inlineMarkers).toContain('__framer__');
+
+    const techs = StandaloneTechDetector.detect(evidence, {}, auditId);
+    const framer = techs.find((t) => t.technologyId === 'framer');
+    expect(framer).toBeDefined();
+    expect(framer?.status).toBe('confirmed');
+  });
+
+  it('detects Shopify from CDN scripts and inline theme object', () => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Modern Store</title>
+          <script src="https://cdn.shopify.com/s/files/1/0001/theme.js"></script>
+        </head>
+        <body>
+          <script>Shopify = { theme: { name: 'Dawn', id: 1234 } };</script>
+          <h1>Store Products</h1>
+        </body>
+      </html>
+    `;
+    const evidence = StandaloneDomParser.parse(html, 'https://example.com/');
+    expect(evidence.scriptSources.some((s) => s.includes('cdn.shopify.com'))).toBe(true);
+    expect(evidence.inlineMarkers).toContain('Shopify.theme');
+
+    const techs = StandaloneTechDetector.detect(evidence, {}, auditId);
+    const shopify = techs.find((t) => t.technologyId === 'shopify');
+    expect(shopify).toBeDefined();
+    expect(shopify?.status).toBe('confirmed');
+  });
+
+  it('detects Next.js and React from __NEXT_DATA__ and chunks', () => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Next.js App</title>
+          <script src="/_next/static/chunks/main-app.js"></script>
+        </head>
+        <body>
+          <div id="__next">
+            <h1>Server Rendered React</h1>
+            <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{}}}</script>
+          </div>
+        </body>
+      </html>
+    `;
+    const evidence = StandaloneDomParser.parse(html, 'https://example.com/');
+    expect(evidence.domMarkers).toContain('id:__next');
+    expect(evidence.inlineMarkers).toContain('__NEXT_DATA__');
+
+    const techs = StandaloneTechDetector.detect(evidence, {}, auditId);
+    const nextjs = techs.find((t) => t.technologyId === 'nextjs');
+    const react = techs.find((t) => t.technologyId === 'react');
+    expect(nextjs).toBeDefined();
+    expect(react).toBeDefined();
+  });
+
+  it('detects Webflow from data-wf-site attribute and webflow js', () => {
+    const html = `
+      <!DOCTYPE html>
+      <html data-wf-site="602938472910394827">
+        <head>
+          <title>Webflow Agency</title>
+          <script src="https://assets.website-files.com/js/webflow.js"></script>
+        </head>
+        <body>
+          <h1>Design Agency</h1>
+        </body>
+      </html>
+    `;
+    const evidence = StandaloneDomParser.parse(html, 'https://example.com/');
+    expect(evidence.domMarkers).toContain('data-wf-site');
+
+    const techs = StandaloneTechDetector.detect(evidence, {}, auditId);
+    const webflow = techs.find((t) => t.technologyId === 'webflow');
+    expect(webflow).toBeDefined();
+    expect(webflow?.status).toBe('confirmed');
+  });
+
+  it('handles Plain HTML with zero false positive technology findings', () => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Clean Semantic HTML5 Website</title>
+          <meta name="description" content="Handcrafted static HTML site without any frameworks or CMS." />
+        </head>
+        <body>
+          <header><nav><a href="/">Home</a></nav></header>
+          <main>
+            <h1>Standard Semantic Markup</h1>
+            <p>Simple content rendered with zero runtime libraries.</p>
+          </main>
+        </body>
+      </html>
+    `;
+    const evidence = StandaloneDomParser.parse(html, 'https://example.com/');
+    const techs = StandaloneTechDetector.detect(evidence, {}, auditId);
+    expect(techs).toHaveLength(0);
+  });
+
+  it('handles Unknown Backend with custom headers without false positives', () => {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head><title>Proprietary Internal Service</title></head>
+        <body><h1>Custom System</h1></body>
+      </html>
+    `;
+    const evidence = StandaloneDomParser.parse(html, 'https://example.com/');
+    const headers = {
+      'x-custom-engine': 'internal-v4',
+      'content-type': 'text/html; charset=utf-8',
+      'server': 'custom-gw',
+    };
+    const techs = StandaloneTechDetector.detect(evidence, headers, auditId);
+    expect(techs).toHaveLength(0);
+  });
+});
+

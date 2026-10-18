@@ -65,9 +65,10 @@ export interface StandaloneTechFinding {
   name: string;
   category: string;
   confidence: number;
-  status: 'detected' | 'possible' | 'inferred';
+  status: 'confirmed' | 'detected' | 'possible' | 'inferred';
   provenance: 'first_party' | 'third_party_embed' | 'asset_host' | 'inferred_dependency';
   evidenceSummary: string;
+  version?: string;
   versionOrNull?: string | null;
 }
 
