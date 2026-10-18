@@ -44,6 +44,9 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
   const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'tech' | 'issues' | 'coverage'>('overview');
   const [loading, setLoading] = useState(false);
 
+  const activeJobRef = React.useRef<StandaloneAuditJob | null>(null);
+  activeJobRef.current = activeJob;
+
   // Sync activeUrl if targetUrl is empty
   useEffect(() => {
     if (activeUrl && !targetUrl) {
@@ -74,8 +77,9 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
       .then(async (job) => {
         if (job) {
           setActiveJob(job);
+          activeJobRef.current = job;
           if (!targetUrl) setTargetUrl(job.targetUrl);
-          if (job.status === 'crawling' || job.status === 'analyzing') {
+          if (job.status === 'crawling' || job.status === 'analyzing' || job.status === 'scoring') {
             setLoading(true);
           }
           const [pages, issueList, techList] = await Promise.all([
@@ -93,6 +97,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
     // Subscribe to coordinator progress
     const unsubscribe = standaloneCoordinator.onProgress(async (job) => {
       setActiveJob({ ...job });
+      activeJobRef.current = { ...job };
       if (job.status === 'completed' || job.status === 'crawling') {
         const pages = await StandaloneAuditStorage.getPagesForAudit(job.id);
         setCrawledPages(pages);
@@ -108,18 +113,64 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
       }
     });
 
-    // Listen for background worker messages
+    // Listen for background worker messages with unified typed schema
     const messageListener = (msg: any) => {
-      if (msg && msg.type === 'STANDALONE_AUDIT_PROGRESS' && msg.job) {
-        setActiveJob({ ...msg.job });
-        if (msg.job.status === 'completed') {
-          setLoading(false);
-          StandaloneAuditStorage.getPagesForAudit(msg.job.id).then(setCrawledPages);
-          StandaloneAuditStorage.getFindingsForAudit(msg.job.id).then(setFindings);
-          StandaloneAuditStorage.getTechnologiesForAudit(msg.job.id).then(setTechnologies);
+      if (!msg) return;
+
+      const job: StandaloneAuditJob | undefined = msg.job || msg.payload?.job;
+      const type: string = msg.type || msg.action;
+
+      if (!job) return;
+
+      // Reject stale messages from previous audits
+      if (
+        activeJobRef.current &&
+        job.id !== activeJobRef.current.id &&
+        activeJobRef.current.status !== 'completed' &&
+        activeJobRef.current.status !== 'idle'
+      ) {
+        return;
+      }
+
+      // Check sequence number to discard out-of-order broadcasts
+      if (msg.sequence && activeJobRef.current?.sequence && msg.sequence < activeJobRef.current.sequence) {
+        return;
+      }
+
+      setActiveJob({ ...job });
+      activeJobRef.current = { ...job };
+
+      if (type === 'AUDIT_PROGRESS' || type === 'STANDALONE_AUDIT_PROGRESS') {
+        if (job.status === 'crawling') {
+          StandaloneAuditStorage.getPagesForAudit(job.id).then(setCrawledPages).catch(() => {});
         }
       }
+
+      if (type === 'AUDIT_COMPLETED' || job.status === 'completed') {
+        setLoading(false);
+        Promise.all([
+          StandaloneAuditStorage.getPagesForAudit(job.id),
+          StandaloneAuditStorage.getFindingsForAudit(job.id),
+          StandaloneAuditStorage.getTechnologiesForAudit(job.id),
+        ])
+          .then(([pages, issueList, techList]) => {
+            setCrawledPages(pages);
+            setFindings(issueList);
+            setTechnologies(techList);
+          })
+          .catch((err) => console.warn('Error loading completed audit data:', err));
+      }
+
+      if (type === 'AUDIT_CANCELLED' || job.status === 'cancelled') {
+        setLoading(false);
+      }
+
+      if (type === 'AUDIT_FAILED' || job.status === 'error') {
+        setLoading(false);
+        setPermissionError(msg.error || job.errorMessage || 'Audit encountered an error.');
+      }
     };
+
     if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
       chrome.runtime.onMessage.addListener(messageListener);
     }
@@ -161,24 +212,53 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
     setCrawledPages([]);
     setFindings([]);
     setTechnologies([]);
+
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
         chrome.runtime.sendMessage(
           {
-            action: 'START_STANDALONE_AUDIT',
+            type: 'START_AUDIT',
             payload: { targetUrl, options: { maxPages } },
+            action: 'START_STANDALONE_AUDIT',
           },
           (res) => {
-            if (chrome.runtime.lastError || (res && !res.success)) {
-              standaloneCoordinator.startAudit(targetUrl, { maxPages }).catch((err) => {
-                setPermissionError(err?.message || 'Audit start failed.');
-                setLoading(false);
+            if (chrome.runtime.lastError) {
+              // Background worker might be waking up; query status to avoid duplicate audits
+              console.warn('Background start response error:', chrome.runtime.lastError.message);
+              chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (statusRes) => {
+                if (statusRes?.job && statusRes.job.status !== 'completed') {
+                  setActiveJob(statusRes.job);
+                  activeJobRef.current = statusRes.job;
+                } else {
+                  setPermissionError('Could not connect to background service worker. Please try again.');
+                  setLoading(false);
+                }
               });
+              return;
+            }
+
+            if (res && res.type === 'AUDIT_ACCEPTED') {
+              setActiveJob(res.job);
+              activeJobRef.current = res.job;
+              setLoading(true);
+            } else if (res && res.type === 'AUDIT_REJECTED') {
+              setPermissionError(res.error || 'Audit request was rejected.');
+              setLoading(false);
+            } else if (res && res.success && res.job) {
+              setActiveJob(res.job);
+              activeJobRef.current = res.job;
+              setLoading(true);
+            } else if (res && !res.success) {
+              setPermissionError(res.error || 'Failed to start audit.');
+              setLoading(false);
             }
           }
         );
       } else {
-        await standaloneCoordinator.startAudit(targetUrl, { maxPages });
+        // Direct test runner environment
+        const job = await standaloneCoordinator.startAudit(targetUrl, { maxPages });
+        setActiveJob(job);
+        activeJobRef.current = job;
       }
     } catch (err: any) {
       setPermissionError(err?.message || 'Audit start failed.');
@@ -188,9 +268,13 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
 
   const handleCancelAudit = () => {
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({ action: 'CANCEL_STANDALONE_AUDIT' });
+      chrome.runtime.sendMessage({
+        type: 'CANCEL_AUDIT',
+        payload: { auditId: activeJob?.id },
+        action: 'CANCEL_STANDALONE_AUDIT',
+      });
     }
-    standaloneCoordinator.cancelAudit();
+    standaloneCoordinator.cancelAudit(activeJob?.id);
     setLoading(false);
   };
 

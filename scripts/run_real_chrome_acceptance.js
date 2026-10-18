@@ -148,57 +148,52 @@ async function main() {
   );
 
   let extId = null;
-  let bgTarget = null;
-  let bgCdp = null;
+  let browserCdp = null;
 
   try {
     // Wait for Chrome remote debugging to come up
     let attempts = 0;
-    let targets = [];
+    let version = null;
     while (attempts < 20) {
       await sleep(500);
       try {
-        targets = await getJson('/json');
-        if (Array.isArray(targets) && targets.length > 0) break;
+        version = await getJson('/json/version');
+        if (version && version.webSocketDebuggerUrl) break;
       } catch (e) {}
       attempts++;
     }
 
-    console.log(`PASS: Chrome connected. Found ${targets.length} targets.`);
-    console.log('Targets:', targets.map(t => ({ type: t.type, url: t.url })));
-
-    // Accurately locate Website Audit Agent service worker (wait up to 15s if registering)
-    for (let swAttempt = 0; swAttempt < 15; swAttempt++) {
-      targets = await getJson('/json');
-      for (const t of targets) {
-        if ((t.type === 'service_worker' || t.url?.includes('background.js')) && t.webSocketDebuggerUrl) {
-          try {
-            const testCdp = new CdpClient(t.webSocketDebuggerUrl);
-            await testCdp.connect();
-            const manifest = await testCdp.evaluate('chrome.runtime.getManifest()');
-            if (manifest && manifest.name === 'Website Audit Agent') {
-              extId = await testCdp.evaluate('chrome.runtime.id');
-              bgTarget = t;
-              bgCdp = testCdp;
-              console.log(`PASS: Identified Website Audit Agent Service Worker (Extension ID: ${extId})`);
-              break;
-            } else {
-              testCdp.close();
-            }
-          } catch (e) {}
-        }
-      }
-      if (bgTarget) break;
-      await sleep(1000);
+    if (!version || !version.webSocketDebuggerUrl) {
+      throw new Error('Chrome remote debugging did not respond with webSocketDebuggerUrl');
     }
 
-    if (!bgTarget || !extId) {
-      throw new Error('Website Audit Agent service worker could not be found among targets.');
+    console.log('PASS: Chrome connected via remote debugging.');
+    browserCdp = new CdpClient(version.webSocketDebuggerUrl);
+    await browserCdp.connect();
+
+    // Query all targets from browser CDP
+    const targetsRes = await browserCdp.send('Target.getTargets');
+    const allTargets = targetsRes.targetInfos || [];
+    console.log(`Found ${allTargets.length} CDP targets in browser.`);
+
+    const swTarget = allTargets.find(
+      (t) => t.type === 'service_worker' && t.url && t.url.includes('background.js')
+    );
+
+    if (swTarget) {
+      const match = swTarget.url.match(/chrome-extension:\/\/([a-z0-9]+)\//);
+      if (match) extId = match[1];
+      console.log(`PASS: Identified Website Audit Agent Service Worker (Extension ID: ${extId})`);
     }
 
-    // Step 4: Open Sidepanel tab from extension context
-    console.log(`\n[Step 4] Opening Extension Side Panel via chrome.tabs.create...`);
-    await bgCdp.evaluate('chrome.tabs.create({ url: chrome.runtime.getURL("sidepanel.html") })');
+    if (!extId) {
+      throw new Error(`Website Audit Agent service worker could not be found among targets: ${JSON.stringify(allTargets)}`);
+    }
+
+    // Step 4: Open Sidepanel tab via Target.createTarget
+    console.log(`\n[Step 4] Opening Extension Side Panel at chrome-extension://${extId}/sidepanel.html ...`);
+    const sidepanelUrl = `chrome-extension://${extId}/sidepanel.html`;
+    await browserCdp.send('Target.createTarget', { url: sidepanelUrl });
     await sleep(2500);
 
     const updatedTargets = await getJson('/json');
@@ -298,22 +293,22 @@ async function main() {
       await sleep(1000);
       auditSummary = await cdp.evaluate(`
         (async function() {
-          const dbName = 'standalone_website_audit_db';
+          const dbName = 'WebsiteAuditAgent_StandaloneDB';
           return new Promise((resolve) => {
             const req = indexedDB.open(dbName);
             req.onerror = () => resolve({ jobStatus: 'db_error', progressPercent: 0, stage: 'error', crawledCount: 0, pages: [] });
             req.onsuccess = (e) => {
               try {
                 const db = e.target.result;
-                if (!db.objectStoreNames.contains('jobs') || !db.objectStoreNames.contains('pages')) {
+                if (!db.objectStoreNames.contains('audits') || !db.objectStoreNames.contains('pages')) {
                   resolve({ jobStatus: 'initializing', progressPercent: 0, stage: 'initializing db', crawledCount: 0, pages: [] });
                   return;
                 }
-                const tx = db.transaction(['jobs', 'pages'], 'readonly');
-                const jobsStore = tx.objectStore('jobs');
+                const tx = db.transaction(['audits', 'pages'], 'readonly');
+                const auditsStore = tx.objectStore('audits');
                 const pagesStore = tx.objectStore('pages');
 
-                const jobReq = jobsStore.getAll();
+                const jobReq = auditsStore.getAll();
                 const pagesReq = pagesStore.getAll();
 
                 jobReq.onsuccess = () => {
@@ -354,19 +349,19 @@ async function main() {
     console.log('\n[Step 9] Validating Extracted Evidence, Tech Detection, and SEO Rules in IndexedDB...');
     const detailedResults = await cdp.evaluate(`
       (async function() {
-        const dbName = 'standalone_website_audit_db';
+        const dbName = 'WebsiteAuditAgent_StandaloneDB';
         return new Promise((resolve) => {
           const req = indexedDB.open(dbName);
           req.onsuccess = (e) => {
             const db = e.target.result;
-            const tx = db.transaction(['jobs', 'pages', 'findings', 'technologies'], 'readonly');
-            const jobsReq = tx.objectStore('jobs').getAll();
+            const tx = db.transaction(['audits', 'pages', 'findings', 'technologies'], 'readonly');
+            const auditsReq = tx.objectStore('audits').getAll();
             const pagesReq = tx.objectStore('pages').getAll();
             const findingsReq = tx.objectStore('findings').getAll();
             const techReq = tx.objectStore('technologies').getAll();
 
             tx.oncomplete = () => {
-              const allJobs = jobsReq.result || [];
+              const allJobs = auditsReq.result || [];
               const latestJob = allJobs[allJobs.length - 1] || null;
               resolve({
                 job: latestJob,
@@ -424,8 +419,8 @@ async function main() {
     console.log('PASS: Side Panel closed cleanly.');
     await sleep(1500);
 
-    // Reopen sidepanel tab via service worker
-    await bgCdp.evaluate('chrome.tabs.create({ url: chrome.runtime.getURL("sidepanel.html") })');
+    // Reopen sidepanel tab via browser target
+    await browserCdp.send('Target.createTarget', { url: `chrome-extension://${extId}/sidepanel.html` });
     await sleep(2500);
 
     const reopenedTargets = await getJson('/json');
@@ -468,7 +463,7 @@ async function main() {
 
     cdp2.close();
     await closeTab(reopenedTarget.id);
-    bgCdp.close();
+    if (browserCdp) browserCdp.close();
 
     console.log('\n=====================================================');
     console.log('REAL CHROME MANIFEST V3 ACCEPTANCE TEST: ALL PASS (14/14)');

@@ -22,6 +22,11 @@ export class InBrowserCrawler {
   private crawledUrls: string[] = [];
   private disallowedPaths: string[] = [];
   private robotsFetched = false;
+  private robotsPolicyStatus: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' = 'not_present_permissive';
+
+  public getRobotsPolicyStatus(): 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' {
+    return this.robotsPolicyStatus;
+  }
 
   constructor(
     seedUrl: string,
@@ -140,12 +145,19 @@ export class InBrowserCrawler {
       });
       clearTimeout(timeoutId);
 
-      if (res.ok) {
+      if (res.status === 200) {
         const text = await res.text();
         this.parseRobotsTxt(text);
+        this.robotsPolicyStatus = 'enforced';
+      } else if (res.status === 404 || res.status === 410) {
+        this.robotsPolicyStatus = 'not_present_permissive';
+      } else {
+        // 5xx server error, network block, or unexpected response: do NOT claim verified robots compliance
+        this.robotsPolicyStatus = 'fetch_failed_unverified';
       }
     } catch {
-      // Default to permissive crawl if robots.txt cannot be fetched or does not exist
+      // Fetch error or timeout: do NOT claim verified robots compliance
+      this.robotsPolicyStatus = 'fetch_failed_unverified';
     }
   }
 
@@ -209,16 +221,10 @@ export class InBrowserCrawler {
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
         try {
-          const response = await fetch(item.url, {
-            method: 'GET',
-            headers: {
-              Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            },
-            signal: controller.signal,
-          });
-
+          const redirectResult = await this.fetchWithControlledRedirect(item.url, controller.signal);
           clearTimeout(timeoutId);
           const elapsed = Math.round(performance.now() - startTime);
+          const response = redirectResult.response;
 
           // Collect response headers
           const headers: Record<string, string> = {};
@@ -227,31 +233,28 @@ export class InBrowserCrawler {
           });
 
           // Check redirect destination safety
-          if (response.redirected && response.url) {
-            const finalNorm = this.normalizeUrl(response.url);
-            if (!this.isInScope(finalNorm)) {
-              // Disallowed cross-origin or out-of-scope redirect destination!
-              pageRecord = {
-                id: `page-${crawledCount + 1}-${Date.now()}`,
-                auditId: '',
-                url: item.url,
-                depth: item.depth,
-                httpStatus: response.status,
-                fetchStatus: 'skipped',
-                headings: { h1: [], h2: [], h3: [] },
-                links: [],
-                images: [],
-                headers,
-                htmlSize: 0,
-                responseTimeMs: elapsed,
-                fetchedAt: Date.now(),
-              };
-              await callbacks.onPageCrawled(pageRecord);
-              this.crawledUrls.push(item.url);
-              crawledCount++;
-              fetchSuccess = true;
-              break;
-            }
+          if (redirectResult.disallowedRedirect) {
+            pageRecord = {
+              id: `page-${crawledCount + 1}-${Date.now()}`,
+              auditId: '',
+              url: item.url,
+              depth: item.depth,
+              httpStatus: response.status || 301,
+              fetchStatus: 'skipped',
+              headings: { h1: [], h2: [], h3: [] },
+              links: [],
+              images: [],
+              headers,
+              htmlSize: 0,
+              responseTimeMs: elapsed,
+              fetchedAt: Date.now(),
+              title: `Disallowed redirect destination: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
+            };
+            await callbacks.onPageCrawled(pageRecord);
+            this.crawledUrls.push(item.url);
+            crawledCount++;
+            fetchSuccess = true;
+            break;
           }
 
           // Content-Type validation: only parse HTML documents
@@ -279,12 +282,36 @@ export class InBrowserCrawler {
             break;
           }
 
-          // Bounded response size: cap at 5MB
-          const rawHtml = await response.text();
-          const MAX_SIZE = 5 * 1024 * 1024;
-          const html = rawHtml.length > MAX_SIZE ? rawHtml.slice(0, MAX_SIZE) : rawHtml;
+          // Streaming Bounded response read: strict 5MB cap
+          const { html, isOversized, totalBytes } = await this.readBoundedHtml(response, 5 * 1024 * 1024);
 
-          const parsedEvidence = StandaloneDomParser.parse(html, item.url);
+          if (isOversized) {
+            pageRecord = {
+              id: `page-${crawledCount + 1}-${Date.now()}`,
+              auditId: '',
+              url: item.url,
+              depth: item.depth,
+              httpStatus: response.status,
+              fetchStatus: 'failed',
+              headings: { h1: [], h2: [], h3: [] },
+              links: [],
+              images: [],
+              headers,
+              htmlSize: totalBytes,
+              responseTimeMs: elapsed,
+              fetchedAt: Date.now(),
+              title: `Oversized Response Exceeded 5MB Limit (${Math.round(totalBytes / 1024 / 1024)}MB)`,
+            };
+            await callbacks.onPageCrawled(pageRecord);
+            this.crawledUrls.push(item.url);
+            crawledCount++;
+            fetchSuccess = true;
+            break;
+          }
+
+          // Asynchronous parsing via native DOMParser or bounded offscreen service
+          const targetUrlForEvidence = redirectResult.finalUrl || item.url;
+          const parsedEvidence = await StandaloneDomParser.parseAsync(html, targetUrlForEvidence);
 
           pageRecord = {
             id: `page-${crawledCount + 1}-${Date.now()}`,
@@ -301,7 +328,7 @@ export class InBrowserCrawler {
             links: parsedEvidence.links,
             images: parsedEvidence.images,
             headers,
-            htmlSize: html.length,
+            htmlSize: totalBytes,
             responseTimeMs: elapsed,
             fetchedAt: Date.now(),
             evidence: parsedEvidence, // Retain original full evidence
@@ -359,5 +386,159 @@ export class InBrowserCrawler {
         await new Promise((res) => setTimeout(res, this.config.delayMs));
       }
     }
+  }
+
+  /**
+   * Fetches an initial URL with strictly controlled manual redirect validation.
+   * Ensures no unauthorized or out-of-scope requests are made.
+   */
+  public async fetchWithControlledRedirect(
+    initialUrl: string,
+    signal: AbortSignal
+  ): Promise<{
+    response: Response;
+    finalUrl: string;
+    redirectCount: number;
+    disallowedRedirect: boolean;
+    disallowedDestination?: string;
+  }> {
+    let currentUrl = initialUrl;
+    let redirectCount = 0;
+    const maxRedirects = 3;
+
+    while (redirectCount <= maxRedirects) {
+      const response = await fetch(currentUrl, {
+        method: 'GET',
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+        redirect: 'manual',
+        signal,
+      });
+
+      // Handle 3xx manual redirects
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          return {
+            response,
+            finalUrl: currentUrl,
+            redirectCount,
+            disallowedRedirect: true,
+            disallowedDestination: 'missing_location_header',
+          };
+        }
+
+        let targetUrl: string;
+        try {
+          targetUrl = new URL(location, currentUrl).href;
+        } catch {
+          return {
+            response,
+            finalUrl: currentUrl,
+            redirectCount,
+            disallowedRedirect: true,
+            disallowedDestination: location,
+          };
+        }
+
+        // Strictly validate redirect destination BEFORE fetching!
+        const normTarget = this.normalizeUrl(targetUrl);
+        if (!this.isInScope(normTarget)) {
+          return {
+            response,
+            finalUrl: currentUrl,
+            redirectCount,
+            disallowedRedirect: true,
+            disallowedDestination: targetUrl,
+          };
+        }
+
+        redirectCount++;
+        currentUrl = normTarget;
+        continue;
+      }
+
+      // Handle transparent browser redirect if any
+      if (response.redirected && response.url) {
+        const normFinal = this.normalizeUrl(response.url);
+        if (!this.isInScope(normFinal)) {
+          return {
+            response,
+            finalUrl: response.url,
+            redirectCount,
+            disallowedRedirect: true,
+            disallowedDestination: response.url,
+          };
+        }
+        currentUrl = normFinal;
+      }
+
+      return {
+        response,
+        finalUrl: currentUrl,
+        redirectCount,
+        disallowedRedirect: false,
+      };
+    }
+
+    return {
+      response: new Response(null, { status: 310, statusText: 'Too many redirects' }),
+      finalUrl: currentUrl,
+      redirectCount,
+      disallowedRedirect: true,
+      disallowedDestination: 'too_many_redirects',
+    };
+  }
+
+  /**
+   * Reads response body with a strict streaming byte cap.
+   * Prevents buffering oversized (e.g. >5MB) payloads into memory.
+   */
+  public async readBoundedHtml(
+    response: Response,
+    maxBytes: number = 5 * 1024 * 1024
+  ): Promise<{ html: string; isOversized: boolean; totalBytes: number }> {
+    if (response.body && typeof response.body.getReader === 'function') {
+      const reader = response.body.getReader();
+      let totalBytes = 0;
+      const chunks: Uint8Array[] = [];
+      let isOversized = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          totalBytes += value.length;
+          if (totalBytes > maxBytes) {
+            isOversized = true;
+            await reader.cancel();
+            break;
+          }
+          chunks.push(value);
+        }
+      }
+
+      if (isOversized) {
+        return { html: '', isOversized: true, totalBytes };
+      }
+
+      const combined = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const html = new TextDecoder('utf-8', { fatal: false }).decode(combined);
+      return { html, isOversized: false, totalBytes };
+    }
+
+    // Fallback for mocked or non-streaming environments (e.g. jsdom)
+    const rawHtml = await response.text();
+    const totalBytes = rawHtml.length;
+    if (totalBytes > maxBytes) {
+      return { html: '', isOversized: true, totalBytes };
+    }
+    return { html: rawHtml, isOversized: false, totalBytes };
   }
 }

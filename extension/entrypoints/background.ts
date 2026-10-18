@@ -27,71 +27,133 @@ export default defineBackground(() => {
   });
 
   // Handle runtime messages
-  chrome.runtime.onMessage.addListener((message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => {
-    if (message.action === 'OPEN_SIDE_PANEL') {
-      if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
-        const windowId = message.payload?.windowId;
-        if (windowId) {
-          chrome.sidePanel.open({ windowId })
-            .then(() => sendResponse({ success: true }))
-            .catch((err: Error) => sendResponse({ success: false, error: err.message }));
-          return true; // Keep message channel open for async response
+  chrome.runtime.onMessage.addListener(
+    (message: any, sender: chrome.runtime.MessageSender, sendResponse: (response?: any) => void) => {
+      const type = message?.type || message?.action;
+
+      if (type === 'OPEN_SIDE_PANEL') {
+        if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
+          const windowId = message.payload?.windowId;
+          if (windowId) {
+            chrome.sidePanel.open({ windowId })
+              .then(() => sendResponse({ success: true }))
+              .catch((err: Error) => sendResponse({ success: false, error: err.message }));
+            return true;
+          }
         }
-      }
-      sendResponse({ success: false, error: 'Side panel API not available in this browser window.' });
-      return true;
-    }
-
-    if (message.action === 'OPEN_SIDEPANEL_TAB') {
-      if (chrome.tabs && chrome.tabs.create) {
-        chrome.tabs.create({ url: chrome.runtime.getURL('sidepanel.html') })
-          .then((tab) => sendResponse({ success: true, tabId: tab.id }))
-          .catch((err: Error) => sendResponse({ success: false, error: err.message }));
-        return true;
-      }
-      sendResponse({ success: false, error: 'tabs.create not available' });
-      return true;
-    }
-
-    if (message.action === 'START_STANDALONE_AUDIT') {
-      const { targetUrl, options } = message.payload || {};
-      if (!targetUrl) {
-        sendResponse({ success: false, error: 'targetUrl is required' });
+        sendResponse({ success: false, error: 'Side panel API not available in this browser window.' });
         return true;
       }
 
-      // Start audit in background worker context
-      standaloneCoordinator.startAudit(targetUrl, options)
-        .then((job) => sendResponse({ success: true, job }))
-        .catch((err: Error) => sendResponse({ success: false, error: err.message }));
+      if (type === 'OPEN_SIDEPANEL_TAB') {
+        if (chrome.tabs && chrome.tabs.create) {
+          chrome.tabs.create({ url: chrome.runtime.getURL('sidepanel.html') })
+            .then((tab) => sendResponse({ success: true, tabId: tab.id }))
+            .catch((err: Error) => sendResponse({ success: false, error: err.message }));
+          return true;
+        }
+        sendResponse({ success: false, error: 'tabs.create not available' });
+        return true;
+      }
 
-      return true; // Keep channel open for async start
-    }
+      // Fast job start acknowledgment: validates, persists job, and returns AUDIT_ACCEPTED in milliseconds!
+      if (type === 'START_AUDIT' || type === 'START_STANDALONE_AUDIT') {
+        const { targetUrl, options } = message.payload || {};
+        if (!targetUrl) {
+          sendResponse({
+            success: false,
+            type: 'AUDIT_REJECTED',
+            error: 'targetUrl is required to start an audit.',
+          });
+          return true;
+        }
 
-    if (message.action === 'CANCEL_STANDALONE_AUDIT') {
-      standaloneCoordinator.cancelAudit();
-      sendResponse({ success: true, cancelled: true });
-      return false;
-    }
+        standaloneCoordinator
+          .initiateAudit(targetUrl, options)
+          .then((job) => {
+            sendResponse({
+              success: true,
+              type: 'AUDIT_ACCEPTED',
+              auditId: job.id,
+              sequence: job.sequence,
+              status: job.status,
+              stage: job.currentStage,
+              progress: job.progressPercent,
+              job,
+            });
+          })
+          .catch((err: Error) => {
+            sendResponse({
+              success: false,
+              type: 'AUDIT_REJECTED',
+              error: err.message || 'Failed to start audit',
+            });
+          });
 
-    if (message.action === 'GET_STANDALONE_AUDIT_STATUS') {
-      const current = standaloneCoordinator.getCurrentJob();
-      if (current) {
-        sendResponse({ success: true, job: current });
-      } else {
+        return true; // Asynchronous acknowledgment dispatched within milliseconds
+      }
+
+      if (type === 'CANCEL_AUDIT' || type === 'CANCEL_STANDALONE_AUDIT') {
+        const auditId = message.payload?.auditId;
+        const cancelled = standaloneCoordinator.cancelAudit(auditId);
+        sendResponse({
+          success: true,
+          type: 'AUDIT_CANCELLED',
+          cancelled,
+        });
+        return false;
+      }
+
+      if (type === 'GET_STATUS' || type === 'GET_STANDALONE_AUDIT_STATUS') {
+        const current = standaloneCoordinator.getCurrentJob();
+        if (current) {
+          sendResponse({
+            success: true,
+            type: 'AUDIT_STATUS',
+            job: current,
+          });
+          return false;
+        }
+
         StandaloneAuditStorage.getLatestJob()
-          .then((job) => sendResponse({ success: true, job }))
-          .catch((err: Error) => sendResponse({ success: false, error: err.message }));
+          .then((job) => {
+            sendResponse({
+              success: true,
+              type: 'AUDIT_STATUS',
+              job: job || null,
+            });
+          })
+          .catch((err: Error) => {
+            sendResponse({
+              success: false,
+              type: 'AUDIT_STATUS',
+              job: null,
+              error: err.message,
+            });
+          });
         return true;
       }
-      return false;
-    }
 
-    if (message.action === 'RESUME_STANDALONE_AUDIT') {
-      standaloneCoordinator.checkAndResumeInterruptedJob()
-        .then((job) => sendResponse({ success: true, job }))
-        .catch((err: Error) => sendResponse({ success: false, error: err.message }));
-      return true;
+      if (type === 'RESUME_AUDIT' || type === 'RESUME_STANDALONE_AUDIT') {
+        standaloneCoordinator
+          .checkAndResumeInterruptedJob()
+          .then((job) => {
+            sendResponse({
+              success: true,
+              type: 'AUDIT_STATUS',
+              job,
+            });
+          })
+          .catch((err: Error) => {
+            sendResponse({
+              success: false,
+              type: 'AUDIT_STATUS',
+              job: null,
+              error: err.message,
+            });
+          });
+        return true;
+      }
     }
-  });
+  );
 });

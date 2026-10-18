@@ -19,7 +19,75 @@ export interface ParsedHtmlEvidence {
   inlineMarkers: string[];
 }
 
+let creatingOffscreenPromise: Promise<void> | null = null;
+
+async function ensureOffscreenDocument(): Promise<void> {
+  if (typeof chrome === 'undefined' || !chrome.offscreen) {
+    return;
+  }
+
+  // Check if offscreen document already exists (Chrome 116+)
+  if (chrome.runtime?.getContexts) {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType],
+    });
+    if (contexts.length > 0) return;
+  }
+
+  if (creatingOffscreenPromise) {
+    await creatingOffscreenPromise;
+    return;
+  }
+
+  creatingOffscreenPromise = chrome.offscreen.createDocument({
+    url: chrome.runtime.getURL('offscreen.html'),
+    reasons: ['DOM_PARSER' as chrome.offscreen.Reason],
+    justification: 'Parse crawled HTML into structured SEO and technology evidence without script execution',
+  }).then(() => {
+    creatingOffscreenPromise = null;
+  }).catch((err: Error) => {
+    creatingOffscreenPromise = null;
+    // Ignore error if document already exists
+    if (!err.message?.includes('already exists') && !err.message?.includes('Only a single offscreen document')) {
+      console.warn('[Offscreen] Document creation note:', err.message);
+    }
+  });
+
+  await creatingOffscreenPromise;
+}
+
 export class StandaloneDomParser {
+  /**
+   * Asynchronous HTML parsing. Uses native DOMParser in Window/Sidepanel contexts,
+   * delegates to bounded chrome.offscreen in MV3 Service Worker context,
+   * or falls back to robust regex extraction in non-browser unit test environments.
+   */
+  public static async parseAsync(html: string, pageUrl: string): Promise<ParsedHtmlEvidence> {
+    // 1. Direct native DOMParser if available (Window, Sidepanel, Vitest jsdom)
+    if (typeof DOMParser !== 'undefined') {
+      return this.parse(html, pageUrl);
+    }
+
+    // 2. Chrome Offscreen Document if running inside Service Worker
+    if (typeof chrome !== 'undefined' && chrome.offscreen && chrome.runtime?.sendMessage) {
+      try {
+        await ensureOffscreenDocument();
+        const res = await chrome.runtime.sendMessage({
+          type: 'PARSE_HTML_OFFSCREEN',
+          payload: { html, pageUrl },
+        });
+        if (res && res.success && res.evidence) {
+          return res.evidence as ParsedHtmlEvidence;
+        }
+      } catch (err: any) {
+        console.warn('[StandaloneDomParser] Offscreen parse delegation failed, using fallback:', err?.message);
+      }
+    }
+
+    // 3. Fallback extraction
+    return this.fallbackParse(html, pageUrl);
+  }
+
   public static parse(html: string, pageUrl: string): ParsedHtmlEvidence {
     if (typeof DOMParser === 'undefined') {
       return this.fallbackParse(html, pageUrl);

@@ -15,6 +15,17 @@ const DB_VERSION = 1;
 
 export class StandaloneAuditStorage {
   private static dbPromise: Promise<IDBDatabase> | null = null;
+  private static inMemoryAudits = new Map<string, StandaloneAuditJob>();
+  private static inMemoryPages = new Map<string, StandaloneCrawlPage[]>();
+  private static inMemoryFindings = new Map<string, StandaloneSeoFinding[]>();
+  private static inMemoryTechnologies = new Map<string, StandaloneTechFinding[]>();
+
+  public static clearInMemoryForTesting(): void {
+    this.inMemoryAudits.clear();
+    this.inMemoryPages.clear();
+    this.inMemoryFindings.clear();
+    this.inMemoryTechnologies.clear();
+  }
 
   public static async getDb(): Promise<IDBDatabase> {
     if (this.dbPromise) return this.dbPromise;
@@ -67,6 +78,10 @@ export class StandaloneAuditStorage {
   }
 
   public static async saveJob(job: StandaloneAuditJob): Promise<void> {
+    if (typeof indexedDB === 'undefined') {
+      this.inMemoryAudits.set(job.id, { ...job });
+      return;
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('audits', 'readwrite');
@@ -77,6 +92,10 @@ export class StandaloneAuditStorage {
   }
 
   public static async getJob(id: string): Promise<StandaloneAuditJob | undefined> {
+    if (typeof indexedDB === 'undefined') {
+      const j = this.inMemoryAudits.get(id);
+      return j ? { ...j } : undefined;
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('audits', 'readonly');
@@ -87,6 +106,14 @@ export class StandaloneAuditStorage {
   }
 
   public static async getLatestJob(): Promise<StandaloneAuditJob | undefined> {
+    if (typeof indexedDB === 'undefined') {
+      const all = Array.from(this.inMemoryAudits.values());
+      if (!all.length) return undefined;
+      all.sort((a, b) => b.updatedAt - a.updatedAt);
+      const latest = all[0];
+      if (!latest) return undefined;
+      return { ...latest };
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('audits', 'readonly');
@@ -101,6 +128,13 @@ export class StandaloneAuditStorage {
   }
 
   public static async savePage(page: StandaloneCrawlPage): Promise<void> {
+    if (typeof indexedDB === 'undefined') {
+      const existing = this.inMemoryPages.get(page.auditId) || [];
+      const filtered = existing.filter((p) => p.id !== page.id);
+      filtered.push({ ...page });
+      this.inMemoryPages.set(page.auditId, filtered);
+      return;
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('pages', 'readwrite');
@@ -111,6 +145,9 @@ export class StandaloneAuditStorage {
   }
 
   public static async getPagesForAudit(auditId: string): Promise<StandaloneCrawlPage[]> {
+    if (typeof indexedDB === 'undefined') {
+      return (this.inMemoryPages.get(auditId) || []).map((p) => ({ ...p }));
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('pages', 'readonly');
@@ -123,6 +160,16 @@ export class StandaloneAuditStorage {
 
   public static async saveFindings(findings: StandaloneSeoFinding[]): Promise<void> {
     if (!findings.length) return;
+    if (typeof indexedDB === 'undefined') {
+      const first = findings[0];
+      if (!first) return;
+      const auditId = first.auditId;
+      const existing = this.inMemoryFindings.get(auditId) || [];
+      const map = new Map(existing.map((f) => [f.id, f]));
+      for (const f of findings) map.set(f.id, { ...f });
+      this.inMemoryFindings.set(auditId, Array.from(map.values()));
+      return;
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('findings', 'readwrite');
@@ -136,6 +183,9 @@ export class StandaloneAuditStorage {
   }
 
   public static async getFindingsForAudit(auditId: string): Promise<StandaloneSeoFinding[]> {
+    if (typeof indexedDB === 'undefined') {
+      return (this.inMemoryFindings.get(auditId) || []).map((f) => ({ ...f }));
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('findings', 'readonly');
@@ -148,6 +198,16 @@ export class StandaloneAuditStorage {
 
   public static async saveTechnologies(techs: StandaloneTechFinding[]): Promise<void> {
     if (!techs.length) return;
+    if (typeof indexedDB === 'undefined') {
+      const first = techs[0];
+      if (!first) return;
+      const auditId = first.auditId;
+      const existing = this.inMemoryTechnologies.get(auditId) || [];
+      const map = new Map(existing.map((t) => [t.id, t]));
+      for (const t of techs) map.set(t.id, { ...t });
+      this.inMemoryTechnologies.set(auditId, Array.from(map.values()));
+      return;
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('technologies', 'readwrite');
@@ -161,6 +221,9 @@ export class StandaloneAuditStorage {
   }
 
   public static async getTechnologiesForAudit(auditId: string): Promise<StandaloneTechFinding[]> {
+    if (typeof indexedDB === 'undefined') {
+      return (this.inMemoryTechnologies.get(auditId) || []).map((t) => ({ ...t }));
+    }
     const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('technologies', 'readonly');

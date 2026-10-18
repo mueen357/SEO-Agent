@@ -13,7 +13,8 @@ export default defineConfig({
       'sidePanel',
       'scripting',
       'tabs',
-      'alarms'
+      'alarms',
+      'offscreen'
     ],
     optional_host_permissions: [
       'https://*/*',
@@ -25,7 +26,7 @@ export default defineConfig({
     ],
     web_accessible_resources: [
       {
-        resources: ['sidepanel.html', 'popup.html'],
+        resources: ['sidepanel.html', 'popup.html', 'offscreen.html'],
         matches: ['http://*/*', 'https://*/*']
       }
     ]

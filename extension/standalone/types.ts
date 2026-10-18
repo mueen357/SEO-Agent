@@ -88,6 +88,17 @@ export interface StandaloneAuditScorecard {
   calculatedAt: number;
 }
 
+export interface StandaloneStageCheckpoints {
+  crawlingStarted: boolean;
+  crawlingFinished: boolean;
+  seoStarted: boolean;
+  seoFinished: boolean;
+  techStarted: boolean;
+  techFinished: boolean;
+  scoringStarted: boolean;
+  scoringFinished: boolean;
+}
+
 export interface StandaloneAuditJob {
   id: string;
   targetUrl: string;
@@ -96,6 +107,10 @@ export interface StandaloneAuditJob {
   status: StandaloneAuditStatus;
   progressPercent: number;
   currentStage: string;
+  sequence?: number;
+  stageCheckpoints?: StandaloneStageCheckpoints;
+  authoritativeRunId?: string;
+  robotsPolicyStatus?: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified';
   config: StandaloneAuditConfig;
   discoveredUrls: string[];
   pendingQueue: Array<{ url: string; depth: number }>;
@@ -107,3 +122,4 @@ export interface StandaloneAuditJob {
   updatedAt: number;
   completedAt?: number;
 }
+
