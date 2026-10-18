@@ -589,3 +589,40 @@ ame=1. Zero credential or token leakage.
      - **SEO Rules Registry:** 51 registered SEO rules verified intact.
      - **Database Migrations:** Alembic revision 0008 (head) intact.
      - **Chrome GUI Validation:** GUI TEST PENDING (headless execution environment).
+
+---
+
+### Task: Universal Website Technology Stack Detection Engine
+- **Status:** **COMPLETE (PASS)**
+- **Completed On:** 2026-10-18
+- **Working Branch:** `feature/universal-tech-stack-detection` (branched from verified baseline `fix/crawl-persistence-final-hardening` commit `64a9aa3b354c16966ed254b14552acd75802c93c`)
+- **Completed Components & Verifications:**
+  1. **Extensible Architecture & Separation of Data from Logic:**
+     - Created `app/technology/fingerprints/{schema.py, catalog.py, engine.py}`.
+     - 173 validated technology fingerprints across 15 categories (CMS, Frontend, Backend, Languages, Hosting/CDN, Database, Analytics, Advertising, UX, Payments, Security, Marketing, Fonts, E-Commerce, Search).
+     - Deterministic confidence model: `DETECTED` (>= 0.70), `POSSIBLE` (0.40 - 0.69), `INFERRED` (<= 0.65, `inferred_dependency`), `UNKNOWN` (< 0.40), `NOT OBSERVED` (0.00).
+     - Explicit provenance origin: `first_party`, `third_party_embed`, `asset_host`, `inferred_dependency`.
+     - Version classification: `explicit_version`, `asset_hint_unverified`, `inferred_version`, `unknown`.
+  2. **Truthful Detection & False-Positive Shields:**
+     - Third-party asset embed shield prevents hosted images from triggering platform detection (e.g. Framer asset on WordPress site does not detect Framer).
+     - Hidden backend language shield keeps unobserved server languages (Python, Go, Ruby, Java, C#) strictly as `unknown` / `not_observed`.
+     - Generic JS shield prevents `.js` scripts from implying backend Node.js.
+     - Compiled JS shield prevents bundled JavaScript from claiming source TypeScript.
+     - Private database shield prevents port scanning or guessing private PostgreSQL/MySQL/MongoDB databases.
+     - Multi-page corroboration boost is capped at +0.05 and requires multiple distinct evidence sources, eliminating artificial 99% inflation on repeated assets.
+  3. **Stage 7 Automation & Re-Analysis API:**
+     - Automated execution at Stage 7 (`AuditStage.TECHNOLOGIES`) in the 9-stage one-click pipeline.
+     - Implemented `POST /api/v1/audits/{id}/technologies/reanalyze` for zero-network re-analysis using persisted crawl evidence.
+  4. **Chrome Extension "Complete Technology Stack" Dashboard:**
+     - Comprehensive category tabs (All, CMS, Frontend, Backend, Hosting/CDN, Services).
+     - Real-time search filter and status/confidence/provenance badges.
+     - Truthful empty state: *"No supported technologies confirmed from currently available evidence."*
+     - Responsive non-overflowing card layouts in narrow side panel.
+  5. **Full Regression & Benchmark Verification:**
+     - **Backend Pytest:** **491 passed** out of 491 (100% pass rate, 217.65s execution; +182 technology catalog & engine tests).
+     - **Frontend Vitest:** **97 passed** out of 97 across 8 test files (100% pass rate, 10.94s execution).
+     - **TypeScript Typecheck:** `tsc --noEmit` exited 0 (clean, 0 errors).
+     - **Extension Production Build:** `wxt build` succeeded in 3.38s (bundle size: 479.40 kB).
+     - **Performance Benchmarks:** 1-page audit: 3.23ms, 10-page audit: 33.52ms, 50-page audit: 153.24ms.
+     - **SEO Rules Registry:** All 51 registered SEO rules verified intact.
+     - **Chrome GUI Validation:** GUI TEST PENDING (headless execution environment; documented verification protocol).
