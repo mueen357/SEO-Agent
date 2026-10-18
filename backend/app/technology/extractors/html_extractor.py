@@ -83,6 +83,25 @@ class HTMLTechnologyExtractor:
         ("THREE.WebGLRenderer", "threejs", "Three.js WebGL renderer"),
         ("d3.select", "d3", "D3.js DOM selection runtime"),
         ("window.lodash", "lodash", "Lodash utility library"),
+        ("fbq('init'", "meta_pixel", "Meta Pixel initialization"),
+        ("gtag('config'", "google_analytics", "Google Analytics config"),
+        ("ga('create'", "google_analytics", "Google Universal Analytics create"),
+        ("dataLayer.push", "google_tag_manager", "Google Tag Manager dataLayer"),
+        ("window.hj=", "hotjar", "Hotjar tracking snippet"),
+        ("window.clarity=", "microsoft_clarity", "Microsoft Clarity tracking snippet"),
+        ("Stripe(", "stripe", "Stripe client initialization"),
+        ("firebase.database(", "firebase_database", "Firebase Realtime Database runtime"),
+        ("firebase.firestore(", "firebase_database", "Firestore runtime"),
+        ("createClient(", "supabase", "Supabase client runtime"),
+        ("algoliasearch(", "algolia", "Algolia search runtime"),
+        ("new MeiliSearch(", "meilisearch", "Meilisearch client runtime"),
+        ("Intercom('boot'", "intercom", "Intercom messenger widget"),
+        ("zE('webWidget'", "zendesk", "Zendesk web widget"),
+        ("window.$crisp", "crisp", "Crisp chat widget"),
+        ("mixpanel.init(", "mixpanel", "Mixpanel tracking runtime"),
+        ("amplitude.init(", "amplitude", "Amplitude tracking runtime"),
+        ("_learnq.push", "klaviyo", "Klaviyo tracking runtime"),
+        ("_hsq.push", "hubspot_marketing", "HubSpot tracking runtime"),
     ]
 
     COMMENT_MARKER_PATTERNS = [
@@ -92,6 +111,7 @@ class HTMLTechnologyExtractor:
         ("Powered by Slider Revolution", "wordpress", "Slider Revolution WordPress plugin HTML comment"),
         ("Performance optimized by W3 Total Cache", "wordpress", "W3 Total Cache HTML comment"),
         ("Protected by Akismet", "wordpress", "Akismet anti-spam WordPress plugin HTML comment"),
+        ("SEO by Rank Math", "wordpress", "Rank Math SEO plugin HTML comment"),
     ]
 
     @classmethod
@@ -285,6 +305,42 @@ class HTMLTechnologyExtractor:
                 seen_dom.add("ant-btn")
                 evidence.dom_markers.append("ant-btn")
 
+        # Bot protection & Captcha markers
+        if soup.find(class_=re.compile(r"g-recaptcha")):
+            if "class:g-recaptcha" not in seen_dom:
+                seen_dom.add("class:g-recaptcha")
+                evidence.dom_markers.append("class:g-recaptcha")
+        if soup.find(class_=re.compile(r"cf-turnstile")):
+            if "class:cf-turnstile" not in seen_dom:
+                seen_dom.add("class:cf-turnstile")
+                evidence.dom_markers.append("class:cf-turnstile")
+        if soup.find(class_=re.compile(r"h-captcha")):
+            if "class:h-captcha" not in seen_dom:
+                seen_dom.add("class:h-captcha")
+                evidence.dom_markers.append("class:h-captcha")
+
+        # WordPress Gutenberg, WPBakery, Elementor, CF7, Mailchimp, Blazor
+        if soup.find(class_=re.compile(r"wp-block-")):
+            if "class:wp-block-group" not in seen_dom:
+                seen_dom.add("class:wp-block-group")
+                evidence.dom_markers.append("class:wp-block-group")
+        if soup.find(class_=re.compile(r"(vc_row|wpb_wrapper)")):
+            if "class:vc_row" not in seen_dom:
+                seen_dom.add("class:vc_row")
+                evidence.dom_markers.append("class:vc_row")
+        if soup.find(class_=re.compile(r"wpcf7")):
+            if "class:wpcf7-form" not in seen_dom:
+                seen_dom.add("class:wpcf7-form")
+                evidence.dom_markers.append("class:wpcf7-form")
+        if soup.find(id="mc_embed_signup"):
+            if "id:mc_embed_signup" not in seen_dom:
+                seen_dom.add("id:mc_embed_signup")
+                evidence.dom_markers.append("id:mc_embed_signup")
+        if soup.find(attrs={"_blazor": True}) or soup.find(id="components-reconnect-modal"):
+            if "_blazor" not in seen_dom:
+                seen_dom.add("_blazor")
+                evidence.dom_markers.append("_blazor")
+
         # 5. Asset and image URL extraction (bounded, safe)
         TARGET_ASSET_DOMAINS = (
             "framerusercontent.com",
@@ -296,6 +352,13 @@ class HTMLTechnologyExtractor:
             "graphassets.com",
             "datocms-assets.com",
             "shopify.com",
+            "s3.amazonaws.com",
+            "storage.googleapis.com",
+            "blob.core.windows.net",
+            "azureedge.net",
+            "digitaloceanspaces.com",
+            "b-cdn.net",
+            "kxcdn.com",
         )
         seen_assets = set()
         for img in soup.find_all("img", src=True, limit=50):

@@ -918,8 +918,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Interpreted high-level general-purpose server programming language.",
             confidence_weight=0.90,
             signatures=FingerprintSignatures(
-                headers={"server": r"python|gunicorn|uvicorn|werkzeug", "x-powered-by": r"python"},
-                cookies=["csrftoken", "sessionid"],  # Inferred if accompanied by Django
+                headers={"server": r"\bpython(/[\d\.]+)?\b|gunicorn|uvicorn", "x-powered-by": r"python"},
             ),
             limitations="Identified only when Python WSGI/ASGI servers or framework cookies disclose presence.",
         )
@@ -971,8 +970,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Open-source developer platform created by Microsoft for building web apps.",
             confidence_weight=0.95,
             signatures=FingerprintSignatures(
-                headers={"x-powered-by": r"asp\.net", "x-aspnet-version": r"([0-9\.]+)"},
-                cookies=["ASP.NET_SessionId", ".AspNetCore.Antiforgery"],
+                headers={"x-aspnet-version": r"([0-9\.]+)"},
                 dom_markers=["id:__VIEWSTATE", "id:__EVENTVALIDATION"],
             ),
             version_rules=[
@@ -1013,7 +1011,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             description="Open source programming language supported by Google for performant backend services.",
             confidence_weight=0.85,
             signatures=FingerprintSignatures(
-                headers={"server": r"\b(gin-gonic|fiber|caddy)\b|^gin(/[\d\.]+)?"},
+                headers={"server": r"\b(golang|go-http-client)\b|^go(/[\d\.]+)?"},
             ),
         )
     )
@@ -2291,7 +2289,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             implies=["wordpress", "php"],
             confidence_weight=0.95,
             signatures=FingerprintSignatures(
-                html_comments=["<!-- / SEO by Rank Math"],
+                html_comments=["SEO by Rank Math", "<!-- / SEO by Rank Math"],
                 script_sources=[r"/wp-content/plugins/seo-by-rank-math/"],
             ),
         )
@@ -2312,6 +2310,1100 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
                 script_sources=[r"/wp-content/plugins/contact-form-7/"],
                 stylesheet_hrefs=[r"/wp-content/plugins/contact-form-7/"],
                 dom_markers=["class:wpcf7-form"],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 4B. ADDITIONAL BACKEND FRAMEWORKS & RUNTIMES
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="nestjs",
+            name="NestJS",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="NestJS",
+            website="https://nestjs.com",
+            description="Progressive Node.js framework for building efficient and scalable server-side applications.",
+            implies=["nodejs", "typescript"],
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                headers={"x-powered-by": r"Nest(JS)?"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="fastify",
+            name="Fastify",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="OpenJS Foundation",
+            website="https://fastify.dev",
+            description="Fast and low overhead web framework for Node.js.",
+            implies=["nodejs"],
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                headers={"x-powered-by": r"Fastify"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="symfony",
+            name="Symfony",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="SensioLabs",
+            website="https://symfony.com",
+            description="High-performance PHP framework for Web development.",
+            implies=["php"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                cookies=["symfony", "_sf2_attributes"],
+                headers={"x-powered-by": r"Symfony"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="codeigniter",
+            name="CodeIgniter",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="CodeIgniter Foundation",
+            website="https://codeigniter.com",
+            description="Powerful PHP framework with a very small footprint.",
+            implies=["php"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                cookies=["ci_session"],
+                headers={"set-cookie": r"ci_session="},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="flask",
+            name="Flask",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="Pallets",
+            website="https://flask.palletsprojects.com",
+            description="Lightweight WSGI web application framework in Python.",
+            implies=["python"],
+            confidence_weight=0.85,
+            signatures=FingerprintSignatures(
+                headers={"server": r"Werkzeug"},
+                cookies=["session"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="asp_net",
+            name="ASP.NET",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="Microsoft",
+            website="https://dotnet.microsoft.com/apps/aspnet",
+            description="Open-source web framework for building modern web apps with .NET.",
+            implies=["csharp", "dotnet"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-powered-by": r"ASP\.NET", "x-aspnet-version": r".*"},
+                cookies=["ASP.NET_SessionId", ".ASPXAUTH"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="asp_net_core",
+            name="ASP.NET Core",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="Microsoft",
+            website="https://dotnet.microsoft.com/apps/aspnet",
+            description="Cross-platform, high-performance, open-source framework for building modern web apps.",
+            implies=["csharp", "dotnet"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-powered-by": r"ASP\.NET Core"},
+                cookies=[".AspNetCore."],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="blazor",
+            name="Blazor",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="Microsoft",
+            website="https://dotnet.microsoft.com/apps/aspnet/web-apps/blazor",
+            description="Framework for building interactive client-side web UI with .NET and C#.",
+            implies=["csharp", "dotnet"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"_framework/blazor\.(webassembly|server)\.js"],
+                dom_markers=["_blazor", "id:components-reconnect-modal"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="phoenix",
+            name="Phoenix",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="Phoenix Framework",
+            website="https://www.phoenixframework.org",
+            description="Productive web framework that builds rich, interactive web applications in Elixir.",
+            implies=["elixir"],
+            confidence_weight=0.85,
+            signatures=FingerprintSignatures(
+                headers={"x-request-id": r".*"},
+                cookies=["_.*_key"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="gin",
+            name="Gin",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="Gin Authors",
+            website="https://gin-gonic.com",
+            description="HTTP web framework written in Go (Golang) featuring high performance.",
+            implies=["go"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"server": r"\bgin-gonic\b|^gin(/[\d\.]+)?"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="fiber",
+            name="Fiber",
+            category=TechnologyCategory.backend,
+            subcategory="web_framework",
+            vendor_or_type="GoFiber",
+            website="https://gofiber.io",
+            description="Express-inspired web framework written in Go built on top of Fasthttp.",
+            implies=["go"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"server": r"^Fiber"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="iis",
+            name="Microsoft IIS",
+            category=TechnologyCategory.backend,
+            subcategory="web_server",
+            vendor_or_type="Microsoft",
+            website="https://www.iis.net",
+            description="Flexible, secure and manageable Web server for hosting anything on the Web.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"server": r"Microsoft-IIS(/([0-9\.]+))?"},
+            ),
+            version_rules=[
+                VersionExtractionRule(
+                    source_type="header",
+                    regex=r"Microsoft-IIS/([0-9\.]+)",
+                    version_type=VersionType.explicit_version,
+                )
+            ],
+        )
+    )
+
+    # =========================================================================
+    # 5B. ADDITIONAL HOSTING, CDN & CLOUD INFRASTRUCTURE
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="akamai",
+            name="Akamai",
+            category=TechnologyCategory.hosting,
+            subcategory="cdn_proxy",
+            vendor_or_type="Akamai Technologies",
+            website="https://www.akamai.com",
+            description="Global content delivery network, cybersecurity, and cloud service company.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                headers={"x-akamai-transformed": r".*", "server": r"AkamaiGHost|AkamaiNetStorage"},
+                cookies=["AKA_A2"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="aws",
+            name="Amazon Web Services",
+            category=TechnologyCategory.hosting,
+            subcategory="cloud_infrastructure",
+            vendor_or_type="Amazon.com Inc.",
+            website="https://aws.amazon.com",
+            description="Cloud computing platform offering storage, compute, and scalable backend infrastructure.",
+            confidence_weight=0.85,
+            default_provenance=EvidenceProvenance.asset_host,
+            signatures=FingerprintSignatures(
+                headers={"x-amz-request-id": r".*", "x-amz-id-2": r".*"},
+                asset_urls=[r"s3\.amazonaws\.com", r"s3-[a-z0-9\-]+\.amazonaws\.com"],
+                min_assets_for_detection=2,
+            ),
+            limitations="AWS asset storage does not establish origin application hosting provider or language.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="gcp",
+            name="Google Cloud",
+            category=TechnologyCategory.hosting,
+            subcategory="cloud_infrastructure",
+            vendor_or_type="Google Inc.",
+            website="https://cloud.google.com",
+            description="Suite of cloud computing services running on Google's infrastructure.",
+            confidence_weight=0.85,
+            default_provenance=EvidenceProvenance.asset_host,
+            signatures=FingerprintSignatures(
+                headers={"x-goog-generation": r".*", "server": r"Google Frontend"},
+                asset_urls=[r"storage\.googleapis\.com"],
+                min_assets_for_detection=2,
+            ),
+            limitations="Google Cloud storage does not establish origin application hosting or backend stack.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="azure",
+            name="Microsoft Azure",
+            category=TechnologyCategory.hosting,
+            subcategory="cloud_infrastructure",
+            vendor_or_type="Microsoft",
+            website="https://azure.microsoft.com",
+            description="Cloud computing platform with services for building, testing, deploying, and managing apps.",
+            confidence_weight=0.85,
+            default_provenance=EvidenceProvenance.asset_host,
+            signatures=FingerprintSignatures(
+                headers={"x-ms-request-id": r".*", "x-ms-blob-type": r".*"},
+                asset_urls=[r"blob\.core\.windows\.net", r"azureedge\.net"],
+                min_assets_for_detection=2,
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="firebase_hosting",
+            name="Firebase Hosting",
+            category=TechnologyCategory.hosting,
+            subcategory="cloud_hosting",
+            vendor_or_type="Google Inc.",
+            website="https://firebase.google.com/products/hosting",
+            description="Fast and secure static and dynamic web hosting by Firebase.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-firebase-hosting": r".*", "server": r"^Firebase"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="render",
+            name="Render",
+            category=TechnologyCategory.hosting,
+            subcategory="cloud_hosting",
+            vendor_or_type="Render Services Inc.",
+            website="https://render.com",
+            description="Unified cloud to build and run apps and websites with free SSL and global CDN.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-render-origin-server": r".*", "rndr-id": r".*"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="heroku",
+            name="Heroku",
+            category=TechnologyCategory.hosting,
+            subcategory="cloud_hosting",
+            vendor_or_type="Salesforce Inc.",
+            website="https://www.heroku.com",
+            description="Cloud platform as a service supporting several programming languages.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"via": r".*vegur.*", "server": r"^cowboy$"},
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="digitalocean",
+            name="DigitalOcean",
+            category=TechnologyCategory.hosting,
+            subcategory="cloud_infrastructure",
+            vendor_or_type="DigitalOcean LLC",
+            website="https://www.digitalocean.com",
+            description="Cloud infrastructure provider offering developer-friendly cloud services and Spaces object storage.",
+            confidence_weight=0.85,
+            default_provenance=EvidenceProvenance.asset_host,
+            signatures=FingerprintSignatures(
+                headers={"x-do-app-origin": r".*", "server": r"^do-cdn"},
+                asset_urls=[r"digitaloceanspaces\.com"],
+                min_assets_for_detection=2,
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="bunny_cdn",
+            name="Bunny CDN",
+            category=TechnologyCategory.hosting,
+            subcategory="cdn_proxy",
+            vendor_or_type="BunnyWay d.o.o.",
+            website="https://bunny.net",
+            description="Fast, reliable and high-performance edge storage and content delivery network.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.asset_host,
+            signatures=FingerprintSignatures(
+                headers={"server": r"BunnyCDN", "b-cache": r".*"},
+                asset_urls=[r"b-cdn\.net"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="keycdn",
+            name="KeyCDN",
+            category=TechnologyCategory.hosting,
+            subcategory="cdn_proxy",
+            vendor_or_type="Procon DC AG",
+            website="https://www.keycdn.com",
+            description="High-performance content delivery network built for future speed.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.asset_host,
+            signatures=FingerprintSignatures(
+                headers={"server": r"keycdn-engine"},
+                asset_urls=[r"kxcdn\.com"],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 5C. DATABASES & DATA SERVICES (OBSERVABLE EVIDENCE ONLY)
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="firebase_database",
+            name="Firebase Database / Firestore",
+            category=TechnologyCategory.database,
+            subcategory="cloud_database",
+            vendor_or_type="Google Inc.",
+            website="https://firebase.google.com/products/firestore",
+            description="NoSQL cloud database for storing and syncing data in real time.",
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                script_sources=[r"firebase-database", r"firebase-firestore"],
+                inline_markers=["firebase.database(", "firebase.firestore(", "getFirestore("],
+            ),
+            limitations="Client-side Firebase SDK observed. Backend database security rules and schema are private.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="supabase",
+            name="Supabase",
+            category=TechnologyCategory.database,
+            subcategory="backend_as_a_service",
+            vendor_or_type="Supabase Inc.",
+            website="https://supabase.com",
+            description="Open source Firebase alternative providing Postgres database and client APIs.",
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                script_sources=[r"@supabase/supabase-js"],
+                inline_markers=["createClient(", "supabase.co"],
+            ),
+            limitations="Supabase client integration observed. Database tables and schema remain private.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="algolia",
+            name="Algolia",
+            category=TechnologyCategory.search,
+            subcategory="search_engine",
+            vendor_or_type="Algolia Inc.",
+            website="https://www.algolia.com",
+            description="Flexible search and discovery hosted API engine.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"algoliasearch", r"instantsearch\.js"],
+                inline_markers=["algoliasearch(", "instantsearch("],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="meilisearch",
+            name="Meilisearch",
+            category=TechnologyCategory.search,
+            subcategory="search_engine",
+            vendor_or_type="Meilisearch",
+            website="https://www.meilisearch.com",
+            description="Lightning-fast, ultra-relevant, and typo-tolerant search engine.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                script_sources=[r"meilisearch"],
+                inline_markers=["new MeiliSearch("],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="elasticsearch",
+            name="Elasticsearch",
+            category=TechnologyCategory.search,
+            subcategory="search_engine",
+            vendor_or_type="Elastic N.V.",
+            website="https://www.elastic.co",
+            description="Distributed, RESTful search and analytics engine.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-elastic-product": r"Elasticsearch"},
+            ),
+            limitations="Private backend search engine. Detected only when explicitly disclosed in HTTP headers.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="opensearch",
+            name="OpenSearch",
+            category=TechnologyCategory.search,
+            subcategory="search_engine",
+            vendor_or_type="OpenSearch Community",
+            website="https://opensearch.org",
+            description="Open-source distributed search and analytics suite.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-opensearch-version": r".*"},
+            ),
+            limitations="Private search cluster. Detected only when explicitly disclosed in HTTP headers.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="mysql",
+            name="MySQL",
+            category=TechnologyCategory.database,
+            subcategory="relational_database",
+            vendor_or_type="Oracle Corporation",
+            website="https://www.mysql.com",
+            description="Open-source relational database management system.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-database": r"MySQL"},
+            ),
+            limitations="Private relational database. Cannot be identified over HTTP unless explicitly disclosed in response headers.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="mariadb",
+            name="MariaDB",
+            category=TechnologyCategory.database,
+            subcategory="relational_database",
+            vendor_or_type="MariaDB Foundation",
+            website="https://mariadb.org",
+            description="Open source relational database made by the original developers of MySQL.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-database": r"MariaDB"},
+            ),
+            limitations="Private relational database. Detected only when explicitly disclosed.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="postgresql",
+            name="PostgreSQL",
+            category=TechnologyCategory.database,
+            subcategory="relational_database",
+            vendor_or_type="PostgreSQL Global Development Group",
+            website="https://www.postgresql.org",
+            description="Powerful, open source object-relational database system.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-database": r"PostgreSQL"},
+            ),
+            limitations="Private relational database. Detected only when explicitly disclosed.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="sqlite",
+            name="SQLite",
+            category=TechnologyCategory.database,
+            subcategory="embedded_database",
+            vendor_or_type="SQLite Consortium",
+            website="https://www.sqlite.org",
+            description="Self-contained, high-reliability, embedded SQL database engine.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-database": r"SQLite"},
+            ),
+            limitations="Embedded server-side database. Detected only when explicitly disclosed.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="mongodb",
+            name="MongoDB",
+            category=TechnologyCategory.database,
+            subcategory="document_database",
+            vendor_or_type="MongoDB Inc.",
+            website="https://www.mongodb.com",
+            description="Document-based distributed database designed for modern apps.",
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                script_sources=[r"realm\.mongodb\.com"],
+                headers={"x-database": r"MongoDB"},
+            ),
+            limitations="Database servers are private. Detected only via public client SDK or explicit header.",
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="redis",
+            name="Redis",
+            category=TechnologyCategory.database,
+            subcategory="in_memory_database",
+            vendor_or_type="Redis Ltd.",
+            website="https://redis.io",
+            description="In-memory data store used as a database, cache, streaming engine, and message broker.",
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                headers={"x-cache-engine": r"Redis", "x-redis-cache": r".*"},
+            ),
+            limitations="Internal cache/in-memory store. Detected only when disclosed by edge proxy or caching headers.",
+        )
+    )
+
+    # =========================================================================
+    # 6B. ADDITIONAL ANALYTICS & MEASUREMENT
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="adobe_analytics",
+            name="Adobe Analytics",
+            category=TechnologyCategory.analytics,
+            subcategory="enterprise_analytics",
+            vendor_or_type="Adobe Systems",
+            website="https://business.adobe.com/products/analytics/adobe-analytics.html",
+            description="Enterprise web analytics providing actionable insights from customer data.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"assets\.adobedtm\.com", r"omtrdc\.net", r"s_code\.js"],
+                inline_markers=["s_account", "s.t()"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="matomo",
+            name="Matomo",
+            category=TechnologyCategory.analytics,
+            subcategory="privacy_analytics",
+            vendor_or_type="InnoCraft",
+            website="https://matomo.org",
+            description="Privacy-friendly open-source web analytics platform giving 100% data ownership.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"/matomo\.js", r"/piwik\.js"],
+                inline_markers=["_paq.push"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="fathom",
+            name="Fathom Analytics",
+            category=TechnologyCategory.analytics,
+            subcategory="privacy_analytics",
+            vendor_or_type="Conva Ventures Inc.",
+            website="https://usefathom.com",
+            description="Simple, privacy-first alternative to Google Analytics.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"cdn\.usefathom\.com/script\.js"],
+                inline_markers=["fathom.trackPageview"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="mixpanel",
+            name="Mixpanel",
+            category=TechnologyCategory.analytics,
+            subcategory="product_analytics",
+            vendor_or_type="Mixpanel Inc.",
+            website="https://mixpanel.com",
+            description="Product analytics software to track user interactions and conversion funnels.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"cdn\.mxpnl\.com/libs/mixpanel-"],
+                inline_markers=["mixpanel.init(", "mixpanel.track("],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="amplitude",
+            name="Amplitude",
+            category=TechnologyCategory.analytics,
+            subcategory="product_analytics",
+            vendor_or_type="Amplitude Inc.",
+            website="https://amplitude.com",
+            description="Digital analytics platform tracking product engagement and retention.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"cdn\.amplitude\.com/libs/amplitude-"],
+                inline_markers=["amplitude.getInstance(", "amplitude.init("],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 7B. ADDITIONAL ADVERTISING & MARKETING PIXELS
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="google_ads",
+            name="Google Ads Conversion Tracking",
+            category=TechnologyCategory.advertising,
+            subcategory="conversion_tracking",
+            vendor_or_type="Google Inc.",
+            website="https://ads.google.com",
+            description="Conversion measurement and remarketing tag for Google Ads.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"googleadservices\.com/pagead/conversion\.js", r"googleads\.g\.doubleclick\.net"],
+                inline_markers=["gtag('event', 'conversion'"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="tiktok_pixel",
+            name="TikTok Pixel",
+            category=TechnologyCategory.advertising,
+            subcategory="conversion_pixel",
+            vendor_or_type="ByteDance Ltd.",
+            website="https://ads.tiktok.com",
+            description="Conversion measurement and audience optimization pixel for TikTok advertising.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"analytics\.tiktok\.com/i18n/pixel/events\.js"],
+                inline_markers=["ttq.load(", "ttq.page("],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="linkedin_insight",
+            name="LinkedIn Insight Tag",
+            category=TechnologyCategory.advertising,
+            subcategory="conversion_pixel",
+            vendor_or_type="LinkedIn Corporation",
+            website="https://business.linkedin.com/marketing-solutions/insight-tag",
+            description="Lightweight JavaScript tag for in-depth campaign reporting and website demographic insights.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"snap\.licdn\.com/li\.lms-analytics/insight\.min\.js"],
+                inline_markers=["_linkedin_partner_id"],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 8B. ADDITIONAL USER EXPERIENCE (UX) & ENGAGEMENT
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="fullstory",
+            name="FullStory",
+            category=TechnologyCategory.ux,
+            subcategory="session_replay",
+            vendor_or_type="FullStory Inc.",
+            website="https://www.fullstory.com",
+            description="Digital experience intelligence capturing user session replays and frustration signals.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"edge\.fullstory\.com/s/fs\.js", r"fullstory\.com/s/fs\.js"],
+                inline_markers=["window['_fs_host'] = 'fullstory.com'"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="intercom",
+            name="Intercom",
+            category=TechnologyCategory.ux,
+            subcategory="customer_messaging",
+            vendor_or_type="Intercom Inc.",
+            website="https://www.intercom.com",
+            description="Customer messaging platform with live chat, AI bots, and help desk capabilities.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"widget\.intercom\.io/widget/"],
+                inline_markers=["Intercom('boot'", "window.Intercom"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="crisp",
+            name="Crisp",
+            category=TechnologyCategory.ux,
+            subcategory="customer_messaging",
+            vendor_or_type="Crisp IM SARL",
+            website="https://crisp.chat",
+            description="All-in-one multichannel customer service and live chat platform.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"client\.crisp\.chat/l\.js"],
+                inline_markers=["window.$crisp=[]", "$crisp.push"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="zendesk",
+            name="Zendesk",
+            category=TechnologyCategory.ux,
+            subcategory="customer_support",
+            vendor_or_type="Zendesk Inc.",
+            website="https://www.zendesk.com",
+            description="Customer service software and support ticketing system with live chat widget.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"static\.zdassets\.com/ekr/snippet\.js"],
+                inline_markers=["zE('webWidget'", "window.zEmbed"],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 9B. ADDITIONAL PAYMENTS
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="adyen",
+            name="Adyen",
+            category=TechnologyCategory.payments,
+            subcategory="payment_gateway",
+            vendor_or_type="Adyen N.V.",
+            website="https://www.adyen.com",
+            description="Global financial technology platform processing end-to-end payments.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"checkoutshopper-live\.adyen\.com/checkoutshopper/sdk/"],
+                inline_markers=["AdyenCheckout("],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="klarna",
+            name="Klarna",
+            category=TechnologyCategory.payments,
+            subcategory="bnpl",
+            vendor_or_type="Klarna Bank AB",
+            website="https://www.klarna.com",
+            description="Buy now, pay later checkout and flexible digital payments.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"x\.klarnacdn\.net/kp/lib/v1/api\.js"],
+                inline_markers=["Klarna.Payments.init"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="razorpay",
+            name="Razorpay",
+            category=TechnologyCategory.payments,
+            subcategory="payment_gateway",
+            vendor_or_type="Razorpay Software Private Limited",
+            website="https://razorpay.com",
+            description="Full-stack financial services and payments platform in India.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"checkout\.razorpay\.com/v1/checkout\.js"],
+                inline_markers=["Razorpay("],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 10B. ADDITIONAL SECURITY & BOT PROTECTION
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="hcaptcha",
+            name="hCaptcha",
+            category=TechnologyCategory.security,
+            subcategory="bot_protection",
+            vendor_or_type="Intuition Machines Inc.",
+            website="https://www.hcaptcha.com",
+            description="Privacy-focused anti-bot and fraud defense solution.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"js\.hcaptcha\.com/1/api\.js"],
+                dom_markers=["class:h-captcha"],
+                inline_markers=["hcaptcha.render"],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 11B. EMAIL & MARKETING AUTOMATION
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="mailchimp",
+            name="Mailchimp",
+            category=TechnologyCategory.marketing,
+            subcategory="email_marketing",
+            vendor_or_type="Intuit Inc.",
+            website="https://mailchimp.com",
+            description="Marketing automation and email marketing platform.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"chimpstatic\.com", r"downloads\.mailchimp\.com/js/signup-forms"],
+                dom_markers=["id:mc_embed_signup"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="klaviyo",
+            name="Klaviyo",
+            category=TechnologyCategory.marketing,
+            subcategory="marketing_automation",
+            vendor_or_type="Klaviyo Inc.",
+            website="https://www.klaviyo.com",
+            description="Intelligent marketing automation and customer data platform for e-commerce.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"static\.klaviyo\.com/onsite/js/klaviyo\.js"],
+                inline_markers=["_learnq.push"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="hubspot_marketing",
+            name="HubSpot",
+            category=TechnologyCategory.marketing,
+            subcategory="inbound_marketing",
+            vendor_or_type="HubSpot Inc.",
+            website="https://www.hubspot.com",
+            description="CRM platform with marketing, sales, and customer service software.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"js\.hs-scripts\.com", r"js\.hs-analytics\.net"],
+                inline_markers=["_hsq.push"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="brevo",
+            name="Brevo",
+            category=TechnologyCategory.marketing,
+            subcategory="email_marketing",
+            vendor_or_type="Brevo SAS",
+            website="https://www.brevo.com",
+            description="All-in-one digital marketing and CRM platform for small and medium businesses.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                script_sources=[r"sibautomation\.com"],
+                inline_markers=["Brevo.push", "sendinblue.track"],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 12. ADDITIONAL WEB FONTS & ASSETS
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="adobe_fonts",
+            name="Adobe Fonts",
+            category=TechnologyCategory.fonts,
+            subcategory="web_fonts",
+            vendor_or_type="Adobe Systems",
+            website="https://fonts.adobe.com",
+            description="Subscription service for high-quality fonts by Typekit.",
+            confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
+            signatures=FingerprintSignatures(
+                stylesheet_hrefs=[r"use\.typekit\.net"],
+                script_sources=[r"use\.typekit\.net"],
+                link_rels=[r"use\.typekit\.net"],
+            ),
+        )
+    )
+
+    # =========================================================================
+    # 13. ADDITIONAL WORDPRESS EXTENSIONS (Page Builders, Plugins, Ecommerce)
+    # =========================================================================
+    add(
+        TechnologyFingerprint(
+            id="gutenberg",
+            name="Gutenberg",
+            category=TechnologyCategory.cms,
+            subcategory="page_builder",
+            vendor_or_type="WordPress Community",
+            website="https://wordpress.org/gutenberg/",
+            description="The native block editor for WordPress.",
+            implies=["wordpress", "php"],
+            confidence_weight=0.90,
+            signatures=FingerprintSignatures(
+                stylesheet_hrefs=[r"/wp-includes/css/dist/block-library/style\.min\.css", r"block-library"],
+                body_classes=["wp-embed-responsive"],
+                dom_markers=["class:wp-block-group", "class:wp-block-columns"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="divi",
+            name="Divi",
+            category=TechnologyCategory.cms,
+            subcategory="page_builder",
+            vendor_or_type="Elegant Themes",
+            website="https://www.elegantthemes.com/gallery/divi/",
+            description="Visual website builder theme and plugin for WordPress.",
+            implies=["wordpress", "php"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                body_classes=["et_divi_builder", "et_pb_pagebuilder_layout"],
+                script_sources=[r"/divi/js/", r"et-builder"],
+                stylesheet_hrefs=[r"/themes/divi/style\.css"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="wpbakery",
+            name="WPBakery",
+            category=TechnologyCategory.cms,
+            subcategory="page_builder",
+            vendor_or_type="WPBakery",
+            website="https://wpbakery.com",
+            description="Visual Composer drag-and-drop page builder for WordPress.",
+            implies=["wordpress", "php"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                stylesheet_hrefs=[r"/plugins/js_composer/"],
+                script_sources=[r"/plugins/js_composer/"],
+                dom_markers=["class:vc_row", "class:wpb_wrapper"],
+            ),
+        )
+    )
+
+    add(
+        TechnologyFingerprint(
+            id="woocommerce",
+            name="WooCommerce",
+            category=TechnologyCategory.cms,
+            subcategory="ecommerce_cms",
+            vendor_or_type="Automattic Inc.",
+            website="https://woocommerce.com",
+            description="Open-source customizable ecommerce platform built on WordPress.",
+            implies=["wordpress", "php"],
+            confidence_weight=0.95,
+            signatures=FingerprintSignatures(
+                body_classes=["woocommerce", "woocommerce-page"],
+                script_sources=[r"/plugins/woocommerce/"],
+                stylesheet_hrefs=[r"/plugins/woocommerce/"],
+                cookies=["woocommerce_items_in_cart", "wp_woocommerce_session_"],
             ),
         )
     )

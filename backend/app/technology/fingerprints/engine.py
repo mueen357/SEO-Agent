@@ -278,14 +278,18 @@ class UniversalFingerprintEngine:
                         break
 
             # --- G. Inline Markers & Comments ---
-            for inline_pat in fp.signatures.inline_markers:
+            all_inline_pats = list(fp.signatures.inline_markers)
+            for c in fp.signatures.html_comments:
+                clean_c = c.replace("<!--", "").replace("-->", "").strip()
+                all_inline_pats.append(clean_c)
+            for inline_pat in all_inline_pats:
                 for marker in evidence.inline_markers:
-                    if inline_pat in marker or marker.startswith(f"{tech_id}:"):
+                    if inline_pat.lower() in marker.lower() or marker.startswith(f"{tech_id}:"):
                         matched_items.append(
                             EvidenceItem(
                                 evidence_type=EvidenceType.inline_script.value,
                                 evidence_source="inline:marker",
-                                evidence_summary=f"Runtime inline marker: {marker}",
+                                evidence_summary=f"Runtime inline/comment marker: {marker}",
                                 observed_page_or_url=page_url,
                                 detection_method=DetectionMethod.passive_html.value,
                                 raw_signal=marker,
