@@ -517,11 +517,31 @@ export interface TechnologyFindingItem {
   audit_id: string;
   technology_id: string;
   technology_name: string;
-  technology_category: 'cms' | 'frontend' | 'backend' | 'ecommerce' | 'hosting' | 'other';
-  status: 'detected' | 'possible' | 'unknown';
+  technology_category:
+    | 'cms'
+    | 'frontend'
+    | 'backend'
+    | 'language'
+    | 'ecommerce'
+    | 'hosting'
+    | 'database'
+    | 'analytics'
+    | 'advertising'
+    | 'ux'
+    | 'payments'
+    | 'security'
+    | 'search'
+    | 'marketing'
+    | 'fonts'
+    | 'other'
+    | string;
+  subcategory?: string | null;
+  status: 'detected' | 'possible' | 'inferred' | 'unknown' | 'not_observed' | string;
   confidence: number;
   confidence_level: 'high' | 'medium' | 'low';
   version_or_null: string | null;
+  version_type?: 'explicit_version' | 'asset_hint_unverified' | 'inferred_version' | 'unknown' | string;
+  provenance?: 'first_party' | 'third_party_embed' | 'asset_host' | 'inferred_dependency' | string;
   evidence_type: string;
   evidence_source: string;
   evidence_summary: string;
@@ -537,7 +557,12 @@ export interface TechnologyFindingItem {
     detection_method: string;
     raw_signal?: string | null;
     weight: number;
+    provenance?: string;
+    version_type?: string | null;
   }>;
+  catalog_version?: string;
+  engine_version?: string;
+  limitations?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -578,9 +603,18 @@ export interface TechnologySummaryResponse {
   total_detected: number;
   detected_technologies_count: number;
   possible_technologies_count: number;
+  inferred_technologies_count?: number;
   confidence_distribution: Record<string, number>;
   wordpress_themes: WordPressThemeItem[];
   wordpress_plugins: WordPressPluginItem[];
+  catalog_version?: string;
+  engine_version?: string;
+  evidence_coverage?: {
+    catalog_version: string;
+    engine_version: string;
+    coverage_status: string;
+    limitations?: string | null;
+  };
   created_at: string;
   updated_at: string;
 }
@@ -593,5 +627,14 @@ export interface AnalyzeTechnologiesResponse {
   technologies: TechnologyFindingItem[];
   wordpress_themes: WordPressThemeItem[];
   wordpress_plugins: WordPressPluginItem[];
+  catalog_version?: string;
+  engine_version?: string;
+  evidence_coverage?: {
+    catalog_version: string;
+    engine_version: string;
+    coverage_status: string;
+    limitations?: string | null;
+  };
 }
+
 

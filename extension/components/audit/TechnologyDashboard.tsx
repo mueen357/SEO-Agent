@@ -22,10 +22,17 @@ import {
   Check,
   X,
   Palette,
+  Database,
+  Cloud,
+  BarChart,
+  CreditCard,
+  Lock,
+  FileCode,
 } from 'lucide-react';
 
 import {
   analyzeTechnologies,
+  reanalyzeTechnologies,
   getAuditTechnologies,
   getAuditTechnologySummary,
 } from '../../services/api';
@@ -44,9 +51,27 @@ interface TechnologyDashboardProps {
   onSwitchToFullAudit?: () => void;
 }
 
-type CategoryFilter = 'ALL' | 'cms' | 'frontend' | 'backend';
-type StatusFilter = 'ALL' | 'detected' | 'possible' | 'unknown';
+type CategoryFilter =
+  | 'ALL'
+  | 'cms'
+  | 'frontend'
+  | 'backend'
+  | 'language'
+  | 'hosting'
+  | 'database'
+  | 'analytics'
+  | 'advertising'
+  | 'ux'
+  | 'payments'
+  | 'security'
+  | 'search'
+  | 'marketing'
+  | 'fonts'
+  | 'other';
+
+type StatusFilter = 'ALL' | 'detected' | 'possible' | 'inferred' | 'unknown';
 type ConfidenceFilter = 'ALL' | 'high' | 'medium' | 'low';
+type ActiveSection = 'all' | 'cms' | 'frontend' | 'backend' | 'infrastructure' | 'services' | 'wordpress';
 
 export function TechnologyDashboard({
   auditId,
@@ -73,7 +98,7 @@ export function TechnologyDashboard({
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>('ALL');
   const [selectedConfidence, setSelectedConfidence] = useState<ConfidenceFilter>('ALL');
-  const [activeSection, setActiveSection] = useState<'all' | 'cms' | 'frontend' | 'backend' | 'wordpress'>('all');
+  const [activeSection, setActiveSection] = useState<ActiveSection>('all');
 
   // Disclosure state for expanded evidence
   const [expandedTechIds, setExpandedTechIds] = useState<Set<string>>(new Set());
@@ -121,7 +146,6 @@ export function TechnologyDashboard({
       }
 
       // 2. Fetch Findings List with Bounded Complete Pagination
-      // Page through up to 5 pages (500 items max) to ensure full registry coverage without unbounded looping
       const MAX_PAGES = 5;
       const PAGE_SIZE = 100;
       let allItems: TechnologyFindingItem[] = [];
@@ -186,7 +210,7 @@ export function TechnologyDashboard({
     }
   }, [auditId, loadData]);
 
-  // Handle re-analyze / initial analyze action with strictly scoped async tracking
+  // Initial analyze action (called from empty / unanalyzed state)
   const handleAnalyze = async () => {
     if (!auditId || analyzing || !isBackendOnline) return;
     const targetAuditId = auditId;
@@ -217,6 +241,30 @@ export function TechnologyDashboard({
     }
   };
 
+  // Dedicated Re-analysis action (calls /reanalyze using persisted crawl evidence)
+  const handleReanalyze = async () => {
+    if (!auditId || analyzing || !isBackendOnline) return;
+    const targetAuditId = auditId;
+    setAnalyzing(true);
+    setError(null);
+
+    try {
+      await reanalyzeTechnologies(targetAuditId);
+      if (activeAuditRef.current === targetAuditId) {
+        await loadData(targetAuditId);
+      }
+    } catch (err: any) {
+      if (activeAuditRef.current === targetAuditId) {
+        console.error('Re-analysis error:', err);
+        setError(err.message || 'Failed to re-analyze technologies from persisted evidence.');
+      }
+    } finally {
+      if (activeAuditRef.current === targetAuditId) {
+        setAnalyzing(false);
+      }
+    }
+  };
+
   const toggleExpand = (techId: string) => {
     setExpandedTechIds((prev) => {
       const next = new Set(prev);
@@ -230,7 +278,7 @@ export function TechnologyDashboard({
   };
 
   // Safe section switcher that resets pagination to page 1
-  const handleSectionChange = (section: 'all' | 'cms' | 'frontend' | 'backend' | 'wordpress') => {
+  const handleSectionChange = (section: ActiveSection) => {
     setActiveSection(section);
     setCurrentPage(1);
   };
@@ -242,9 +290,10 @@ export function TechnologyDashboard({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchName = item.technology_name.toLowerCase().includes(q);
-        const matchCat = item.technology_category.toLowerCase().includes(q);
-        const matchSummary = item.evidence_summary.toLowerCase().includes(q);
-        if (!matchName && !matchCat && !matchSummary) return false;
+        const matchCat = (item.technology_category || '').toLowerCase().includes(q);
+        const matchSub = (item.subcategory || '').toLowerCase().includes(q);
+        const matchSummary = (item.evidence_summary || '').toLowerCase().includes(q);
+        if (!matchName && !matchCat && !matchSub && !matchSummary) return false;
       }
 
       // Category filter
@@ -265,7 +314,14 @@ export function TechnologyDashboard({
       // Section tab filter
       if (activeSection === 'cms' && item.technology_category !== 'cms') return false;
       if (activeSection === 'frontend' && item.technology_category !== 'frontend') return false;
-      if (activeSection === 'backend' && item.technology_category !== 'backend') return false;
+      if (activeSection === 'backend' && item.technology_category !== 'backend' && item.technology_category !== 'language') return false;
+      if (activeSection === 'infrastructure' && item.technology_category !== 'hosting' && item.technology_category !== 'database') return false;
+      if (
+        activeSection === 'services' &&
+        !['analytics', 'advertising', 'ux', 'payments', 'security', 'marketing', 'fonts', 'search'].includes(item.technology_category)
+      ) {
+        return false;
+      }
 
       return true;
     });
@@ -298,7 +354,7 @@ export function TechnologyDashboard({
   };
 
   // Status helper badges
-  const renderStatusBadge = (status: 'detected' | 'possible' | 'unknown') => {
+  const renderStatusBadge = (status: string) => {
     switch (status) {
       case 'detected':
         return (
@@ -314,6 +370,13 @@ export function TechnologyDashboard({
             Possible
           </span>
         );
+      case 'inferred':
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-cyan-500/15 text-cyan-400 border border-cyan-500/30" title="Indirect architectural implication">
+            <Sparkles className="w-3 h-3 mr-1" />
+            Inferred
+          </span>
+        );
       case 'unknown':
       default:
         return (
@@ -324,7 +387,65 @@ export function TechnologyDashboard({
     }
   };
 
-  const renderConfidenceBadge = (confidence: number, level: 'high' | 'medium' | 'low') => {
+  // Provenance helper badges
+  const renderProvenanceBadge = (provenance?: string) => {
+    switch (provenance) {
+      case 'third_party_embed':
+        return (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30" title="Observed third-party script or widget integration">
+            Third-Party Embed
+          </span>
+        );
+      case 'asset_host':
+        return (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30" title="Observed static asset or CDN host">
+            Asset Host
+          </span>
+        );
+      case 'inferred_dependency':
+        return (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-500/15 text-cyan-300 border border-cyan-500/30" title="Architecturally inferred from parent platform">
+            Inferred Dependency
+          </span>
+        );
+      case 'first_party':
+      default:
+        return (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-300 border border-slate-700" title="Direct first-party website evidence">
+            First-Party
+          </span>
+        );
+    }
+  };
+
+  // Category Icon helper
+  const renderCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'cms':
+        return <Globe className="w-4 h-4" />;
+      case 'frontend':
+        return <Code className="w-4 h-4" />;
+      case 'backend':
+        return <Server className="w-4 h-4" />;
+      case 'language':
+        return <FileCode className="w-4 h-4" />;
+      case 'hosting':
+        return <Cloud className="w-4 h-4" />;
+      case 'database':
+        return <Database className="w-4 h-4" />;
+      case 'analytics':
+      case 'ux':
+        return <BarChart className="w-4 h-4" />;
+      case 'payments':
+        return <CreditCard className="w-4 h-4" />;
+      case 'security':
+        return <Lock className="w-4 h-4" />;
+      default:
+        return <Layers className="w-4 h-4" />;
+    }
+  };
+
+  const renderConfidenceBadge = (confidence: number, level: string) => {
     const pct = Math.round(confidence * 100);
     let colorClass = 'bg-slate-800 text-slate-300 border-slate-700';
     if (level === 'high') colorClass = 'bg-emerald-950/40 text-emerald-300 border-emerald-800/40';
@@ -517,12 +638,17 @@ export function TechnologyDashboard({
       {/* ACTION BAR */}
       <div className="flex items-center justify-between bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
         <div className="flex items-center space-x-2">
-          <div className="p-1.5 bg-cyan-950/60 border border-cyan-800/40 rounded-lg text-cyan-400">
+          <div className="p-1.5 bg-cyan-950/60 border border-cyan-800/40 rounded-lg text-cyan-400 flex-shrink-0">
             <Cpu className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-xs font-semibold text-slate-200">Technology & CMS Stack</h2>
-            <p className="text-[11px] text-slate-400">Deterministic passive fingerprinting from crawl evidence</p>
+            <div className="flex items-center space-x-2">
+              <h2 className="text-xs font-semibold text-slate-200">Complete Technology Stack</h2>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 text-cyan-400 border border-slate-800">
+                Catalog v{summary?.catalog_version || '2.0.0'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">Deterministic passive fingerprinting across 173 technologies</p>
           </div>
         </div>
 
@@ -539,6 +665,7 @@ export function TechnologyDashboard({
           <button
             onClick={handleAnalyze}
             disabled={analyzing || loading}
+            title="Re-evaluate technology findings using persisted evidence (0 network requests)"
             className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition-all ${
               analyzing
                 ? 'bg-cyan-500/50 text-slate-950 cursor-wait'
@@ -547,12 +674,12 @@ export function TechnologyDashboard({
           >
             {analyzing ? (
               <>
-                <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" />
                 <span>Re-analyzing...</span>
               </>
             ) : (
               <>
-                <Sparkles className="w-3 h-3 mr-1" />
+                <Sparkles className="w-3.5 h-3.5 mr-1" />
                 <span>Re-analyze</span>
               </>
             )}
@@ -572,7 +699,7 @@ export function TechnologyDashboard({
             {primaryCmsName}
           </div>
           <div className="mt-1 flex items-center space-x-1">
-            {renderStatusBadge(primaryCmsStatus as any)}
+            {renderStatusBadge(primaryCmsStatus)}
           </div>
         </div>
 
@@ -585,10 +712,16 @@ export function TechnologyDashboard({
           <div className="text-sm font-bold text-slate-100">
             {summary?.total_detected ?? technologies.length} Technologies
           </div>
-          <div className="mt-1 text-[11px] text-slate-400 flex items-center space-x-1.5">
+          <div className="mt-1 text-[11px] text-slate-400 flex items-center space-x-1.5 truncate">
             <span className="text-emerald-400 font-semibold">{summary?.detected_technologies_count || 0} detected</span>
             <span>•</span>
             <span className="text-amber-400">{summary?.possible_technologies_count || 0} possible</span>
+            {(summary?.inferred_technologies_count || 0) > 0 && (
+              <>
+                <span>•</span>
+                <span className="text-cyan-400">{summary?.inferred_technologies_count} inferred</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -611,7 +744,7 @@ export function TechnologyDashboard({
               </span>
             )}
           </div>
-          <div className="mt-1 text-[10px] text-slate-500">Threshold: Detected $\ge$ 70%</div>
+          <div className="mt-1 text-[10px] text-slate-500">Threshold: Detected &ge; 70%</div>
         </div>
 
         {/* Card 4: WordPress Assets Summary */}
@@ -637,7 +770,7 @@ export function TechnologyDashboard({
       <div className="flex items-center space-x-1 bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-xs overflow-x-auto no-scrollbar">
         <button
           onClick={() => handleSectionChange('all')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+          className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
             activeSection === 'all'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
               : 'text-slate-400 hover:text-slate-200 border border-transparent'
@@ -648,7 +781,7 @@ export function TechnologyDashboard({
 
         <button
           onClick={() => handleSectionChange('cms')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+          className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
             activeSection === 'cms'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
               : 'text-slate-400 hover:text-slate-200 border border-transparent'
@@ -659,7 +792,7 @@ export function TechnologyDashboard({
 
         <button
           onClick={() => handleSectionChange('frontend')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+          className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
             activeSection === 'frontend'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
               : 'text-slate-400 hover:text-slate-200 border border-transparent'
@@ -670,7 +803,7 @@ export function TechnologyDashboard({
 
         <button
           onClick={() => handleSectionChange('backend')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+          className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
             activeSection === 'backend'
               ? 'bg-slate-800 text-cyan-400 border border-slate-700'
               : 'text-slate-400 hover:text-slate-200 border border-transparent'
@@ -679,10 +812,32 @@ export function TechnologyDashboard({
           Backend & Runtimes
         </button>
 
+        <button
+          onClick={() => handleSectionChange('infrastructure')}
+          className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
+            activeSection === 'infrastructure'
+              ? 'bg-slate-800 text-cyan-400 border border-slate-700'
+              : 'text-slate-400 hover:text-slate-200 border border-transparent'
+          }`}
+        >
+          Hosting & CDN
+        </button>
+
+        <button
+          onClick={() => handleSectionChange('services')}
+          className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
+            activeSection === 'services'
+              ? 'bg-slate-800 text-cyan-400 border border-slate-700'
+              : 'text-slate-400 hover:text-slate-200 border border-transparent'
+          }`}
+        >
+          Analytics & Services
+        </button>
+
         {(themes.length > 0 || plugins.length > 0) && (
           <button
             onClick={() => handleSectionChange('wordpress')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
+            className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
               activeSection === 'wordpress'
                 ? 'bg-slate-800 text-cyan-400 border border-slate-700'
                 : 'text-slate-400 hover:text-slate-200 border border-transparent'
@@ -713,11 +868,11 @@ export function TechnologyDashboard({
                 {themes.map((theme) => (
                   <div key={theme.slug} className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-lg">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-slate-100">
+                      <span className="text-xs font-semibold text-slate-100 truncate mr-2">
                         {theme.name || theme.slug}
                       </span>
                       <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                        className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap ${
                           theme.status === 'active'
                             ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/40'
                             : 'bg-slate-800 text-slate-400 border border-slate-700'
@@ -767,10 +922,10 @@ export function TechnologyDashboard({
                 {plugins.map((plugin) => (
                   <div key={plugin.slug} className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-lg">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-slate-100">
+                      <span className="text-xs font-semibold text-slate-100 truncate mr-2">
                         {plugin.name || plugin.slug}
                       </span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-950/40 text-indigo-300 border border-indigo-800/40">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-950/40 text-indigo-300 border border-indigo-800/40 whitespace-nowrap">
                         {Math.round(plugin.confidence * 100)}% conf
                       </span>
                     </div>
@@ -816,7 +971,7 @@ export function TechnologyDashboard({
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
               <input
                 type="text"
-                placeholder="Search technology by name or summary..."
+                placeholder="Search technology by name, category, or evidence..."
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -847,7 +1002,7 @@ export function TechnologyDashboard({
             )}
           </div>
 
-          {/* Filter Pills */}
+          {/* Filter Dropdowns */}
           <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
             {/* Category Dropdown */}
             <div className="flex items-center space-x-1">
@@ -864,6 +1019,17 @@ export function TechnologyDashboard({
                 <option value="cms">CMS & Builders</option>
                 <option value="frontend">Frontend Frameworks</option>
                 <option value="backend">Backend Runtimes</option>
+                <option value="language">Programming Languages</option>
+                <option value="hosting">Hosting & CDN</option>
+                <option value="database">Database Services</option>
+                <option value="analytics">Analytics</option>
+                <option value="advertising">Advertising</option>
+                <option value="ux">User Experience</option>
+                <option value="payments">Payments</option>
+                <option value="security">Security</option>
+                <option value="marketing">Marketing & Email</option>
+                <option value="fonts">Web Fonts</option>
+                <option value="other">Other Libraries</option>
               </select>
             </div>
 
@@ -881,6 +1047,7 @@ export function TechnologyDashboard({
                 <option value="ALL">All Statuses</option>
                 <option value="detected">Detected (&ge; 70%)</option>
                 <option value="possible">Possible (40-69%)</option>
+                <option value="inferred">Inferred Dependency</option>
                 <option value="unknown">Unknown (&lt; 40%)</option>
               </select>
             </div>
@@ -921,12 +1088,14 @@ export function TechnologyDashboard({
             <div className="p-8 text-center bg-slate-900/40 border border-slate-800/80 rounded-xl">
               <Cpu className="w-6 h-6 text-slate-500 mx-auto mb-2" />
               <h4 className="text-xs font-semibold text-slate-300 mb-1">
-                {hasActiveFilters ? 'No Technologies Match Filters' : 'No Technologies Detected'}
+                {hasActiveFilters
+                  ? 'No Technologies Match Filters'
+                  : 'No supported technologies confirmed from currently available evidence.'}
               </h4>
               <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
                 {hasActiveFilters
                   ? 'Try clearing or broadening your search and category filters.'
-                  : 'No evidence matching known CMS, frontend, or backend signatures was observed in this website audit.'}
+                  : 'No matching signals found in the analyzed evidence. This does not prove technologies are absent on the server.'}
               </p>
               {hasActiveFilters && (
                 <button
@@ -961,23 +1130,22 @@ export function TechnologyDashboard({
                   >
                     <div className="flex items-center space-x-2.5 min-w-0">
                       <div className="p-1.5 rounded-lg bg-slate-800 text-cyan-400 border border-slate-700 flex-shrink-0">
-                        {item.technology_category === 'cms' ? (
-                          <Globe className="w-4 h-4" />
-                        ) : item.technology_category === 'frontend' ? (
-                          <Code className="w-4 h-4" />
-                        ) : (
-                          <Server className="w-4 h-4" />
-                        )}
+                        {renderCategoryIcon(item.technology_category)}
                       </div>
 
                       <div className="min-w-0">
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 flex-wrap">
                           <span className="text-xs font-bold text-slate-100 truncate">
                             {item.technology_name}
                           </span>
                           <span className="text-[10px] text-slate-400 font-mono uppercase px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800">
                             {item.technology_category}
                           </span>
+                          {item.subcategory && (
+                            <span className="text-[10px] text-slate-500 font-mono px-1 py-0.5 rounded bg-slate-900/70 border border-slate-800/50">
+                              {item.subcategory}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-400 truncate mt-0.5">
                           {item.evidence_summary}
@@ -986,6 +1154,7 @@ export function TechnologyDashboard({
                     </div>
 
                     <div className="flex items-center space-x-2 flex-shrink-0 ml-3">
+                      {renderProvenanceBadge(item.provenance)}
                       {renderStatusBadge(item.status)}
                       {renderConfidenceBadge(item.confidence, item.confidence_level)}
                       <div className="text-slate-500">
@@ -1003,17 +1172,25 @@ export function TechnologyDashboard({
                           <span className="text-[10px] text-slate-500 uppercase block">Version</span>
                           <span className="font-medium text-slate-200">
                             {item.version_or_null ? (
-                              `v${item.version_or_null}`
+                              <span className="space-x-1">
+                                <span>v{item.version_or_null}</span>
+                                {item.version_type === 'asset_hint_unverified' && (
+                                  <span className="text-[10px] text-amber-400 font-normal block">(Asset hint — unverified)</span>
+                                )}
+                                {item.version_type === 'explicit_version' && (
+                                  <span className="text-[10px] text-emerald-400 font-normal block">(Explicit version)</span>
+                                )}
+                              </span>
                             ) : (
-                              <span className="text-slate-500 italic">Not verified</span>
+                              <span className="text-slate-500 italic">Version unobserved / private</span>
                             )}
                           </span>
                         </div>
 
                         <div className="p-2 rounded bg-slate-900/60 border border-slate-800/60">
-                          <span className="text-[10px] text-slate-500 uppercase block">Detection Method</span>
+                          <span className="text-[10px] text-slate-500 uppercase block">Provenance Origin</span>
                           <span className="font-mono text-slate-300 text-[11px]">
-                            {item.detection_method}
+                            {item.provenance ? item.provenance.replace('_', ' ') : 'first party'}
                           </span>
                         </div>
 
@@ -1031,6 +1208,16 @@ export function TechnologyDashboard({
                           </span>
                         </div>
                       </div>
+
+                      {/* Detection Limitations Banner if applicable */}
+                      {item.limitations && (
+                        <div className="p-2.5 bg-amber-950/30 border border-amber-800/40 rounded-lg text-[11px] text-amber-300/90 flex items-start space-x-2">
+                          <ShieldAlert className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Detection Boundary:</strong> {item.limitations}
+                          </span>
+                        </div>
+                      )}
 
                       {/* Primary Evidence Source */}
                       <div>
@@ -1059,7 +1246,7 @@ export function TechnologyDashboard({
                                     {ev.evidence_type}
                                   </span>
                                   <span className="text-[10px] text-slate-500">
-                                    Weight: {ev.weight}
+                                    Weight: {ev.weight} {ev.provenance ? `• ${ev.provenance}` : ''}
                                   </span>
                                 </div>
                                 <div className="text-slate-300 font-medium">{ev.evidence_summary}</div>

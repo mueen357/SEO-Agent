@@ -601,6 +601,28 @@ export async function analyzeTechnologies(
 }
 
 /**
+ * Re-analyze existing audit technologies using persisted crawl evidence (POST /api/v1/audits/{id}/technologies/reanalyze)
+ */
+export async function reanalyzeTechnologies(
+  auditId: string,
+  baseUrl: string = DEFAULT_API_BASE
+): Promise<AnalyzeTechnologiesResponse> {
+  const url = `${baseUrl}/api/v1/audits/${encodeURIComponent(auditId)}/technologies/reanalyze`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Accept': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to re-analyze technologies (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
+
+/**
  * Retrieve detected technologies list (GET /api/v1/audits/{id}/technologies)
  */
 export async function getAuditTechnologies(
