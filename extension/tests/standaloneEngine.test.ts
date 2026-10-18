@@ -613,8 +613,8 @@ describe('Standalone Engine - Exporter', () => {
       auditId: 'audit-export-test',
       ruleId: 'ONPAGE_H1_PRIMARY',
       category: 'on_page',
-      severity: 'medium',
-      status: 'warning',
+      severity: 'high',
+      status: 'fail',
       title: 'Found "Quotes" inside title',
       description: 'Multiple H1 found',
       recommendation: 'Use single H1',
@@ -638,7 +638,8 @@ describe('Standalone Engine - Exporter', () => {
 
     expect(csvStr).toContain('Type,Page URL,Rule / Status,Severity / HTTP,Title / Evidence,Recommendation');
     expect(csvStr).toContain('PAGE,"https://export-example.com/","success","200"');
-    expect(csvStr).toContain('SEO_ISSUE,"https://export-example.com/","ONPAGE_H1_PRIMARY"');
+    expect(csvStr).toContain('SEO_ISSUE,"https://export-example.com/","ONPAGE_H1_PRIMARY [FAIL]"');
+    expect(csvStr).toContain('SEO_WARNING,"https://export-example.com/","ONPAGE_TITLE_TAG [WARNING]"');
     // Verify quotes are escaped with double quotes
     expect(csvStr).toContain('""Quotes"" inside title');
   });

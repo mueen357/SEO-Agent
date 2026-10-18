@@ -57,18 +57,72 @@ export interface StandaloneCrawlPage {
   evidence?: import('./audit/domParserEngine').ParsedHtmlEvidence;
 }
 
+export type StandaloneFindingStatus =
+  | 'pass'
+  | 'warning'
+  | 'fail'
+  | 'not_applicable'
+  | 'unknown'
+  | 'not_evaluated';
+
+export type StandaloneFindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+
 export interface StandaloneSeoFinding {
   id: string;
   auditId: string;
   ruleId: string;
   category: 'on_page' | 'technical' | 'sitewide';
-  severity: 'critical' | 'high' | 'medium' | 'low';
-  status: 'pass' | 'warning' | 'fail';
+  severity: StandaloneFindingSeverity;
+  status: StandaloneFindingStatus;
   title: string;
   description: string;
   recommendation: string;
   pageUrl: string;
   evidence: Record<string, any>;
+}
+
+export interface StandaloneFindingsSummary {
+  totalRecords: number;          // Total raw finding records stored
+  distinctRulesEvaluated: number;// Unique ruleIds evaluated
+  pagesEvaluated: number;        // Unique page URLs with findings
+  issueCount: number;            // Only failed + warning findings (actual issues!)
+  failedCount: number;           // Actual failures ('fail')
+  warningCount: number;          // Actual warnings ('warning')
+  passedCount: number;           // Checks passed ('pass')
+  notApplicableCount: number;    // Checks marked N/A ('not_applicable')
+  unknownCount: number;          // Checks with uncertain/unknown evidence ('unknown')
+  notEvaluatedCount: number;     // Checks not evaluated ('not_evaluated')
+  bySeverity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+  };
+}
+
+export type StandaloneScoreState = 'fully_evaluated' | 'provisional' | 'unavailable';
+
+export interface StandaloneScoreCoverage {
+  scoreState: StandaloneScoreState;
+  scoreStateLabel: string;
+  coverageRatio: number;          // e.g. 9/51 = 0.176
+  expectedRulesTotal: number;     // Canonical 51
+  implementedRulesCount: number;  // Number of standalone-implemented rules
+  executedRulesTotal: number;     // Distinct rules actually evaluated in audit
+  missingRulesTotal: number;      // 51 - executedRulesTotal
+  passedRulesCount: number;
+  failedRulesCount: number;
+  warningRulesCount: number;
+  notApplicableRulesCount: number;
+  notEvaluatedRulesCount: number;
+  unavailableEvidenceCount: number;
+  familyCoverage: {
+    on_page: { executed: number; total: number; ratio: number };
+    technical: { executed: number; total: number; ratio: number };
+    sitewide: { executed: number; total: number; ratio: number };
+  };
+  policyVersion: string;
 }
 
 export interface StandaloneTechFinding {
@@ -102,6 +156,8 @@ export interface StandaloneAuditScorecard {
   highIssuesCount: number;
   mediumIssuesCount: number;
   lowIssuesCount: number;
+  coverage: StandaloneScoreCoverage;
+  scoringVersion?: string;
   calculatedAt: number;
 }
 

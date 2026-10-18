@@ -1,6 +1,7 @@
 /**
  * Client-Side Export Utility.
  * Exports audit data directly as downloadable JSON or CSV files without servers.
+ * Implements centralized findings classification and honest score coverage metrics.
  */
 
 import type {
@@ -9,6 +10,7 @@ import type {
   StandaloneSeoFinding,
   StandaloneTechFinding,
 } from '../types';
+import { StandaloneFindingsClassifier } from '../audit/findingsClassifier';
 
 export class StandaloneExporter {
   public static generateJson(
@@ -17,20 +19,30 @@ export class StandaloneExporter {
     findings: StandaloneSeoFinding[],
     technologies: StandaloneTechFinding[]
   ): string {
+    const findingsSummary = StandaloneFindingsClassifier.classify(findings);
+
     const data = {
-      exportVersion: '1.0.0',
+      exportVersion: '1.1.0',
       exportedAt: new Date().toISOString(),
       audit: job,
       scorecard: job.scorecard,
+      scoreCoverage: job.scorecard?.coverage,
       summary: {
         totalPagesCrawled: pages.length,
-        totalIssues: findings.length,
+        totalIssues: findingsSummary.issueCount, // Only failed and warning findings!
+        totalPassedChecks: findingsSummary.passedCount,
+        totalWarnings: findingsSummary.warningCount,
+        totalRecords: findings.length,
+        distinctRulesEvaluated: findingsSummary.distinctRulesEvaluated,
+        pagesEvaluated: findingsSummary.pagesEvaluated,
         totalTechnologiesDetected: technologies.length,
+        findingsSummary,
       },
       pages: pages.map((p) => ({
         url: p.url,
         httpStatus: p.httpStatus,
         fetchStatus: p.fetchStatus,
+        errorCode: p.errorCode,
         title: p.title,
         metaDescription: p.metaDescription,
         canonicalUrl: p.canonicalUrl,
@@ -69,13 +81,23 @@ export class StandaloneExporter {
       );
     }
 
-    // Issues
+    // Findings (Distinguish actual SEO_ISSUE vs SEO_CHECK_PASSED vs SEO_CHECK_NA)
     for (const f of findings) {
+      const status = (f.status as string)?.toLowerCase();
+      let rowType = 'SEO_CHECK_PASSED';
+      if (status === 'fail' || status === 'failed' || status === 'error') {
+        rowType = 'SEO_ISSUE';
+      } else if (status === 'warning' || status === 'warn') {
+        rowType = 'SEO_WARNING';
+      } else if (status === 'not_applicable' || status === 'info') {
+        rowType = 'SEO_CHECK_NA';
+      }
+
       rows.push(
         [
-          'SEO_ISSUE',
+          rowType,
           this.escapeCsv(f.pageUrl),
-          this.escapeCsv(f.ruleId),
+          this.escapeCsv(`${f.ruleId} [${f.status.toUpperCase()}]`),
           this.escapeCsv(f.severity),
           this.escapeCsv(f.title),
           this.escapeCsv(f.recommendation),

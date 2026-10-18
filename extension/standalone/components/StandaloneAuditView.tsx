@@ -27,6 +27,7 @@ import type {
 import { StandaloneAuditStorage } from '../persistence/indexedDb';
 import { standaloneCoordinator } from '../coordinator';
 import { StandaloneExporter } from '../export/exporter';
+import { StandaloneFindingsClassifier } from '../audit/findingsClassifier';
 
 export interface StandaloneAuditViewProps {
   activeUrl?: string;
@@ -42,6 +43,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
   const [findings, setFindings] = useState<StandaloneSeoFinding[]>([]);
   const [technologies, setTechnologies] = useState<StandaloneTechFinding[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'tech' | 'issues' | 'coverage'>('overview');
+  const [issuesViewFilter, setIssuesViewFilter] = useState<'issues' | 'passed' | 'all'>('issues');
   const [loading, setLoading] = useState(false);
 
   const activeJobRef = React.useRef<StandaloneAuditJob | null>(null);
@@ -307,6 +309,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
   };
 
   const scorecard = activeJob?.scorecard;
+  const findingsSummary = StandaloneFindingsClassifier.classify(findings);
 
   return (
     <div className="flex flex-col h-full bg-slate-950 text-slate-100 p-4 space-y-4 overflow-y-auto font-sans">
@@ -508,7 +511,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              SEO Issues ({findings.length})
+              SEO Issues ({findingsSummary.issueCount})
             </button>
             <button
               onClick={() => setActiveTab('coverage')}
@@ -518,7 +521,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Coverage & Rules (9/51)
+              Coverage & Rules ({scorecard?.coverage?.executedRulesTotal ?? 9}/51)
             </button>
           </div>
 
@@ -539,6 +542,22 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   </div>
                 </div>
               ) : null}
+
+              {scorecard.coverage && scorecard.coverage.scoreState === 'provisional' && (
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-amber-950/40 border border-amber-800/80 text-xs">
+                  <div className="flex items-center space-x-2">
+                    <span className="px-1.5 py-0.5 text-[10px] font-bold tracking-wider uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded">
+                      PROVISIONAL SCORE
+                    </span>
+                    <span className="text-slate-300 font-medium">
+                      Coverage: {scorecard.coverage.executedRulesTotal}/{scorecard.coverage.expectedRulesTotal} canonical rules ({Math.round(scorecard.coverage.coverageRatio * 100)}%)
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono text-amber-400/90">
+                    {scorecard.coverage.policyVersion || 'v1.0-provisional'}
+                  </span>
+                </div>
+              )}
 
               <div className="grid grid-cols-4 gap-2">
                 <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2.5 text-center">
@@ -563,6 +582,34 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide">Sitewide</div>
                   <div className="text-xl font-bold text-blue-400 mt-0.5">
                     {scorecard.available && scorecard.sitewideScore !== null ? `${scorecard.sitewideScore}/100` : 'N/A'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Honest Evaluation Metric Cards */}
+              <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                <div className="bg-slate-900/60 border border-slate-800/80 rounded p-2">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide">Issues</div>
+                  <div className={`text-base font-bold mt-0.5 ${scorecard.totalIssuesCount > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {scorecard.totalIssuesCount}
+                  </div>
+                </div>
+                <div className="bg-slate-900/60 border border-slate-800/80 rounded p-2">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide">Warnings</div>
+                  <div className={`text-base font-bold mt-0.5 ${findingsSummary.warningCount > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+                    {findingsSummary.warningCount}
+                  </div>
+                </div>
+                <div className="bg-slate-900/60 border border-slate-800/80 rounded p-2">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide">Passed Checks</div>
+                  <div className="text-base font-bold text-emerald-400 mt-0.5">
+                    {findingsSummary.passedCount}
+                  </div>
+                </div>
+                <div className="bg-slate-900/60 border border-slate-800/80 rounded p-2">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide">Coverage</div>
+                  <div className="text-base font-bold text-indigo-400 mt-0.5">
+                    {scorecard.coverage ? `${scorecard.coverage.executedRulesTotal}/${scorecard.coverage.expectedRulesTotal}` : '9/51'}
                   </div>
                 </div>
               </div>
@@ -654,12 +701,127 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
 
           {/* Tab: Issues */}
           {activeTab === 'issues' && (
-            <div className="space-y-1.5 max-h-72 overflow-y-auto">
-              {findings.length === 0 ? (
-                <div className="p-4 text-center text-xs text-emerald-400">
-                  Zero SEO issues detected across evaluated pages!
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {/* Filter controls */}
+              <div className="flex items-center justify-between pb-1 border-b border-slate-800 text-[11px]">
+                <div className="flex items-center space-x-1.5">
+                  <button
+                    onClick={() => setIssuesViewFilter('issues')}
+                    className={`px-2 py-0.5 rounded font-medium transition-colors ${
+                      issuesViewFilter === 'issues'
+                        ? 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                        : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Issues ({findingsSummary.issueCount})
+                  </button>
+                  <button
+                    onClick={() => setIssuesViewFilter('passed')}
+                    className={`px-2 py-0.5 rounded font-medium transition-colors ${
+                      issuesViewFilter === 'passed'
+                        ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
+                        : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Passed Checks ({findingsSummary.passedCount})
+                  </button>
+                  <button
+                    onClick={() => setIssuesViewFilter('all')}
+                    className={`px-2 py-0.5 rounded font-medium transition-colors ${
+                      issuesViewFilter === 'all'
+                        ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-800'
+                        : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    All Records ({findingsSummary.totalRecords})
+                  </button>
                 </div>
-              ) : (
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {findingsSummary.distinctRulesEvaluated} rules / {findingsSummary.pagesEvaluated} pages
+                </span>
+              </div>
+
+              {/* Issues view */}
+              {issuesViewFilter === 'issues' && (
+                findingsSummary.issueCount === 0 ? (
+                  <div className="p-4 text-center text-xs text-emerald-400 space-y-1 bg-slate-900/40 border border-slate-800 rounded">
+                    <div className="font-semibold text-emerald-300">✓ Zero SEO issues detected across evaluated pages!</div>
+                    <div className="text-slate-400 text-[11px] font-mono">
+                      {findingsSummary.passedCount} checks passed, 0 failures, 0 warnings
+                    </div>
+                  </div>
+                ) : (
+                  findings
+                    .filter((f) => {
+                      const s = f.status?.toLowerCase();
+                      return s === 'fail' || s === 'failed' || s === 'warning' || s === 'warn';
+                    })
+                    .map((f) => (
+                      <div
+                        key={f.id}
+                        className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs space-y-1"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-200">{f.title}</span>
+                          <span
+                            className={`px-1.5 py-0.5 text-[9px] font-semibold uppercase rounded ${
+                              f.severity === 'critical'
+                                ? 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                                : f.severity === 'high'
+                                ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
+                                : 'bg-blue-950/80 text-blue-300 border border-blue-800'
+                            }`}
+                          >
+                            {f.severity}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-400">{f.description}</div>
+                        <div className="text-[10px] text-indigo-300/80 font-mono">
+                          Rec: {f.recommendation}
+                        </div>
+                        {f.pageUrl && (
+                          <div className="text-[10px] text-slate-500 font-mono truncate">
+                            Page: {f.pageUrl}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                )
+              )}
+
+              {/* Passed view */}
+              {issuesViewFilter === 'passed' && (
+                findingsSummary.passedCount === 0 ? (
+                  <div className="p-4 text-center text-xs text-slate-500">
+                    No passed check records stored.
+                  </div>
+                ) : (
+                  findings
+                    .filter((f) => f.status?.toLowerCase() === 'pass' || f.status?.toLowerCase() === 'passed')
+                    .map((f) => (
+                      <div
+                        key={f.id}
+                        className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs flex items-center justify-between"
+                      >
+                        <div className="truncate flex-1 mr-2">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="text-emerald-400 font-bold">✓</span>
+                            <span className="font-medium text-slate-200">{f.title}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono truncate mt-0.5">
+                            {f.pageUrl}
+                          </div>
+                        </div>
+                        <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800">
+                          {f.ruleId}
+                        </span>
+                      </div>
+                    ))
+                )
+              )}
+
+              {/* All records view */}
+              {issuesViewFilter === 'all' && (
                 findings.map((f) => (
                   <div
                     key={f.id}
@@ -667,22 +829,16 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-slate-200">{f.title}</span>
-                      <span
-                        className={`px-1.5 py-0.5 text-[9px] font-semibold uppercase rounded ${
-                          f.severity === 'critical'
-                            ? 'bg-rose-950/80 text-rose-300 border border-rose-800'
-                            : f.severity === 'high'
-                            ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
-                            : 'bg-blue-950/80 text-blue-300 border border-blue-800'
-                        }`}
-                      >
-                        {f.severity}
-                      </span>
+                      <div className="flex items-center space-x-1">
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase font-mono rounded bg-slate-800 text-slate-300">
+                          {f.status}
+                        </span>
+                        <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800">
+                          {f.ruleId}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-[11px] text-slate-400">{f.description}</div>
-                    <div className="text-[10px] text-indigo-300/80 font-mono">
-                      Rec: {f.recommendation}
-                    </div>
                   </div>
                 ))
               )}
@@ -693,33 +849,73 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
           {activeTab === 'coverage' && (
             <div className="space-y-3 text-xs bg-slate-900/60 border border-slate-800 p-3 rounded-lg">
               <div>
-                <h4 className="font-semibold text-indigo-300 mb-1">SEO Rule Coverage: 9 / 51 Rules Implemented</h4>
-                <p className="text-[11px] text-slate-400 mb-2">
-                  Client-side evaluation of essential on-page and technical SEO rules:
-                </p>
-                <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
-                  <span className="text-emerald-400">✓ title_presence</span>
-                  <span className="text-emerald-400">✓ title_length</span>
-                  <span className="text-emerald-400">✓ meta_description_presence</span>
-                  <span className="text-emerald-400">✓ meta_description_length</span>
-                  <span className="text-emerald-400">✓ h1_presence</span>
-                  <span className="text-emerald-400">✓ image_alt_missing</span>
-                  <span className="text-emerald-400">✓ canonical_match</span>
-                  <span className="text-emerald-400">✓ robots_txt_valid</span>
-                  <span className="text-emerald-400">✓ http_status_ok</span>
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="font-semibold text-indigo-300">
+                    Canonical SEO Rule Coverage: {scorecard?.coverage?.executedRulesTotal ?? 9} / 51 Rules Evaluated
+                  </h4>
+                  <span className="px-1.5 py-0.5 text-[10px] font-mono uppercase rounded bg-amber-950/60 text-amber-300 border border-amber-800">
+                    Provisional ({Math.round(((scorecard?.coverage?.executedRulesTotal ?? 9) / 51) * 100)}%)
+                  </span>
                 </div>
-                <div className="mt-2 text-[10px] text-slate-500">
-                  42 Backend Rules (Hreflang, Schema.org, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, etc.) require Local Backend Audit mode.
+                <p className="text-[11px] text-slate-400 mb-2">
+                  Parity tracking against authoritative 51 backend SEO rule registry:
+                </p>
+
+                {/* Family Breakdown */}
+                <div className="space-y-2 mb-3 bg-slate-950/60 p-2.5 rounded border border-slate-800/80">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-slate-300">On-Page SEO (16 canonical rules)</span>
+                    <span className="font-mono text-emerald-400">
+                      {scorecard?.coverage?.familyCoverage?.on_page?.executed ?? 6} / 16 executed
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-slate-300">Technical SEO (22 canonical rules)</span>
+                    <span className="font-mono text-emerald-400">
+                      {scorecard?.coverage?.familyCoverage?.technical?.executed ?? 2} / 22 executed
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-slate-300">Site-Wide SEO (13 canonical rules)</span>
+                    <span className="font-mono text-emerald-400">
+                      {scorecard?.coverage?.familyCoverage?.sitewide?.executed ?? 1} / 13 executed
+                    </span>
+                  </div>
+                </div>
+
+                <div className="font-mono text-[10px] space-y-1 text-slate-400">
+                  <div className="text-indigo-300 font-semibold text-[11px]">Standalone Evaluated Rules (9):</div>
+                  <div className="grid grid-cols-2 gap-1 text-emerald-400">
+                    <span>✓ ONPAGE_TITLE_TAG</span>
+                    <span>✓ ONPAGE_TITLE_LENGTH</span>
+                    <span>✓ ONPAGE_META_DESCRIPTION</span>
+                    <span>✓ ONPAGE_META_DESCRIPTION_LENGTH</span>
+                    <span>✓ ONPAGE_H1_PRESENCE</span>
+                    <span>✓ ONPAGE_IMAGE_ALT_TEXT</span>
+                    <span>✓ TECH_HTTPS_SECURITY</span>
+                    <span>✓ TECH_ROBOTS_TXT</span>
+                    <span>✓ SITE_CANONICAL_CONSISTENCY</span>
+                  </div>
+                  <div className="mt-2 text-slate-500">
+                    42 Canonical Rules (Hreflang, Schema.org JSON-LD, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, Sitemap Validation, etc.) scheduled for Phase 2/3 browser-native migration.
+                  </div>
                 </div>
               </div>
 
               <div className="border-t border-slate-800 pt-2">
-                <h4 className="font-semibold text-indigo-300 mb-1">Technology Signatures: 25 / 173 Catalog Signatures</h4>
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="font-semibold text-indigo-300">
+                    Technology Fingerprint Catalog: 173 Fingerprints
+                  </h4>
+                  <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800">
+                    Universal Catalog Loaded
+                  </span>
+                </div>
                 <p className="text-[11px] text-slate-400 mb-1">
-                  Core CMS and Framework signatures available in standalone browser mode:
+                  Exported directly from backend Python catalog with full multi-vector signatures (headers, meta, scripts, styles, DOM markers, version rules):
                 </p>
                 <div className="text-[10px] text-slate-400 leading-relaxed">
-                  WordPress, WooCommerce, Elementor, Shopify, Webflow, Squarespace, Wix, Framer, Ghost, Drupal, Joomla, Next.js, Nuxt.js, React, Vue, Angular, Svelte, Astro, Tailwind, Bootstrap, Google Analytics, GTM, Meta Pixel, Cloudflare.
+                  WordPress, WooCommerce, Elementor, Shopify, Webflow, Squarespace, Wix, Framer, Ghost, Drupal, Joomla, Next.js, Nuxt.js, React, Vue, Angular, Svelte, Astro, Tailwind, Bootstrap, Google Analytics, GTM, Meta Pixel, Cloudflare, Apache, Nginx, PHP, and 146 additional technologies.
                 </div>
               </div>
             </div>

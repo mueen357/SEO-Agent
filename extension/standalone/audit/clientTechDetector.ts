@@ -257,122 +257,15 @@ const SIGNATURES: TechSignature[] = [
   },
 ];
 
+import { UniversalTechEngine } from '../technologies/universalTechEngine';
+
 export class StandaloneTechDetector {
   public static detect(
     evidence: ParsedHtmlEvidence,
     headers: Record<string, string>,
     auditId: string
   ): StandaloneTechFinding[] {
-    const findings: StandaloneTechFinding[] = [];
-    const loweredHeaders: Record<string, string> = {};
-    for (const [k, v] of Object.entries(headers)) {
-      loweredHeaders[k.toLowerCase()] = v;
-    }
-
-    for (const sig of SIGNATURES) {
-      let matched = false;
-      let summary = '';
-      let version: string | null = null;
-
-      // 1. Meta generators
-      if (sig.metaGenerators) {
-        for (const gen of (evidence.metaGenerators || [])) {
-          for (const rx of sig.metaGenerators) {
-            if (rx.test(gen)) {
-              matched = true;
-              summary = `Declared in meta generator tag: "${gen}"`;
-              const vMatch = gen.match(/\b(\d+(?:\.\d+)+)\b/);
-              if (vMatch && vMatch[1]) version = vMatch[1];
-              break;
-            }
-          }
-          if (matched) break;
-        }
-      }
-
-      // 2. Headers
-      if (!matched && sig.headers) {
-        for (const [hName, rx] of Object.entries(sig.headers)) {
-          const val = loweredHeaders[hName.toLowerCase()];
-          if (val && rx.test(val)) {
-            matched = true;
-            summary = `Disclosed in HTTP response header "${hName}: ${val}"`;
-            const vMatch = val.match(/\b(\d+(?:\.\d+)+)\b/);
-            if (vMatch && vMatch[1]) version = vMatch[1];
-            break;
-          }
-        }
-      }
-
-      // 3. Script URLs
-      if (!matched && sig.scriptUrls) {
-        for (const src of (evidence.scriptSources || [])) {
-          for (const rx of sig.scriptUrls) {
-            if (rx && typeof rx.test === 'function' && rx.test(src)) {
-              matched = true;
-              summary = `Referenced script resource: "${src.slice(0, 60)}"`;
-              const vMatch = src.match(/@(\d+(?:\.\d+)+)/) || src.match(/-(\d+(?:\.\d+)+)\.js/);
-              if (vMatch && vMatch[1]) version = vMatch[1];
-              break;
-            }
-          }
-          if (matched) break;
-        }
-      }
-
-      // 4. Stylesheets
-      if (!matched && sig.stylesheetHrefs) {
-        for (const href of (evidence.stylesheetHrefs || [])) {
-          for (const rx of sig.stylesheetHrefs) {
-            if (rx.test(href)) {
-              matched = true;
-              summary = `Referenced stylesheet: "${href.slice(0, 60)}"`;
-              break;
-            }
-          }
-          if (matched) break;
-        }
-      }
-
-      // 5. DOM Markers
-      if (!matched && sig.domMarkers) {
-        for (const marker of sig.domMarkers) {
-          if ((evidence.domMarkers || []).includes(marker)) {
-            matched = true;
-            summary = `Identified DOM signature marker: "${marker}"`;
-            break;
-          }
-        }
-      }
-
-      // 6. Inline Markers
-      if (!matched && sig.inlineMarkers) {
-        for (const marker of sig.inlineMarkers) {
-          if ((evidence.inlineMarkers || []).includes(marker)) {
-            matched = true;
-            summary = `Identified runtime JavaScript variable or object: "${marker}"`;
-            break;
-          }
-        }
-      }
-
-      if (matched) {
-        findings.push({
-          id: `${auditId}-${sig.id}`,
-          auditId,
-          technologyId: sig.id,
-          name: sig.name,
-          category: sig.category,
-          confidence: sig.confidence,
-          status: sig.confidence >= 0.95 ? 'confirmed' : sig.confidence >= 0.7 ? 'detected' : 'inferred',
-          provenance: sig.provenance,
-          evidenceSummary: summary,
-          version: version || undefined,
-          versionOrNull: version || null,
-        });
-      }
-    }
-
-    return findings;
+    return UniversalTechEngine.evaluate(evidence, headers, auditId);
   }
 }
+
