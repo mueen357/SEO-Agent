@@ -101,6 +101,16 @@ class TechnologyService:
         # 5. Insert new AuditTechnology records
         persisted_technologies: List[AuditTechnology] = []
         for finding in aggregated_findings:
+            e_items = [e.to_dict() for e in finding.evidence_items]
+            # Store metadata envelope for SQLite persistence and property resolution
+            e_items.append({
+                "_meta": True,
+                "provenance": finding.provenance,
+                "version_type": finding.version_type,
+                "subcategory": finding.subcategory,
+                "catalog_version": "2.0.0",
+                "engine_version": "2.0.0",
+            })
             tech_record = AuditTechnology(
                 id=uuid.uuid4(),
                 audit_id=audit_id,
@@ -118,7 +128,7 @@ class TechnologyService:
                 detection_method=finding.detection_method,
                 page_count=finding.page_count,
                 affected_urls_json=finding.affected_urls,
-                evidence_items_json=[e.to_dict() for e in finding.evidence_items],
+                evidence_items_json=e_items,
                 created_at=now,
                 updated_at=now,
             )
@@ -147,6 +157,14 @@ class TechnologyService:
 
         # Re-fetch with clean session attributes
         return persisted_technologies, summary_record
+
+    async def reanalyze_audit(
+        self,
+        audit_id: uuid.UUID,
+    ) -> Tuple[List[AuditTechnology], AuditTechnologySummary]:
+        """Re-analyze technologies for an existing completed audit using persisted crawl evidence."""
+        return await self.analyze_audit(audit_id)
+
 
     async def get_technologies(
         self,

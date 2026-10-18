@@ -475,6 +475,29 @@ async def analyze_audit_technologies(
     )
 
 
+@router.post(
+    "/{audit_id}/technologies/reanalyze",
+    response_model=AnalyzeTechnologiesResponse,
+    summary="Re-Analyze Existing Audit Technologies",
+    description="Re-evaluates technology stack using persisted crawl evidence and updated fingerprint catalog without re-crawling."
+)
+async def reanalyze_audit_technologies(
+    audit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> AnalyzeTechnologiesResponse:
+    service = TechnologyService(db)
+    technologies, summary = await service.reanalyze_audit(audit_id)
+    return AnalyzeTechnologiesResponse(
+        message=f"Successfully re-analyzed technologies for audit '{audit_id}'. Found {len(technologies)} technologies.",
+        audit_id=audit_id,
+        technologies_detected=summary.total_detected,
+        primary_cms=summary.primary_cms,
+        technologies=[TechnologyFindingResponse.model_validate(t) for t in technologies],
+        wordpress_themes=[WordPressThemeResponse.model_validate(t) for t in summary.wordpress_themes_json],
+        wordpress_plugins=[WordPressPluginResponse.model_validate(p) for p in summary.wordpress_plugins_json],
+    )
+
+
 @router.get(
     "/{audit_id}/technologies",
     response_model=TechnologyListResponse,

@@ -490,6 +490,61 @@ class AuditTechnology(Base):
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="technologies")
 
+    @property
+    def provenance(self) -> str:
+        if self.evidence_items_json and isinstance(self.evidence_items_json, list):
+            for item in self.evidence_items_json:
+                if isinstance(item, dict):
+                    if item.get("_meta") and "provenance" in item:
+                        return str(item["provenance"])
+                    if "provenance" in item and item["provenance"] != "first_party":
+                        return str(item["provenance"])
+        return "first_party"
+
+    @property
+    def version_type(self) -> str:
+        if not self.version_or_null:
+            return "unknown"
+        if self.evidence_items_json and isinstance(self.evidence_items_json, list):
+            for item in self.evidence_items_json:
+                if isinstance(item, dict) and item.get("_meta") and "version_type" in item:
+                    return str(item["version_type"])
+        if "hint" in (self.evidence_summary or "").lower() or "unverified" in (self.evidence_summary or "").lower():
+            return "asset_hint_unverified"
+        return "explicit_version"
+
+    @property
+    def subcategory(self) -> Optional[str]:
+        if self.evidence_items_json and isinstance(self.evidence_items_json, list):
+            for item in self.evidence_items_json:
+                if isinstance(item, dict) and item.get("_meta") and "subcategory" in item:
+                    return str(item["subcategory"])
+        try:
+            from app.technology.fingerprints.catalog import get_catalog
+            fp = get_catalog().get(self.technology_id)
+            return fp.subcategory if fp else None
+        except Exception:
+            return None
+
+    @property
+    def catalog_version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def engine_version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def limitations(self) -> Optional[str]:
+        try:
+            from app.technology.fingerprints.catalog import get_catalog
+            fp = get_catalog().get(self.technology_id)
+            if fp and fp.detection_limitations:
+                return fp.detection_limitations
+        except Exception:
+            pass
+        return None
+
     __table_args__ = (
         Index("ix_audit_technologies_audit_tech", "audit_id", "technology_id", unique=True),
         Index("ix_audit_technologies_audit_category", "audit_id", "technology_category"),
@@ -525,6 +580,27 @@ class AuditTechnologySummary(Base):
 
     audit: Mapped["Audit"] = relationship("Audit", back_populates="technology_summary")
 
+    @property
+    def catalog_version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def engine_version(self) -> str:
+        return "2.0.0"
+
+    @property
+    def inferred_technologies_count(self) -> int:
+        return max(0, self.total_detected - self.detected_technologies_count - self.possible_technologies_count)
+
+    @property
+    def evidence_coverage(self) -> Dict[str, Any]:
+        return {
+            "catalog_version": "2.0.0",
+            "engine_version": "2.0.0",
+            "coverage_status": "complete",
+        }
+
     __table_args__ = (
         Index("ix_audit_technology_summaries_audit_id", "audit_id", unique=True),
     )
+

@@ -133,29 +133,9 @@ class TechnologyDetector:
         aggregated: List[TechnologyFinding] = []
 
         for tech_id, findings in grouped.items():
+            primary = findings[0]
             base_conf = max(f.confidence for f in findings)
             page_count = len(findings)
-
-            # Corroboration boost across pages (e.g. +0.02 per extra page, capped at 0.99)
-            if page_count > 1 and base_conf >= 0.5:
-                corroborated_conf = min(0.99, round(base_conf + (page_count - 1) * 0.02, 4))
-            else:
-                corroborated_conf = base_conf
-
-            # Determine status & level
-            if corroborated_conf >= 0.70:
-                status = DetectionStatus.detected.value
-            elif corroborated_conf >= 0.40:
-                status = DetectionStatus.possible.value
-            else:
-                status = DetectionStatus.unknown.value
-
-            if corroborated_conf >= 0.85:
-                level = ConfidenceLevel.high.value
-            elif corroborated_conf >= 0.50:
-                level = ConfidenceLevel.medium.value
-            else:
-                level = ConfidenceLevel.low.value
 
             # Pick version: first non-null version observed
             version = next((f.version_or_null for f in findings if f.version_or_null), None)
@@ -183,7 +163,36 @@ class TechnologyDetector:
                         if len(merged_evidence) >= 20:
                             break
 
-            primary = findings[0]
+            # Independent corroboration: only boost if there are multiple DISTINCT evidence sources
+            # across pages, and cap total boost at +0.05 so a 60% confidence never inflates to 99%.
+            distinct_sources = len({it.evidence_source for it in merged_evidence})
+            if (
+                distinct_sources > 1
+                and base_conf >= 0.5
+                and primary.status != DetectionStatus.inferred.value
+            ):
+                corroboration_boost = min(0.05, round((distinct_sources - 1) * 0.02, 4))
+                corroborated_conf = min(0.99, round(base_conf + corroboration_boost, 4))
+            else:
+                corroborated_conf = base_conf
+
+            # Determine status & level
+            if primary.status == DetectionStatus.inferred.value:
+                status = DetectionStatus.inferred.value
+            elif corroborated_conf >= 0.70:
+                status = DetectionStatus.detected.value
+            elif corroborated_conf >= 0.40:
+                status = DetectionStatus.possible.value
+            else:
+                status = DetectionStatus.unknown.value
+
+            if corroborated_conf >= 0.85:
+                level = ConfidenceLevel.high.value
+            elif corroborated_conf >= 0.50:
+                level = ConfidenceLevel.medium.value
+            else:
+                level = ConfidenceLevel.low.value
+
             # Select primary evidence item with highest weight
             best_ev = max(merged_evidence, key=lambda x: x.weight) if merged_evidence else None
 
@@ -191,10 +200,13 @@ class TechnologyDetector:
                 technology_id=tech_id,
                 technology_name=primary.technology_name,
                 technology_category=primary.technology_category,
+                subcategory=primary.subcategory,
                 confidence=corroborated_conf,
                 confidence_level=level,
                 status=status,
                 version_or_null=version,
+                version_type=primary.version_type,
+                provenance=primary.provenance,
                 evidence_type=best_ev.evidence_type if best_ev else primary.evidence_type,
                 evidence_source=best_ev.evidence_source if best_ev else primary.evidence_source,
                 evidence_summary=best_ev.evidence_summary if best_ev else primary.evidence_summary,
@@ -248,6 +260,7 @@ class TechnologyDetector:
 
         detected_count = 0
         possible_count = 0
+        inferred_count = 0
 
         # Find highest confidence detected CMS
         cms_candidates = [
@@ -264,6 +277,8 @@ class TechnologyDetector:
                 detected_count += 1
             elif f.status == DetectionStatus.possible.value:
                 possible_count += 1
+            elif f.status == DetectionStatus.inferred.value:
+                inferred_count += 1
 
             if f.confidence_level in confidence_dist:
                 confidence_dist[f.confidence_level] += 1
@@ -271,6 +286,7 @@ class TechnologyDetector:
             if f.technology_category == TechnologyCategory.frontend.value and f.status in (
                 DetectionStatus.detected.value,
                 DetectionStatus.possible.value,
+                DetectionStatus.inferred.value,
             ):
                 if f.technology_name not in frontend_frameworks:
                     frontend_frameworks.append(f.technology_name)
@@ -285,11 +301,12 @@ class TechnologyDetector:
             if is_backend_candidate and f.status in (
                 DetectionStatus.detected.value,
                 DetectionStatus.possible.value,
+                DetectionStatus.inferred.value,
             ):
                 if f.technology_name not in backend_runtimes:
                     backend_runtimes.append(f.technology_name)
 
-        total_findings_count = detected_count + possible_count
+        total_findings_count = detected_count + possible_count + inferred_count
         return TechnologySummary(
             primary_cms=primary_cms,
             frontend_frameworks=frontend_frameworks,
@@ -297,5 +314,7 @@ class TechnologyDetector:
             total_detected=total_findings_count,
             detected_technologies_count=detected_count,
             possible_technologies_count=possible_count,
+            inferred_technologies_count=inferred_count,
             confidence_distribution=confidence_dist,
         )
+

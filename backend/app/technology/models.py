@@ -181,6 +181,8 @@ class TechnologySummary:
     )
     detected_technologies_count: int = 0
     possible_technologies_count: int = 0
+    inferred_technologies_count: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+

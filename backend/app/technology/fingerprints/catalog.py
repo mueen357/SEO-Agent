@@ -2014,6 +2014,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://analytics.google.com",
             description="Web analytics service tracking website traffic and user engagement.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"google-analytics\.com/(analytics|ga)\.js", r"googletagmanager\.com/gtag/js\?id=(G|UA)-"],
                 inline_markers=["ga('create'", "gtag('config'"],
@@ -2032,6 +2033,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://tagmanager.google.com",
             description="Tag management system to manage measurement and marketing tags.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"googletagmanager\.com/gtm\.js\?id="],
                 inline_markers=["dataLayer.push", "gtm.start"],
@@ -2050,6 +2052,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://plausible.io",
             description="Lightweight and open-source privacy-focused web analytics.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"plausible\.io/js/script\.js", r"/js/plausible\.js"],
                 inline_markers=["window.plausible"],
@@ -2067,6 +2070,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://www.hotjar.com",
             description="Product experience insights including heatmaps and behavior recordings.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"static\.hotjar\.com/c/hotjar-"],
                 inline_markers=["window.hj=window.hj||function", "_hjSettings"],
@@ -2084,6 +2088,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://clarity.microsoft.com",
             description="Free behavioral analytics tool capturing heatmaps and session playbacks.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"www\.clarity\.ms/tag/"],
                 inline_markers=["window.clarity=window.clarity||function"],
@@ -2104,6 +2109,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://www.facebook.com/business/tools/meta-pixel",
             description="Conversion measurement and remarketing pixel for Meta ads.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"connect\.facebook\.net/[^/]+/fbevents\.js"],
                 inline_markers=["fbq('init'", "fbq('track'"],
@@ -2124,6 +2130,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://stripe.com",
             description="Online payment processing infrastructure for internet businesses.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"js\.stripe\.com/v[23]/"],
                 inline_markers=["Stripe(", "elements.create('card'"],
@@ -2141,6 +2148,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://www.paypal.com",
             description="Global digital checkout and electronic payments platform.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"www\.paypal\.com/sdk/js", r"www\.paypalobjects\.com/api/checkout\.js"],
             ),
@@ -2160,6 +2168,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://www.google.com/recaptcha",
             description="Security service defending websites from spam and abuse.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"google\.com/recaptcha/api\.js", r"gstatic\.com/recaptcha/"],
                 dom_markers=["class:g-recaptcha"],
@@ -2177,6 +2186,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://www.cloudflare.com/products/turnstile/",
             description="User-friendly, privacy-preserving CAPTCHA replacement.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 script_sources=[r"challenges\.cloudflare\.com/turnstile/v0/api\.js"],
                 dom_markers=["class:cf-turnstile"],
@@ -2197,6 +2207,7 @@ def _build_catalog() -> Dict[str, TechnologyFingerprint]:
             website="https://fonts.google.com",
             description="Library of open-source and free typography.",
             confidence_weight=0.95,
+            default_provenance=EvidenceProvenance.third_party_embed,
             signatures=FingerprintSignatures(
                 stylesheet_hrefs=[r"fonts\.googleapis\.com/css"],
                 link_rels=[r"fonts\.gstatic\.com"],
