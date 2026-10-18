@@ -3,13 +3,56 @@
  * Computes deterministic category scores and overall health in-browser.
  */
 
-import type { StandaloneAuditScorecard, StandaloneSeoFinding } from '../types';
+import type { StandaloneAuditScorecard, StandaloneCrawlPage, StandaloneSeoFinding } from '../types';
 
 export class StandaloneScoringCalculator {
   public static calculate(
     findings: StandaloneSeoFinding[],
-    pagesCrawled: number
+    pages: StandaloneCrawlPage[] | number,
+    attemptedCount?: number
   ): StandaloneAuditScorecard {
+    let usablePagesCount = 0;
+    let attemptedPagesCount = 0;
+    let failedPagesCount = 0;
+
+    if (Array.isArray(pages)) {
+      attemptedPagesCount = pages.length;
+      usablePagesCount = pages.filter(
+        (p) => p.fetchStatus === 'success' && p.httpStatus >= 200 && p.httpStatus < 400
+      ).length;
+      failedPagesCount = pages.filter(
+        (p) => p.fetchStatus !== 'success' || p.httpStatus === 0 || p.httpStatus >= 400
+      ).length;
+    } else {
+      usablePagesCount = pages;
+      attemptedPagesCount = attemptedCount ?? pages;
+      failedPagesCount = Math.max(0, attemptedPagesCount - usablePagesCount);
+    }
+
+    // Explicit Evidence Availability Gate:
+    // If 0 usable HTML pages were retrieved, never show a normal numeric score or grade!
+    if (usablePagesCount === 0) {
+      return {
+        overallScore: null,
+        grade: 'N/A',
+        available: false,
+        reason: 'Crawl failed / insufficient evidence',
+        onPageScore: null,
+        technicalScore: null,
+        sitewideScore: null,
+        pagesCrawled: 0,
+        usablePagesCount: 0,
+        attemptedPagesCount,
+        failedPagesCount,
+        totalIssuesCount: 0,
+        criticalIssuesCount: 0,
+        highIssuesCount: 0,
+        mediumIssuesCount: 0,
+        lowIssuesCount: 0,
+        calculatedAt: Date.now(),
+      };
+    }
+
     let onPageDeduction = 0;
     let technicalDeduction = 0;
     let sitewideDeduction = 0;
@@ -50,28 +93,10 @@ export class StandaloneScoringCalculator {
     const onPageScore = Math.max(0, Math.min(100, Math.round(100 - onPageDeduction)));
     const technicalScore = Math.max(0, Math.min(100, Math.round(100 - technicalDeduction)));
 
-    // Sitewide availability gate: if only 1 page crawled, sitewide score is capped at 70 (insufficient evidence)
+    // Sitewide availability gate: if fewer than 3 pages crawled, sitewide score is capped at 75 (insufficient evidence)
     let sitewideScore = Math.max(0, Math.min(100, Math.round(100 - sitewideDeduction)));
-    if (pagesCrawled < 3) {
+    if (usablePagesCount < 3) {
       sitewideScore = Math.min(sitewideScore, 75);
-    }
-
-    if (pagesCrawled === 0) {
-      return {
-        overallScore: 0,
-        grade: 'F',
-        available: false,
-        onPageScore: 0,
-        technicalScore: 0,
-        sitewideScore: 0,
-        pagesCrawled: 0,
-        totalIssuesCount: 0,
-        criticalIssuesCount: 0,
-        highIssuesCount: 0,
-        mediumIssuesCount: 0,
-        lowIssuesCount: 0,
-        calculatedAt: Date.now(),
-      };
     }
 
     // Weighted composite: OnPage (35%), Technical (40%), SiteWide (25%) aligned with backend policy
@@ -92,7 +117,10 @@ export class StandaloneScoringCalculator {
       onPageScore,
       technicalScore,
       sitewideScore,
-      pagesCrawled,
+      pagesCrawled: usablePagesCount,
+      usablePagesCount,
+      attemptedPagesCount,
+      failedPagesCount,
       totalIssuesCount: criticalCount + highCount + mediumCount + lowCount,
       criticalIssuesCount: criticalCount,
       highIssuesCount: highCount,

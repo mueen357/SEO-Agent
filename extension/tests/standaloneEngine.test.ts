@@ -53,6 +53,13 @@ describe('Standalone Engine - URL Handling & Security', () => {
     expect(crawler.isInScope('https://subdomain.example.com/page')).toBe(false);
     expect(crawler.isInScope('https://evil-phishing.com/page')).toBe(false);
     expect(crawler.isInScope('http://example.com/insecure')).toBe(false); // protocol mismatch
+
+    // Exact seed origin with port: when seed is port 4321, port 8000 must NOT be in scope!
+    const localCrawler = new InBrowserCrawler('http://127.0.0.1:4321/', defaultConfig);
+    expect(localCrawler.isInScope('http://127.0.0.1:4321/')).toBe(true);
+    expect(localCrawler.isInScope('http://127.0.0.1:4321/about')).toBe(true);
+    expect(localCrawler.isInScope('http://127.0.0.1:8000/')).toBe(false);
+    expect(localCrawler.isInScope('http://localhost:4321/')).toBe(false);
   });
 
   it('defends against SSRF by blocking localhost, private subnets, and cloud metadata', () => {
@@ -170,7 +177,7 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
     expect(criticalOrHigh).toHaveLength(0);
   });
 
-  it('fails rules when title is missing, h1 is absent, and images lack alt attributes', () => {
+  it('fails rules when title is missing, h1 is absent, and images lack alt attributes on a valid HTML page', () => {
     const brokenPage: StandaloneCrawlPage = {
       ...dummyPage,
       url: 'http://example.com/broken',
@@ -179,7 +186,8 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
       headings: { h1: [], h2: [], h3: [] },
       images: [{ src: '/bad.jpg', alt: '' }],
       canonicalUrl: undefined,
-      httpStatus: 500,
+      httpStatus: 200,
+      fetchStatus: 'success',
       responseTimeMs: 3200,
     };
 
@@ -199,9 +207,64 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
 
     const httpInsecure = findings.find((f) => f.ruleId === 'TECH_HTTPS_SECURITY' && f.status === 'fail');
     expect(httpInsecure).toBeDefined();
+  });
 
-    const httpStatusErr = findings.find((f) => f.ruleId === 'TECH_HTTP_STATUS' && f.status === 'fail');
-    expect(httpStatusErr).toBeDefined();
+  it('does NOT report false on-page SEO issues for failed or inaccessible pages (httpStatus: 0, fetchStatus: "failed")', () => {
+    const failedPage: StandaloneCrawlPage = {
+      ...dummyPage,
+      url: 'http://127.0.0.1:4321/',
+      title: undefined,
+      metaDescription: undefined,
+      headings: { h1: [], h2: [], h3: [] },
+      images: [],
+      canonicalUrl: undefined,
+      httpStatus: 0,
+      fetchStatus: 'failed',
+      errorCode: 'FETCH_NETWORK_ERROR',
+      errorMessage: 'Network error: Failed to fetch',
+    };
+
+    const findings = StandaloneRulesEngine.evaluatePage(failedPage, 'audit-test');
+    // Inaccessible pages must NOT have false Missing Title, Missing H1, or Missing Canonical findings!
+    expect(findings).toHaveLength(0);
+  });
+
+  it('reports genuine HTTP 4xx/5xx status error without reporting false on-page element issues', () => {
+    const error500Page: StandaloneCrawlPage = {
+      ...dummyPage,
+      url: 'https://example.com/server-error',
+      title: undefined,
+      metaDescription: undefined,
+      headings: { h1: [], h2: [], h3: [] },
+      images: [],
+      canonicalUrl: undefined,
+      httpStatus: 500,
+      fetchStatus: 'failed',
+    };
+
+    const findings = StandaloneRulesEngine.evaluatePage(error500Page, 'audit-test');
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.ruleId).toBe('TECH_HTTP_STATUS');
+    expect(findings[0]?.severity).toBe('critical');
+    // Ensure no false on-page HTML findings on 500 error
+    expect(findings.some((f) => f.ruleId === 'ONPAGE_TITLE_TAG')).toBe(false);
+    expect(findings.some((f) => f.ruleId === 'ONPAGE_H1_PRIMARY')).toBe(false);
+  });
+
+  it('permits HTTP for explicitly authorized local development fixture without critical defect', () => {
+    const localDevPage: StandaloneCrawlPage = {
+      ...dummyPage,
+      url: 'http://127.0.0.1:4321/',
+      httpStatus: 200,
+      fetchStatus: 'success',
+    };
+
+    const findings = StandaloneRulesEngine.evaluatePage(localDevPage, 'audit-test');
+    const httpsFinding = findings.find((f) => f.ruleId === 'TECH_HTTPS_SECURITY');
+
+    expect(httpsFinding).toBeDefined();
+    expect(httpsFinding?.status).toBe('pass'); // Pass, not critical defect
+    expect(httpsFinding?.title).toContain('Local Development Fixture');
   });
 
   it('evaluates site-wide graph rules correctly', () => {
@@ -318,11 +381,84 @@ describe('Standalone Engine - Scorecard & Availability Gating', () => {
     expect(scorecard.pagesCrawled).toBe(5);
   });
 
-  it('truthfully reports available=false when 0 pages were crawled', () => {
+  it('truthfully reports available=false and N/A grade when 0 usable pages were crawled', () => {
     const emptyScorecard = StandaloneScoringCalculator.calculate([], 0);
     expect(emptyScorecard.available).toBe(false);
-    expect(emptyScorecard.overallScore).toBe(0);
-    expect(emptyScorecard.grade).toBe('F');
+    expect(emptyScorecard.overallScore).toBeNull();
+    expect(emptyScorecard.grade).toBe('N/A');
+    expect(emptyScorecard.reason).toBe('Crawl failed / insufficient evidence');
+  });
+
+  it('rejects scoring when all pages failed to fetch even if crawl attempted pages', () => {
+    const failedPages: StandaloneCrawlPage[] = [
+      {
+        id: 'p1',
+        auditId: 'test',
+        url: 'http://127.0.0.1:4321/',
+        depth: 0,
+        httpStatus: 0,
+        fetchStatus: 'failed',
+        errorCode: 'FETCH_NETWORK_ERROR',
+        headings: { h1: [], h2: [], h3: [] },
+        links: [],
+        images: [],
+        headers: {},
+        htmlSize: 0,
+        responseTimeMs: 120,
+        fetchedAt: Date.now(),
+      },
+    ];
+
+    const scorecard = StandaloneScoringCalculator.calculate([], failedPages);
+    expect(scorecard.available).toBe(false);
+    expect(scorecard.overallScore).toBeNull();
+    expect(scorecard.grade).toBe('N/A');
+    expect(scorecard.usablePagesCount).toBe(0);
+    expect(scorecard.attemptedPagesCount).toBe(1);
+    expect(scorecard.failedPagesCount).toBe(1);
+  });
+
+  it('calculates score correctly on partial crawl with some usable pages and some failed pages', () => {
+    const mixedPages: StandaloneCrawlPage[] = [
+      {
+        id: 'p1',
+        auditId: 'test',
+        url: 'http://127.0.0.1:4321/',
+        depth: 0,
+        httpStatus: 200,
+        fetchStatus: 'success',
+        headings: { h1: ['Home'], h2: [], h3: [] },
+        links: [],
+        images: [],
+        headers: {},
+        htmlSize: 1000,
+        responseTimeMs: 80,
+        fetchedAt: Date.now(),
+      },
+      {
+        id: 'p2',
+        auditId: 'test',
+        url: 'http://127.0.0.1:4321/broken',
+        depth: 1,
+        httpStatus: 500,
+        fetchStatus: 'failed',
+        errorCode: 'FETCH_NETWORK_ERROR',
+        headings: { h1: [], h2: [], h3: [] },
+        links: [],
+        images: [],
+        headers: {},
+        htmlSize: 0,
+        responseTimeMs: 90,
+        fetchedAt: Date.now(),
+      },
+    ];
+
+    const scorecard = StandaloneScoringCalculator.calculate([], mixedPages);
+    expect(scorecard.available).toBe(true);
+    expect(scorecard.overallScore).toBeGreaterThan(0);
+    expect(scorecard.usablePagesCount).toBe(1);
+    expect(scorecard.attemptedPagesCount).toBe(2);
+    expect(scorecard.failedPagesCount).toBe(1);
   });
 });
 

@@ -11,9 +11,20 @@ export type StandaloneAuditStatus =
   | 'analyzing'
   | 'scoring'
   | 'completed'
+  | 'completed_with_limitations'
+  | 'partial'
+  | 'failed'
   | 'paused'
   | 'cancelled'
   | 'error';
+
+export type StandaloneFetchErrorCode =
+  | 'FETCH_NETWORK_ERROR'
+  | 'FETCH_TIMEOUT'
+  | 'FETCH_PERMISSION_DENIED'
+  | 'FETCH_REDIRECT_BLOCKED'
+  | 'FETCH_BODY_TOO_LARGE'
+  | 'FETCH_PARSE_FAILED';
 
 export interface StandaloneAuditConfig {
   maxPages: number;
@@ -30,6 +41,8 @@ export interface StandaloneCrawlPage {
   depth: number;
   httpStatus: number;
   fetchStatus: 'success' | 'failed' | 'skipped' | 'timeout';
+  errorCode?: StandaloneFetchErrorCode;
+  errorMessage?: string;
   title?: string;
   metaDescription?: string;
   headings: { h1: string[]; h2: string[]; h3: string[] };
@@ -73,13 +86,17 @@ export interface StandaloneTechFinding {
 }
 
 export interface StandaloneAuditScorecard {
-  overallScore: number;
-  grade: 'A' | 'B' | 'C' | 'D' | 'F';
+  overallScore: number | null;
+  grade: 'A' | 'B' | 'C' | 'D' | 'F' | 'N/A';
   available: boolean;
-  onPageScore: number;
-  technicalScore: number;
-  sitewideScore: number;
+  reason?: string;
+  onPageScore: number | null;
+  technicalScore: number | null;
+  sitewideScore: number | null;
   pagesCrawled: number;
+  usablePagesCount: number;
+  attemptedPagesCount: number;
+  failedPagesCount: number;
   totalIssuesCount: number;
   criticalIssuesCount: number;
   highIssuesCount: number;

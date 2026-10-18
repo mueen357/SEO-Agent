@@ -9,6 +9,34 @@ export class StandaloneRulesEngine {
   public static evaluatePage(page: StandaloneCrawlPage, auditId: string): StandaloneSeoFinding[] {
     const findings: StandaloneSeoFinding[] = [];
 
+    // Gate: Evaluate on-page HTML presence rules only when a usable HTML response was actually retrieved and parsed
+    const isUsableHtml =
+      page.fetchStatus === 'success' &&
+      page.httpStatus >= 200 &&
+      page.httpStatus < 400;
+
+    if (!isUsableHtml) {
+      // Inaccessible pages or failed fetches: do NOT report missing title, missing H1, missing canonical!
+      // Keep failed URL diagnostics separate from SEO content findings.
+      // Do not count 0 HTTP status as a valid HTTP response. Retain genuine HTTP 4xx/5xx reporting separately.
+      if (page.httpStatus >= 400) {
+        findings.push({
+          id: `${auditId}-${page.id}-status-error`,
+          auditId,
+          ruleId: 'TECH_HTTP_STATUS',
+          category: 'technical',
+          severity: page.httpStatus >= 500 ? 'critical' : 'high',
+          status: 'fail',
+          title: `HTTP ${page.httpStatus} Error`,
+          description: `The page returned an error status code: ${page.httpStatus}.`,
+          recommendation: 'Investigate server configuration or update internal links pointing to this broken URL.',
+          pageUrl: page.url,
+          evidence: { httpStatus: page.httpStatus },
+        });
+      }
+      return findings;
+    }
+
     // 1. Title Tag
     if (!page.title) {
       findings.push({
@@ -144,21 +172,47 @@ export class StandaloneRulesEngine {
       });
     }
 
-    // 6. HTTPS Security
+    // 6. HTTPS Security with local development fixture policy
     if (!page.url.startsWith('https://')) {
-      findings.push({
-        id: `${auditId}-${page.id}-https-insecure`,
-        auditId,
-        ruleId: 'TECH_HTTPS_SECURITY',
-        category: 'technical',
-        severity: 'critical',
-        status: 'fail',
-        title: 'Insecure HTTP Protocol',
-        description: 'The page is served over unencrypted HTTP.',
-        recommendation: 'Enforce HTTPS across all pages with an SSL/TLS certificate and HSTS.',
-        pageUrl: page.url,
-        evidence: { protocol: 'http' },
-      });
+      const isLoopbackHost = (urlStr: string): boolean => {
+        try {
+          const h = new URL(urlStr).hostname.toLowerCase();
+          return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+        } catch {
+          return false;
+        }
+      };
+
+      if (isLoopbackHost(page.url)) {
+        // Explicitly authorized local development fixture: do not present as a production deployment defect
+        findings.push({
+          id: `${auditId}-${page.id}-https-local-dev`,
+          auditId,
+          ruleId: 'TECH_HTTPS_SECURITY',
+          category: 'technical',
+          severity: 'low',
+          status: 'pass',
+          title: 'Local Development Fixture (HTTP Permitted)',
+          description: 'Local development and test loopback host is permitted over HTTP for authorized fixtures.',
+          recommendation: 'Ensure HTTPS is configured with SSL/TLS certificates when deploying to a public production domain.',
+          pageUrl: page.url,
+          evidence: { protocol: 'http', environment: 'local_development' },
+        });
+      } else {
+        findings.push({
+          id: `${auditId}-${page.id}-https-insecure`,
+          auditId,
+          ruleId: 'TECH_HTTPS_SECURITY',
+          category: 'technical',
+          severity: 'critical',
+          status: 'fail',
+          title: 'Insecure HTTP Protocol',
+          description: 'The page is served over unencrypted HTTP.',
+          recommendation: 'Enforce HTTPS across all pages with an SSL/TLS certificate and HSTS.',
+          pageUrl: page.url,
+          evidence: { protocol: 'http' },
+        });
+      }
     }
 
     // 7. HTTP Status Code
@@ -183,11 +237,14 @@ export class StandaloneRulesEngine {
 
   public static evaluateSitewide(pages: StandaloneCrawlPage[], auditId: string): StandaloneSeoFinding[] {
     const findings: StandaloneSeoFinding[] = [];
-    if (pages.length <= 1) return findings;
+    const usablePages = pages.filter(
+      (p) => p.fetchStatus === 'success' && p.httpStatus >= 200 && p.httpStatus < 400
+    );
+    if (usablePages.length <= 1) return findings;
 
     // 1. Duplicate Title Tags
     const titleMap = new Map<string, string[]>();
-    for (const p of pages) {
+    for (const p of usablePages) {
       if (p.title) {
         const norm = p.title.trim().toLowerCase();
         const list = titleMap.get(norm) || [];
@@ -216,11 +273,11 @@ export class StandaloneRulesEngine {
 
     // 2. Orphan Pages (inbound links = 0, excluding seed page)
     const inboundCounts = new Map<string, number>();
-    for (const p of pages) {
+    for (const p of usablePages) {
       inboundCounts.set(p.url, 0);
     }
 
-    for (const p of pages) {
+    for (const p of usablePages) {
       for (const dest of p.links) {
         if (inboundCounts.has(dest) && dest !== p.url) {
           inboundCounts.set(dest, (inboundCounts.get(dest) || 0) + 1);
@@ -228,7 +285,7 @@ export class StandaloneRulesEngine {
       }
     }
 
-    const seedUrl = pages[0]?.url;
+    const seedUrl = usablePages[0]?.url;
     for (const [url, count] of inboundCounts.entries()) {
       if (count === 0 && url !== seedUrl) {
         findings.push({

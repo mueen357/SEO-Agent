@@ -110,6 +110,17 @@ Allow: /
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
 
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (PAGES[urlPath]) {
     const isRobots = urlPath === '/robots.txt';
     res.writeHead(200, {

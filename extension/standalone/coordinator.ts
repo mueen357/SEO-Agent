@@ -245,7 +245,12 @@ export class StandaloneAuditCoordinator {
       const unsubscribe = this.onProgress((updated) => {
         if (
           updated.id === job.id &&
-          (updated.status === 'completed' || updated.status === 'cancelled' || updated.status === 'error')
+          (updated.status === 'completed' ||
+            updated.status === 'completed_with_limitations' ||
+            updated.status === 'partial' ||
+            updated.status === 'failed' ||
+            updated.status === 'cancelled' ||
+            updated.status === 'error')
         ) {
           unsubscribe();
           resolve(updated);
@@ -267,7 +272,14 @@ export class StandaloneAuditCoordinator {
     if (!latest) return null;
 
     // If audit already reached terminal state, do not re-execute
-    if (latest.status === 'completed' || latest.status === 'cancelled' || latest.status === 'error') {
+    if (
+      latest.status === 'completed' ||
+      latest.status === 'completed_with_limitations' ||
+      latest.status === 'partial' ||
+      latest.status === 'failed' ||
+      latest.status === 'cancelled' ||
+      latest.status === 'error'
+    ) {
       return latest;
     }
 
@@ -369,6 +381,30 @@ export class StandaloneAuditCoordinator {
         await StandaloneAuditStorage.saveJob(job);
       }
 
+      // Evidence Availability Gate: verify whether usable HTML pages were retrieved
+      const usablePages = crawledPages.filter(
+        (p) => p.fetchStatus === 'success' && p.httpStatus >= 200 && p.httpStatus < 400
+      );
+      const failedPages = crawledPages.filter(
+        (p) => p.fetchStatus !== 'success' || p.httpStatus === 0 || p.httpStatus >= 400
+      );
+
+      // If zero usable HTML pages were retrieved, the audit cannot produce trusted results
+      if (usablePages.length === 0) {
+        job.status = 'failed';
+        job.errorMessage =
+          failedPages[0]?.errorMessage ||
+          'Crawl failed: Seed URL could not be fetched (insufficient evidence)';
+        job.currentStage = `Audit failed: ${job.errorMessage}`;
+        job.progressPercent = 100;
+        job.completedAt = Date.now();
+        job.scorecard = StandaloneScoringCalculator.calculate([], crawledPages);
+        this.notify(job, 'AUDIT_FAILED');
+        await StandaloneAuditStorage.saveJob(job);
+        this.isRunningFlag = false;
+        return job;
+      }
+
       // Stage 2: SEO Rule Evaluations (if not already finished)
       if (!job.stageCheckpoints.seoFinished) {
         if (this.currentRunId !== runId || this.isCancelledFlag) return job;
@@ -381,11 +417,11 @@ export class StandaloneAuditCoordinator {
         this.notify(job, 'AUDIT_PROGRESS');
 
         const allFindings: StandaloneSeoFinding[] = [];
-        for (const p of crawledPages) {
+        for (const p of usablePages) {
           const pageFindings = StandaloneRulesEngine.evaluatePage(p, auditId);
           allFindings.push(...pageFindings);
         }
-        const sitewideFindings = StandaloneRulesEngine.evaluateSitewide(crawledPages, auditId);
+        const sitewideFindings = StandaloneRulesEngine.evaluateSitewide(usablePages, auditId);
         allFindings.push(...sitewideFindings);
 
         await StandaloneAuditStorage.saveFindings(allFindings);
@@ -404,7 +440,7 @@ export class StandaloneAuditCoordinator {
         this.notify(job, 'AUDIT_PROGRESS');
 
         const allTechsMap = new Map<string, StandaloneTechFinding>();
-        for (const p of crawledPages) {
+        for (const p of usablePages) {
           if (p.evidence) {
             const detected = StandaloneTechDetector.detect(p.evidence, p.headers, auditId);
             for (const t of detected) {
@@ -433,7 +469,7 @@ export class StandaloneAuditCoordinator {
         this.notify(job, 'AUDIT_PROGRESS');
 
         const findings = await StandaloneAuditStorage.getFindingsForAudit(auditId);
-        const scorecard = StandaloneScoringCalculator.calculate(findings, crawledPages.length);
+        const scorecard = StandaloneScoringCalculator.calculate(findings, crawledPages);
         job.scorecard = scorecard;
         job.stageCheckpoints.scoringFinished = true;
         await StandaloneAuditStorage.saveJob(job);
@@ -442,8 +478,14 @@ export class StandaloneAuditCoordinator {
       // Stage 5: Final Result Publishing & Completion
       if (this.currentRunId !== runId || this.isCancelledFlag) return job;
 
-      job.status = 'completed';
-      job.currentStage = 'Full in-browser audit completed';
+      if (failedPages.length > 0) {
+        job.status = 'completed_with_limitations';
+        job.currentStage = `Audit completed with limitations (${usablePages.length} succeeded, ${failedPages.length} failed)`;
+      } else {
+        job.status = 'completed';
+        job.currentStage = `Full in-browser audit completed (${usablePages.length} pages audited)`;
+      }
+
       job.progressPercent = 100;
       job.completedAt = Date.now();
       job.updatedAt = Date.now();

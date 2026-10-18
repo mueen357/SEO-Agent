@@ -476,3 +476,149 @@ describe('5. Durable Interruption Recovery & Cancellation', () => {
     expect(coordinator.getCurrentJob()?.status).toBe('cancelled');
   });
 });
+
+describe('6. Standalone Fetch Failure, Scoring Gate & Error Recovery Acceptance', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    StandaloneAuditStorage.clearInMemoryForTesting();
+  });
+
+  it('marks audit as FAILED with FETCH_NETWORK_ERROR and N/A score when seed URL fetch throws', async () => {
+    const coordinator = new StandaloneAuditCoordinator();
+    vi.spyOn(coordinator, 'checkHostPermission').mockResolvedValue(true);
+
+    // Mock fetch throwing network error (e.g. connection refused)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+
+    const job = await coordinator.startAudit('http://127.0.0.1:4321/', { maxPages: 5, delayMs: 0 });
+
+    expect(job.status).toBe('failed');
+    expect(job.currentStage).toContain('Audit failed');
+    expect(job.errorMessage).toContain('Network error');
+
+    // Scorecard availability gate check
+    expect(job.scorecard?.available).toBe(false);
+    expect(job.scorecard?.overallScore).toBeNull();
+    expect(job.scorecard?.grade).toBe('N/A');
+    expect(job.scorecard?.usablePagesCount).toBe(0);
+
+    // Verify stored page has explicit error code and no false on-page findings
+    const storedPages = await StandaloneAuditStorage.getPagesForAudit(job.id);
+    expect(storedPages).toHaveLength(1);
+    expect(storedPages[0]?.httpStatus).toBe(0);
+    expect(storedPages[0]?.fetchStatus).toBe('failed');
+    expect(storedPages[0]?.errorCode).toBe('FETCH_NETWORK_ERROR');
+
+    const storedFindings = await StandaloneAuditStorage.getFindingsForAudit(job.id);
+    expect(storedFindings).toHaveLength(0); // ZERO false SEO issues reported!
+  });
+
+  it('marks audit as FAILED with FETCH_TIMEOUT when fetch request aborts after timeout', async () => {
+    const coordinator = new StandaloneAuditCoordinator();
+    vi.spyOn(coordinator, 'checkHostPermission').mockResolvedValue(true);
+
+    const abortError = new Error('The operation was aborted');
+    abortError.name = 'AbortError';
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(abortError);
+
+    const job = await coordinator.startAudit('http://127.0.0.1:4321/', { maxPages: 5, delayMs: 0 });
+
+    expect(job.status).toBe('failed');
+    expect(job.scorecard?.available).toBe(false);
+    expect(job.scorecard?.grade).toBe('N/A');
+
+    const storedPages = await StandaloneAuditStorage.getPagesForAudit(job.id);
+    expect(storedPages[0]?.fetchStatus).toBe('timeout');
+    expect(storedPages[0]?.errorCode).toBe('FETCH_TIMEOUT');
+  });
+
+  it('marks audit as completed_with_limitations when some pages succeed and some fail', async () => {
+    const coordinator = new StandaloneAuditCoordinator();
+    vi.spyOn(coordinator, 'checkHostPermission').mockResolvedValue(true);
+
+    const validHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Valid Seed Page Title For Search Optimization</title>
+          <meta name="description" content="This is an optimal meta description exceeding seventy characters in length." />
+        </head>
+        <body>
+          <h1>Primary Heading</h1>
+          <a href="http://127.0.0.1:4321/page-broken">Broken Link</a>
+        </body>
+      </html>
+    `;
+
+    let callCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
+      callCount++;
+      const urlStr = String(url);
+      if (urlStr.includes('/robots.txt')) {
+        return new Response('User-agent: *\nAllow: /', { status: 200 });
+      }
+      if (urlStr.includes('/page-broken')) {
+        throw new TypeError('Failed to fetch');
+      }
+      return new Response(validHtml, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    });
+
+    const job = await coordinator.startAudit('http://127.0.0.1:4321/', { maxPages: 2, delayMs: 0 });
+
+    expect(job.status).toBe('completed_with_limitations');
+    expect(job.scorecard?.available).toBe(true);
+    expect(job.scorecard?.usablePagesCount).toBe(1);
+    expect(job.scorecard?.failedPagesCount).toBe(1);
+
+    const storedPages = await StandaloneAuditStorage.getPagesForAudit(job.id);
+    expect(storedPages).toHaveLength(2);
+    expect(storedPages[0]?.fetchStatus).toBe('success');
+    expect(storedPages[1]?.fetchStatus).toBe('failed');
+    expect(storedPages[1]?.errorCode).toBe('FETCH_NETWORK_ERROR');
+  });
+
+  it('marks audit as completed with full scorecard and technology detection when all pages succeed', async () => {
+    const coordinator = new StandaloneAuditCoordinator();
+    vi.spyOn(coordinator, 'checkHostPermission').mockResolvedValue(true);
+
+    const wpPageHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Enterprise Cloud SEO Solutions - Modern Platform</title>
+          <meta name="description" content="Comprehensive SEO audit engine running completely inside the Chrome browser." />
+          <meta name="generator" content="WordPress 6.4.3" />
+          <link rel="canonical" href="http://127.0.0.1:4321/" />
+        </head>
+        <body>
+          <h1>Enterprise Cloud SEO Solutions</h1>
+          <p>Welcome to our platform.</p>
+        </body>
+      </html>
+    `;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/robots.txt')) {
+        return new Response('User-agent: *\nAllow: /', { status: 200 });
+      }
+      return new Response(wpPageHtml, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    });
+
+    const job = await coordinator.startAudit('http://127.0.0.1:4321/', { maxPages: 1, delayMs: 0 });
+
+    expect(job.status).toBe('completed');
+    expect(job.scorecard?.available).toBe(true);
+    expect(job.scorecard?.overallScore).toBeGreaterThan(0);
+    expect(job.scorecard?.usablePagesCount).toBe(1);
+
+    const techs = await StandaloneAuditStorage.getTechnologiesForAudit(job.id);
+    expect(techs.some((t) => t.technologyId === 'wordpress')).toBe(true);
+  });
+});

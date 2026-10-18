@@ -82,11 +82,8 @@ export class InBrowserCrawler {
       // Security: Reject credentials in URLs (e.g. https://user:pass@example.com)
       if (u.username || u.password) return false;
 
-      // Scheme must match seed URL protocol (e.g. https remains https)
-      if (u.protocol !== new URL(this.origin).protocol) return false;
-
-      // Host must match exact hostname
-      if (u.hostname !== this.hostname) return false;
+      // Exact origin match: scheme, hostname, and effective port must match seed origin!
+      if (u.origin !== this.origin) return false;
 
       // Host safety check: block loopback, private ranges, cloud metadata
       // Allows seed host if user explicitly authorized testing on localhost / 127.0.0.1
@@ -215,6 +212,38 @@ export class InBrowserCrawler {
       let attempt = 0;
       let fetchSuccess = false;
 
+      // Pre-flight host permission verification if chrome.permissions API is available
+      if (typeof chrome !== 'undefined' && chrome.permissions?.contains) {
+        const originPattern = `${new URL(item.url).origin}/*`;
+        const hasPerm = await new Promise<boolean>((resolve) => {
+          chrome.permissions.contains({ origins: [originPattern] }, (res) => resolve(Boolean(res)));
+        });
+        if (!hasPerm) {
+          pageRecord = {
+            id: `page-${crawledCount + 1}-${Date.now()}`,
+            auditId: '',
+            url: item.url,
+            depth: item.depth,
+            httpStatus: 0,
+            fetchStatus: 'failed',
+            errorCode: 'FETCH_PERMISSION_DENIED',
+            errorMessage: `Host permission denied for origin: ${new URL(item.url).origin}`,
+            title: 'Permission Denied',
+            headings: { h1: [], h2: [], h3: [] },
+            links: [],
+            images: [],
+            headers: {},
+            htmlSize: 0,
+            responseTimeMs: 0,
+            fetchedAt: Date.now(),
+          };
+          await callbacks.onPageCrawled(pageRecord);
+          this.crawledUrls.push(item.url);
+          crawledCount++;
+          continue;
+        }
+      }
+
       while (attempt <= maxRetries && !fetchSuccess && !callbacks.isCancelled()) {
         attempt++;
         const controller = new AbortController();
@@ -241,6 +270,8 @@ export class InBrowserCrawler {
               depth: item.depth,
               httpStatus: response.status || 301,
               fetchStatus: 'skipped',
+              errorCode: 'FETCH_REDIRECT_BLOCKED',
+              errorMessage: `Redirect blocked: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
               headings: { h1: [], h2: [], h3: [] },
               links: [],
               images: [],
@@ -274,6 +305,7 @@ export class InBrowserCrawler {
               htmlSize: 0,
               responseTimeMs: elapsed,
               fetchedAt: Date.now(),
+              title: `Non-HTML Content-Type (${contentType || 'unknown'})`,
             };
             await callbacks.onPageCrawled(pageRecord);
             this.crawledUrls.push(item.url);
@@ -293,6 +325,8 @@ export class InBrowserCrawler {
               depth: item.depth,
               httpStatus: response.status,
               fetchStatus: 'failed',
+              errorCode: 'FETCH_BODY_TOO_LARGE',
+              errorMessage: `Response exceeded 5MB size limit (${Math.round(totalBytes / 1024 / 1024)}MB)`,
               headings: { h1: [], h2: [], h3: [] },
               links: [],
               images: [],
@@ -311,7 +345,34 @@ export class InBrowserCrawler {
 
           // Asynchronous parsing via native DOMParser or bounded offscreen service
           const targetUrlForEvidence = redirectResult.finalUrl || item.url;
-          const parsedEvidence = await StandaloneDomParser.parseAsync(html, targetUrlForEvidence);
+          let parsedEvidence;
+          try {
+            parsedEvidence = await StandaloneDomParser.parseAsync(html, targetUrlForEvidence);
+          } catch (parseErr: any) {
+            pageRecord = {
+              id: `page-${crawledCount + 1}-${Date.now()}`,
+              auditId: '',
+              url: item.url,
+              depth: item.depth,
+              httpStatus: response.status,
+              fetchStatus: 'failed',
+              errorCode: 'FETCH_PARSE_FAILED',
+              errorMessage: `DOM parsing failed: ${parseErr?.message || 'unknown error'}`,
+              headings: { h1: [], h2: [], h3: [] },
+              links: [],
+              images: [],
+              headers,
+              htmlSize: totalBytes,
+              responseTimeMs: elapsed,
+              fetchedAt: Date.now(),
+              title: 'Parse Failed',
+            };
+            await callbacks.onPageCrawled(pageRecord);
+            this.crawledUrls.push(item.url);
+            crawledCount++;
+            fetchSuccess = true;
+            break;
+          }
 
           pageRecord = {
             id: `page-${crawledCount + 1}-${Date.now()}`,
@@ -320,6 +381,7 @@ export class InBrowserCrawler {
             depth: item.depth,
             httpStatus: response.status,
             fetchStatus: response.ok ? 'success' : 'failed',
+            errorMessage: response.ok ? undefined : `HTTP ${response.status} response`,
             title: parsedEvidence.title,
             metaDescription: parsedEvidence.metaDescription,
             headings: parsedEvidence.headings,
@@ -334,8 +396,8 @@ export class InBrowserCrawler {
             evidence: parsedEvidence, // Retain original full evidence
           };
 
-          // Enqueue discovered child links if within depth limit
-          if (item.depth < this.config.maxDepth) {
+          // Enqueue discovered child links if within depth limit and fetch was successful
+          if (response.ok && item.depth < this.config.maxDepth) {
             for (const rawLink of parsedEvidence.links) {
               const norm = this.normalizeUrl(rawLink);
               if (this.isInScope(norm) && !this.seenUrls.has(norm)) {
@@ -351,13 +413,30 @@ export class InBrowserCrawler {
           fetchSuccess = true;
         } catch (err: any) {
           clearTimeout(timeoutId);
-          if (attempt <= maxRetries && err.name !== 'AbortError') {
+          if (attempt <= maxRetries && err.name !== 'AbortError' && err.name !== 'SecurityError') {
             // Transient error: retry with backoff
             await new Promise((res) => setTimeout(res, 500 * attempt));
             continue;
           }
 
           const elapsed = Math.round(performance.now() - startTime);
+
+          let errorCode: import('../types').StandaloneFetchErrorCode = 'FETCH_NETWORK_ERROR';
+          let errorMessage = 'Network error: Failed to fetch (connection refused or unreachable)';
+
+          if (err.name === 'AbortError') {
+            errorCode = 'FETCH_TIMEOUT';
+            errorMessage = 'Request timed out after 10000ms';
+          } else if (
+            err.name === 'SecurityError' ||
+            /permission/i.test(err?.message || '') ||
+            /denied/i.test(err?.message || '') ||
+            /not allowed/i.test(err?.message || '')
+          ) {
+            errorCode = 'FETCH_PERMISSION_DENIED';
+            errorMessage = 'Host permission not granted or browser security restriction';
+          }
+
           pageRecord = {
             id: `page-${crawledCount + 1}-${Date.now()}`,
             auditId: '',
@@ -365,6 +444,9 @@ export class InBrowserCrawler {
             depth: item.depth,
             httpStatus: 0,
             fetchStatus: err.name === 'AbortError' ? 'timeout' : 'failed',
+            errorCode,
+            errorMessage,
+            title: errorCode,
             headings: { h1: [], h2: [], h3: [] },
             links: [],
             images: [],

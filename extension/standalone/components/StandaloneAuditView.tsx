@@ -98,11 +98,22 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
     const unsubscribe = standaloneCoordinator.onProgress(async (job) => {
       setActiveJob({ ...job });
       activeJobRef.current = { ...job };
-      if (job.status === 'completed' || job.status === 'crawling') {
+      if (
+        job.status === 'completed' ||
+        job.status === 'completed_with_limitations' ||
+        job.status === 'crawling' ||
+        job.status === 'failed'
+      ) {
         const pages = await StandaloneAuditStorage.getPagesForAudit(job.id);
         setCrawledPages(pages);
       }
-      if (job.status === 'completed' || job.status === 'cancelled' || job.status === 'error') {
+      if (
+        job.status === 'completed' ||
+        job.status === 'completed_with_limitations' ||
+        job.status === 'failed' ||
+        job.status === 'cancelled' ||
+        job.status === 'error'
+      ) {
         setLoading(false);
         const [issueList, techList] = await Promise.all([
           StandaloneAuditStorage.getFindingsForAudit(job.id),
@@ -127,6 +138,8 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
         activeJobRef.current &&
         job.id !== activeJobRef.current.id &&
         activeJobRef.current.status !== 'completed' &&
+        activeJobRef.current.status !== 'completed_with_limitations' &&
+        activeJobRef.current.status !== 'failed' &&
         activeJobRef.current.status !== 'idle'
       ) {
         return;
@@ -146,7 +159,11 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
         }
       }
 
-      if (type === 'AUDIT_COMPLETED' || job.status === 'completed') {
+      if (
+        type === 'AUDIT_COMPLETED' ||
+        job.status === 'completed' ||
+        job.status === 'completed_with_limitations'
+      ) {
         setLoading(false);
         Promise.all([
           StandaloneAuditStorage.getPagesForAudit(job.id),
@@ -165,8 +182,9 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
         setLoading(false);
       }
 
-      if (type === 'AUDIT_FAILED' || job.status === 'error') {
+      if (type === 'AUDIT_FAILED' || job.status === 'failed' || job.status === 'error') {
         setLoading(false);
+        StandaloneAuditStorage.getPagesForAudit(job.id).then(setCrawledPages).catch(() => {});
         setPermissionError(msg.error || job.errorMessage || 'Audit encountered an error.');
       }
     };
@@ -405,8 +423,18 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
         <div className="bg-slate-900/60 border border-slate-800 rounded-lg p-3 space-y-2">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center space-x-2">
-              <span className="font-semibold text-slate-200">
-                {activeJob.status.toUpperCase()}
+              <span
+                className={`font-semibold px-1.5 py-0.5 rounded text-[10px] tracking-wide uppercase ${
+                  activeJob.status === 'completed'
+                    ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800'
+                    : activeJob.status === 'completed_with_limitations'
+                    ? 'bg-amber-950/60 text-amber-300 border border-amber-800'
+                    : activeJob.status === 'failed' || activeJob.status === 'error'
+                    ? 'bg-rose-950/60 text-rose-300 border border-rose-800'
+                    : 'bg-indigo-950/60 text-indigo-300 border border-indigo-800'
+                }`}
+              >
+                {activeJob.status.replace(/_/g, ' ')}
               </span>
               <span className="text-slate-400">• {activeJob.currentStage}</span>
             </div>
@@ -418,8 +446,10 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
           <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
             <div
               className={`h-full transition-all duration-300 ${
-                activeJob.status === 'error'
+                activeJob.status === 'error' || activeJob.status === 'failed'
                   ? 'bg-rose-500'
+                  : activeJob.status === 'completed_with_limitations'
+                  ? 'bg-amber-500'
                   : activeJob.status === 'completed'
                   ? 'bg-emerald-500'
                   : 'bg-indigo-500'
@@ -431,7 +461,12 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
       )}
 
       {/* Results Section */}
-      {activeJob && (activeJob.status === 'completed' || crawledPages.length > 0) && (
+      {activeJob && (
+        activeJob.status === 'completed' ||
+        activeJob.status === 'completed_with_limitations' ||
+        activeJob.status === 'failed' ||
+        crawledPages.length > 0
+      ) && (
         <div className="space-y-3">
           {/* Tabs */}
           <div className="flex items-center space-x-1 border-b border-slate-800 pb-1 text-xs">
@@ -490,29 +525,44 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
           {/* Tab: Overview */}
           {activeTab === 'overview' && scorecard && (
             <div className="space-y-3">
+              {!scorecard.available ? (
+                <div className="p-3 bg-amber-950/40 border border-amber-800/80 rounded-lg text-xs space-y-1">
+                  <div className="flex items-center space-x-1.5 font-semibold text-amber-200">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>SEO Scorecard Unavailable (Grade: N/A)</span>
+                  </div>
+                  <div className="text-slate-300">
+                    {scorecard.reason || 'Crawl failed / insufficient evidence to compute reliable score.'}
+                  </div>
+                  <div className="text-[11px] text-slate-400 pt-1 font-mono">
+                    Attempted URLs: {scorecard.attemptedPagesCount ?? crawledPages.length} | Usable HTML Pages: {scorecard.usablePagesCount ?? 0}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="grid grid-cols-4 gap-2">
                 <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2.5 text-center">
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide">Overall</div>
                   <div className="text-xl font-bold text-indigo-400 mt-0.5">
-                    {scorecard.overallScore}
+                    {scorecard.available && scorecard.overallScore !== null ? `${scorecard.overallScore}/100` : 'N/A'}
                   </div>
                 </div>
                 <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2.5 text-center">
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide">On-Page</div>
                   <div className="text-xl font-bold text-emerald-400 mt-0.5">
-                    {scorecard.onPageScore}
+                    {scorecard.available && scorecard.onPageScore !== null ? `${scorecard.onPageScore}/100` : 'N/A'}
                   </div>
                 </div>
                 <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2.5 text-center">
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide">Technical</div>
                   <div className="text-xl font-bold text-amber-400 mt-0.5">
-                    {scorecard.technicalScore}
+                    {scorecard.available && scorecard.technicalScore !== null ? `${scorecard.technicalScore}/100` : 'N/A'}
                   </div>
                 </div>
                 <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-2.5 text-center">
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide">Sitewide</div>
                   <div className="text-xl font-bold text-blue-400 mt-0.5">
-                    {scorecard.sitewideScore}
+                    {scorecard.available && scorecard.sitewideScore !== null ? `${scorecard.sitewideScore}/100` : 'N/A'}
                   </div>
                 </div>
               </div>
@@ -546,13 +596,18 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs flex items-center justify-between"
                 >
                   <div className="truncate flex-1 mr-2">
-                    <div className="font-medium text-slate-200 truncate">{p.title || 'Untitled'}</div>
+                    <div className="font-medium text-slate-200 truncate">
+                      {p.fetchStatus === 'success' ? (p.title || 'Untitled') : (p.errorCode || 'FETCH_FAILED')}
+                    </div>
                     <div className="text-[11px] text-slate-500 font-mono truncate">{p.url}</div>
+                    {p.errorMessage && (
+                      <div className="text-[10px] text-rose-400 truncate mt-0.5">{p.errorMessage}</div>
+                    )}
                   </div>
                   <div className="flex items-center space-x-2">
                     <span
                       className={`px-1.5 py-0.5 text-[10px] font-mono rounded ${
-                        p.httpStatus === 200
+                        p.fetchStatus === 'success' && p.httpStatus === 200
                           ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800'
                           : 'bg-rose-950/60 text-rose-400 border border-rose-800'
                       }`}
