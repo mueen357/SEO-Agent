@@ -195,13 +195,15 @@ export class StandaloneSitemapParser {
   public async discoverSitemaps(
     robotsSitemaps: string[] = []
   ): Promise<StandaloneSitemapEvidence> {
-    const candidates: string[] = [];
+    const candidates: Array<{ url: string; isDeclared: boolean }> = [];
+    const declaredUrlsSet = new Set<string>();
 
     // 1. Robots.txt declared sitemaps
     for (const sm of robotsSitemaps) {
       const trimmed = sm.trim();
-      if (trimmed && !candidates.includes(trimmed)) {
-        candidates.push(trimmed);
+      if (trimmed && !declaredUrlsSet.has(trimmed)) {
+        declaredUrlsSet.add(trimmed);
+        candidates.push({ url: trimmed, isDeclared: true });
       }
     }
 
@@ -209,8 +211,12 @@ export class StandaloneSitemapParser {
     if (this.authorizedOrigin) {
       const defaultSitemap = `${this.authorizedOrigin}/sitemap.xml`;
       const defaultIndex = `${this.authorizedOrigin}/sitemap_index.xml`;
-      if (!candidates.includes(defaultSitemap)) candidates.push(defaultSitemap);
-      if (!candidates.includes(defaultIndex)) candidates.push(defaultIndex);
+      if (!declaredUrlsSet.has(defaultSitemap)) {
+        candidates.push({ url: defaultSitemap, isDeclared: false });
+      }
+      if (!declaredUrlsSet.has(defaultIndex)) {
+        candidates.push({ url: defaultIndex, isDeclared: false });
+      }
     }
 
     const visited = new Set<string>();
@@ -219,15 +225,16 @@ export class StandaloneSitemapParser {
     const errors: string[] = [];
     let indexCount = 0;
 
-    for (const sitemapUrl of candidates) {
+    for (const item of candidates) {
       if (visited.size >= this.maxSitemaps) break;
       await this.crawlSitemapRecursive(
-        sitemapUrl,
+        item.url,
         0,
         visited,
         sitemapsDiscovered,
         allUrlsSet,
-        errors
+        errors,
+        item.isDeclared
       );
     }
 
@@ -255,7 +262,8 @@ export class StandaloneSitemapParser {
     visited: Set<string>,
     records: StandaloneSitemapEntry[],
     allUrls: Set<string>,
-    errors: string[]
+    errors: string[],
+    isDeclared: boolean = false
   ): Promise<void> {
     if (depth > this.maxDepth || visited.has(sitemapUrl)) return;
     if (visited.size >= this.maxSitemaps) return;
@@ -275,6 +283,7 @@ export class StandaloneSitemapParser {
           urlsCount: 0,
           urls: [],
           isIndex: false,
+          isDeclared,
         })
       );
       errors.push(`Discovered external sitemap declaration '${sitemapUrl}' outside authorized origin scope (fetch skipped)`);
@@ -294,6 +303,7 @@ export class StandaloneSitemapParser {
           urlsCount: 0,
           urls: [],
           isIndex: false,
+          isDeclared,
         })
       );
       errors.push(`Sitemap request to disallowed destination blocked: ${sitemapUrl}`);
@@ -324,6 +334,7 @@ export class StandaloneSitemapParser {
             errorMessage: `HTTP ${response.status} ${response.statusText}`,
             urlsCount: 0,
             urls: [],
+            isDeclared,
           })
         );
         errors.push(`Failed to fetch ${sitemapUrl}: HTTP ${response.status}`);
@@ -348,6 +359,7 @@ export class StandaloneSitemapParser {
           errorMessage: errorMsg,
           urlsCount: 0,
           urls: [],
+          isDeclared,
         })
       );
       errors.push(`Error fetching ${sitemapUrl}: ${errorMsg}`);
@@ -369,6 +381,7 @@ export class StandaloneSitemapParser {
           errorMessage: 'Potentially malicious XML entity or DOCTYPE declaration rejected (XXE defense)',
           urlsCount: 0,
           urls: [],
+          isDeclared,
         })
       );
       errors.push(`Sitemap ${sitemapUrl} contains disallowed DOCTYPE/ENTITY declarations`);
@@ -388,6 +401,7 @@ export class StandaloneSitemapParser {
           errorMessage: parsed.errorMessage || 'Invalid XML syntax or unsupported schema',
           urlsCount: 0,
           urls: [],
+          isDeclared,
         })
       );
       errors.push(`Parse error in ${sitemapUrl}: ${parsed.errorMessage}`);
@@ -407,6 +421,7 @@ export class StandaloneSitemapParser {
           urls: [],
           isIndex: true,
           childSitemaps: parsed.childSitemaps,
+          isDeclared,
         })
       );
 
@@ -418,7 +433,8 @@ export class StandaloneSitemapParser {
           visited,
           records,
           allUrls,
-          errors
+          errors,
+          isDeclared
         );
       }
     } else {
@@ -445,6 +461,7 @@ export class StandaloneSitemapParser {
           urls: validUrls.slice(0, this.maxUrlsPerSitemap),
           isIndex: false,
           lastModified: parsed.lastModified,
+          isDeclared,
         })
       );
     }
@@ -561,8 +578,8 @@ export class StandaloneSitemapParser {
   }
 
   /**
-   * Safely parses XML sitemap string using DOMParser where available.
-   * Rejects malformed XML, unclosed tags, and unapproved root elements.
+   * Safely parses XML sitemap string using DOMParser where available,
+   * enforcing genuine XML well-formedness and rejecting malformed nested XML.
    */
   public parseXmlSafely(
     xml: string,
@@ -585,11 +602,28 @@ export class StandaloneSitemapParser {
       };
     }
 
+    // Always enforce genuine well-formedness verification
+    const wf = validateXmlWellFormedness(xml);
+    if (!wf.wellFormed) {
+      return {
+        status: 'parse_error',
+        isIndex: false,
+        urls: [],
+        childSitemaps: [],
+        errorMessage: wf.error || 'XML document is not well-formed',
+      };
+    }
+
     if (typeof DOMParser !== 'undefined') {
       try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(xml, 'application/xml');
-        const parserError = doc.querySelector('parsererror');
+        const parserError =
+          doc.getElementsByTagName('parsererror')[0] ||
+          doc.getElementsByTagNameNS('*', 'parsererror')[0] ||
+          doc.querySelector('parsererror') ||
+          (doc.documentElement?.localName?.toLowerCase() === 'parsererror' ? doc.documentElement : null);
+
         if (parserError) {
           return {
             status: 'parse_error',
@@ -669,12 +703,13 @@ export class StandaloneSitemapParser {
       }
     }
 
-    // Fallback for headless environments without DOMParser: strictly enforce well-formedness
+    // Strict fallback for environments without DOMParser
     return this.parseXmlStrictFallback(xml, sitemapUrl);
   }
 
   /**
-   * Strict fallback parsing when DOMParser is absent; does not accept malformed XML.
+   * Strict fallback parsing when DOMParser is absent; enforces genuine XML well-formedness.
+   * Never fabricates a valid parse on malformed nested XML or broken tags.
    */
   public parseXmlStrictFallback(
     xml: string,
@@ -687,9 +722,19 @@ export class StandaloneSitemapParser {
     lastModified?: string;
     errorMessage?: string;
   } {
-    const trimmed = xml.trim();
-    const isIndex = /<sitemapindex\b[^>]*>[\s\S]*<\/sitemapindex>/i.test(trimmed);
-    const isUrlSet = /<urlset\b[^>]*>[\s\S]*<\/urlset>/i.test(trimmed);
+    const wf = validateXmlWellFormedness(xml);
+    if (!wf.wellFormed || !wf.rootTag) {
+      return {
+        status: 'parse_error',
+        isIndex: false,
+        urls: [],
+        childSitemaps: [],
+        errorMessage: wf.error || 'XML document is not well-formed',
+      };
+    }
+
+    const isIndex = wf.rootTag === 'sitemapindex';
+    const isUrlSet = wf.rootTag === 'urlset';
 
     if (!isIndex && !isUrlSet) {
       return {
@@ -697,19 +742,24 @@ export class StandaloneSitemapParser {
         isIndex: false,
         urls: [],
         childSitemaps: [],
-        errorMessage: 'Document is not a well-formed XML sitemap; missing matching <urlset> or <sitemapindex> tags',
+        errorMessage: `Unrecognized XML root element '<${wf.rootTag}>'; expected <urlset> or <sitemapindex>`,
       };
     }
 
     if (isIndex) {
       const childSitemaps: string[] = [];
-      const sitemapBlocks = trimmed.matchAll(/<sitemap\b[^>]*>([\s\S]*?)<\/sitemap>/gi);
+      const sitemapBlocks = xml.matchAll(/<([a-zA-Z_:][a-zA-Z0-9._:-]*:)?sitemap\b[^>]*>([\s\S]*?)<\/\1?sitemap>/gi);
       for (const match of sitemapBlocks) {
-        const block = match[1];
+        const block = match[2];
         if (!block) continue;
-        const locMatch = block.match(/<loc\b[^>]*>([\s\S]*?)<\/loc>/i);
-        if (locMatch && locMatch[1]) {
-          const loc = locMatch[1].trim();
+        const locMatch = block.match(/<([a-zA-Z_:][a-zA-Z0-9._:-]*:)?loc\b[^>]*>([\s\S]*?)<\/\1?loc>/i);
+        if (locMatch && locMatch[2]) {
+          let loc = locMatch[2].trim();
+          if (loc.startsWith('<![CDATA[') && loc.endsWith(']]>')) {
+            loc = loc.slice(9, -3).trim();
+          } else {
+            loc = decodeXmlEntities(loc);
+          }
           if (loc) {
             try {
               childSitemaps.push(new URL(loc, sitemapUrl).href);
@@ -727,13 +777,18 @@ export class StandaloneSitemapParser {
 
     const urls: string[] = [];
     let lastModified: string | undefined;
-    const urlBlocks = trimmed.matchAll(/<url\b[^>]*>([\s\S]*?)<\/url>/gi);
+    const urlBlocks = xml.matchAll(/<([a-zA-Z_:][a-zA-Z0-9._:-]*:)?url\b[^>]*>([\s\S]*?)<\/\1?url>/gi);
     for (const match of urlBlocks) {
-      const block = match[1];
+      const block = match[2];
       if (!block) continue;
-      const locMatch = block.match(/<loc\b[^>]*>([\s\S]*?)<\/loc>/i);
-      if (locMatch && locMatch[1]) {
-        const loc = locMatch[1].trim();
+      const locMatch = block.match(/<([a-zA-Z_:][a-zA-Z0-9._:-]*:)?loc\b[^>]*>([\s\S]*?)<\/\1?loc>/i);
+      if (locMatch && locMatch[2]) {
+        let loc = locMatch[2].trim();
+        if (loc.startsWith('<![CDATA[') && loc.endsWith(']]>')) {
+          loc = loc.slice(9, -3).trim();
+        } else {
+          loc = decodeXmlEntities(loc);
+        }
         if (loc) {
           try {
             urls.push(normalizeSitemapUrl(new URL(loc, sitemapUrl).href));
@@ -741,9 +796,15 @@ export class StandaloneSitemapParser {
         }
       }
       if (!lastModified) {
-        const lmMatch = block.match(/<lastmod\b[^>]*>([\s\S]*?)<\/lastmod>/i);
-        if (lmMatch && lmMatch[1]) {
-          lastModified = lmMatch[1].trim();
+        const lmMatch = block.match(/<([a-zA-Z_:][a-zA-Z0-9._:-]*:)?lastmod\b[^>]*>([\s\S]*?)<\/\1?lastmod>/i);
+        if (lmMatch && lmMatch[2]) {
+          let lm = lmMatch[2].trim();
+          if (lm.startsWith('<![CDATA[') && lm.endsWith(']]>')) {
+            lm = lm.slice(9, -3).trim();
+          } else {
+            lm = decodeXmlEntities(lm);
+          }
+          lastModified = lm;
         }
       }
     }
@@ -756,6 +817,247 @@ export class StandaloneSitemapParser {
       lastModified,
     };
   }
+}
+
+/**
+ * Decodes XML predefined entities and character references.
+ */
+export function decodeXmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+export interface XmlWellFormednessCheck {
+  wellFormed: boolean;
+  rootTag?: string;
+  error?: string;
+}
+
+/**
+ * Validates genuine XML well-formedness per W3C XML 1.0.
+ * Strictly verifies tag stacks, nesting, unclosed tags, entity references, and prohibits multiple roots.
+ */
+export function validateXmlWellFormedness(xml: string): XmlWellFormednessCheck {
+  const trimmed = xml.trim();
+  if (!trimmed) {
+    return { wellFormed: false, error: 'Empty XML document' };
+  }
+
+  let i = 0;
+  const len = trimmed.length;
+
+  // Optional XML declaration <?xml ... ?>
+  if (trimmed.startsWith('<?xml', 0)) {
+    const declEnd = trimmed.indexOf('?>', 5);
+    if (declEnd === -1) {
+      return { wellFormed: false, error: 'Unterminated XML declaration' };
+    }
+    i = declEnd + 2;
+  }
+
+  const tagStack: Array<{ tag: string; original: string }> = [];
+  let rootTag: string | undefined = undefined;
+  let rootClosed = false;
+
+  while (i < len) {
+    const ch = trimmed[i];
+    if (!ch) {
+      break;
+    }
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+
+    // Comments: <!-- ... -->
+    if (trimmed.startsWith('<!--', i)) {
+      const commentEnd = trimmed.indexOf('-->', i + 4);
+      if (commentEnd === -1) {
+        return { wellFormed: false, error: 'Unclosed XML comment' };
+      }
+      const commentInner = trimmed.slice(i + 4, commentEnd);
+      if (commentInner.includes('--')) {
+        return { wellFormed: false, error: 'Malformed XML comment contains disallowed sequence "--"' };
+      }
+      i = commentEnd + 3;
+      continue;
+    }
+
+    // CDATA: <![CDATA[ ... ]]>
+    if (trimmed.startsWith('<![CDATA[', i)) {
+      if (tagStack.length === 0) {
+        return { wellFormed: false, error: 'CDATA section outside of root element' };
+      }
+      const cdataEnd = trimmed.indexOf(']]>', i + 9);
+      if (cdataEnd === -1) {
+        return { wellFormed: false, error: 'Unclosed CDATA section' };
+      }
+      i = cdataEnd + 3;
+      continue;
+    }
+
+    // Disallowed DTD / DOCTYPE / ENTITY
+    if (trimmed.startsWith('<!', i)) {
+      return { wellFormed: false, error: 'Disallowed XML markup declaration / DOCTYPE' };
+    }
+
+    // Processing Instructions: <? ... ?>
+    if (trimmed.startsWith('<?', i)) {
+      const piEnd = trimmed.indexOf('?>', i + 2);
+      if (piEnd === -1) {
+        return { wellFormed: false, error: 'Unterminated processing instruction' };
+      }
+      i = piEnd + 2;
+      continue;
+    }
+
+    // Closing Tag: </tag>
+    if (trimmed.startsWith('</', i)) {
+      const closeIdx = trimmed.indexOf('>', i + 2);
+      if (closeIdx === -1) {
+        return { wellFormed: false, error: 'Unclosed closing tag' };
+      }
+      const rawTagName = trimmed.slice(i + 2, closeIdx).trim();
+      if (!/^[a-zA-Z_:][a-zA-Z0-9._:-]*$/.test(rawTagName)) {
+        return { wellFormed: false, error: `Invalid closing tag name: </${rawTagName}>` };
+      }
+      const localName = rawTagName.split(':').pop()!.toLowerCase();
+      if (tagStack.length === 0) {
+        return { wellFormed: false, error: `Unexpected closing tag </${rawTagName}> with empty tag stack` };
+      }
+      const top = tagStack.pop()!;
+      if (top.tag !== localName) {
+        return {
+          wellFormed: false,
+          error: `Mismatched closing tag </${rawTagName}>; expected </${top.original}>`,
+        };
+      }
+      if (tagStack.length === 0) {
+        rootClosed = true;
+      }
+      i = closeIdx + 1;
+      continue;
+    }
+
+    // Opening Tag or Self-Closing Tag: <tag ...> or <tag ... />
+    if (trimmed[i] === '<') {
+      if (rootClosed) {
+        return { wellFormed: false, error: 'Multiple root elements; XML documents must have exactly one root element' };
+      }
+      const tagEnd = trimmed.indexOf('>', i + 1);
+      if (tagEnd === -1) {
+        return { wellFormed: false, error: 'Unclosed opening tag' };
+      }
+      const tagContent = trimmed.slice(i + 1, tagEnd).trim();
+      if (tagContent.includes('<')) {
+        return { wellFormed: false, error: 'Malformed tag syntax; nested "<" before closing ">"' };
+      }
+
+      const isSelfClosing = tagContent.endsWith('/');
+      const cleanContent = isSelfClosing ? tagContent.slice(0, -1).trim() : tagContent;
+
+      const nameMatch = cleanContent.match(/^([a-zA-Z_:][a-zA-Z0-9._:-]*)/);
+      if (!nameMatch || !nameMatch[1]) {
+        return { wellFormed: false, error: `Malformed tag name in <${tagContent}>` };
+      }
+      const rawTagName: string = nameMatch[1];
+      const localName = rawTagName.split(':').pop()!.toLowerCase();
+
+      // Validate attributes syntax
+      const attrString = cleanContent.slice(rawTagName.length).trim();
+      if (attrString) {
+        const attrRegex = /([a-zA-Z_:][a-zA-Z0-9._:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+        let lastIndex = 0;
+        let match: RegExpExecArray | null;
+        const seenAttrs = new Set<string>();
+
+        while ((match = attrRegex.exec(attrString)) !== null) {
+          const attrKey = match[1];
+          if (!attrKey) {
+            continue;
+          }
+          const attrName = attrKey.toLowerCase();
+          if (seenAttrs.has(attrName)) {
+            return { wellFormed: false, error: `Duplicate attribute "${attrKey}" in tag <${rawTagName}>` };
+          }
+          seenAttrs.add(attrName);
+          lastIndex = attrRegex.lastIndex;
+        }
+
+        const remainder = attrString.slice(lastIndex).trim();
+        if (remainder.length > 0) {
+          return { wellFormed: false, error: `Malformed attribute syntax in tag <${rawTagName}>: "${remainder}"` };
+        }
+      }
+
+      if (tagStack.length === 0) {
+        if (rootTag !== undefined) {
+          return { wellFormed: false, error: 'Multiple root elements found in XML document' };
+        }
+        rootTag = localName;
+      }
+
+      if (!isSelfClosing) {
+        tagStack.push({ tag: localName, original: rawTagName });
+      } else if (tagStack.length === 0) {
+        rootClosed = true;
+      }
+
+      i = tagEnd + 1;
+      continue;
+    }
+
+    // Text content outside root
+    if (tagStack.length === 0) {
+      if (rootClosed) {
+        return { wellFormed: false, error: 'Disallowed characters after root element close' };
+      }
+      return { wellFormed: false, error: 'Text content found outside root element' };
+    }
+
+    // Entity check in text content
+    if (trimmed[i] === '&') {
+      const semiIdx = trimmed.indexOf(';', i + 1);
+      const nextLt = trimmed.indexOf('<', i + 1);
+      if (semiIdx === -1 || (nextLt !== -1 && nextLt < semiIdx)) {
+        return { wellFormed: false, error: 'Unescaped "&" in XML text content; must use &amp; or entity reference' };
+      }
+      const ent = trimmed.slice(i + 1, semiIdx);
+      const isValidEntity =
+        ent === 'amp' ||
+        ent === 'lt' ||
+        ent === 'gt' ||
+        ent === 'quot' ||
+        ent === 'apos' ||
+        /^#\d+$/.test(ent) ||
+        /^#x[0-9a-fA-F]+$/.test(ent);
+
+      if (!isValidEntity) {
+        return { wellFormed: false, error: `Disallowed or undeclared entity reference "&${ent};"` };
+      }
+      i = semiIdx + 1;
+      continue;
+    }
+
+    i++;
+  }
+
+  if (tagStack.length > 0) {
+    const unclosed = tagStack[tagStack.length - 1];
+    return { wellFormed: false, error: `Unclosed tag <${unclosed ? unclosed.original : 'unknown'}> at end of document` };
+  }
+
+  if (!rootTag) {
+    return { wellFormed: false, error: 'No XML root element found' };
+  }
+
+  return { wellFormed: true, rootTag };
 }
 
 /**

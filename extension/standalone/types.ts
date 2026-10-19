@@ -324,6 +324,7 @@ export interface StandaloneCanonicalSitemapEntry {
   isIndex: boolean;
   childSitemaps: string[];
   lastModified?: string;
+  isDeclared?: boolean;
 }
 
 export type StandaloneSitemapEntry = Partial<StandaloneCanonicalSitemapEntry>;
@@ -356,6 +357,7 @@ export function normalizeSitemapEntry(raw: StandaloneSitemapEntry | Record<strin
     isIndex: Boolean(raw.isIndex),
     childSitemaps: Array.isArray(raw.childSitemaps) ? [...raw.childSitemaps] : [],
     lastModified: raw.lastModified,
+    isDeclared: typeof raw.isDeclared === 'boolean' ? raw.isDeclared : undefined,
   };
 }
 

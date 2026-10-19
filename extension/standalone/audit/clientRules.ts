@@ -1297,7 +1297,14 @@ export class StandaloneRulesEngine {
     }
 
     // 4. TECH_ROBOTS_SITEMAP_DECLARATION (site-level)
-    if (!robotsStatus || robotsStatus === 'not_evaluated' || robotsStatus === 'error' || robotsStatus === 'forbidden') {
+    if (
+      !robotsStatus ||
+      robotsStatus === 'not_evaluated' ||
+      robotsStatus === 'error' ||
+      robotsStatus === 'forbidden' ||
+      robotsStatus === 'rate_limited' ||
+      robotsEvidence?.policyOutcome === 'fetch_failed_unverified'
+    ) {
       recordLedger(
         'TECH_ROBOTS_SITEMAP_DECLARATION',
         'not_evaluated',
@@ -1350,7 +1357,73 @@ export class StandaloneRulesEngine {
     // 5. TECH_SITEMAP_AVAILABILITY (site-level)
     const sitemapEvidence = normalizeSitemapEvidence(auditContext?.sitemapEvidence);
     const sitemaps = sitemapEvidence?.sitemaps || [];
-    if (sitemaps.length === 0) {
+    const validSitemaps = sitemaps.filter((s) => s.status === 'valid' || s.status === 'success');
+    const declaredSitemaps = sitemaps.filter(
+      (s) => s.isDeclared === true || (robotsEvidence?.sitemapDeclarations || []).includes(s.sitemapUrl || s.url)
+    );
+    const brokenDeclaredSitemaps = declaredSitemaps.filter(
+      (s) => s.status === 'fetch_error' || s.status === 'unauthorized' || s.status === 'out_of_scope' || (s.httpStatus && s.httpStatus >= 400)
+    );
+    const parseErrorSitemaps = sitemaps.filter((s) => s.status === 'parse_error');
+
+    if (validSitemaps.length > 0) {
+      recordLedger(
+        'TECH_SITEMAP_AVAILABILITY',
+        'executed_pass',
+        'pass',
+        true,
+        `Discovered ${validSitemaps.length} accessible XML sitemap(s)`
+      );
+    } else if (brokenDeclaredSitemaps.length > 0) {
+      // DECLARED_SITEMAP_BROKEN: Robots.txt explicitly declared a sitemap that failed to load
+      recordLedger(
+        'TECH_SITEMAP_AVAILABILITY',
+        'executed_fail',
+        'fail',
+        true,
+        `Declared XML sitemap(s) broken or inaccessible (${brokenDeclaredSitemaps.length})`
+      );
+      findings.push({
+        id: `${auditId}-sitewide-declared-sitemap-broken`,
+        auditId,
+        ruleId: 'TECH_SITEMAP_AVAILABILITY',
+        category: 'technical',
+        severity: 'high',
+        status: 'fail',
+        title: 'Declared XML sitemap broken or inaccessible',
+        description: `robots.txt explicitly declared ${brokenDeclaredSitemaps.length} sitemap(s) that could not be fetched (HTTP status error or network failure).`,
+        recommendation: 'Fix the declared sitemap URL in robots.txt or restore the sitemap file on the server.',
+        pageUrl: seedUrl,
+        evidence: {
+          declaredCount: declaredSitemaps.length,
+          brokenCount: brokenDeclaredSitemaps.length,
+          brokenUrls: brokenDeclaredSitemaps.map((s) => s.sitemapUrl || s.url),
+        },
+      });
+    } else if (parseErrorSitemaps.length > 0) {
+      // SITEMAP_PRESENT_INVALID_XML: Sitemap was found/fetched but XML is malformed
+      recordLedger(
+        'TECH_SITEMAP_AVAILABILITY',
+        'executed_fail',
+        'fail',
+        true,
+        `XML sitemaps present but invalid XML (${parseErrorSitemaps.length})`
+      );
+      findings.push({
+        id: `${auditId}-sitewide-sitemaps-invalid-xml`,
+        auditId,
+        ruleId: 'TECH_SITEMAP_AVAILABILITY',
+        category: 'technical',
+        severity: 'high',
+        status: 'fail',
+        title: 'XML sitemaps present but invalid XML',
+        description: `Discovered sitemap(s) contained malformed or invalid XML syntax that prevents search engine parsing.`,
+        recommendation: 'Validate and repair XML syntax errors in discovered sitemaps.',
+        pageUrl: seedUrl,
+        evidence: { sitemapCount: sitemaps.length, parseErrorCount: parseErrorSitemaps.length },
+      });
+    } else {
+      // NO_SITEMAP_FOUND: Conventional probing (/sitemap.xml) returned 404 or empty and no sitemap was declared
       recordLedger(
         'TECH_SITEMAP_AVAILABILITY',
         'executed_warning',
@@ -1366,50 +1439,17 @@ export class StandaloneRulesEngine {
         severity: 'low',
         status: 'warning',
         title: 'No XML sitemaps discovered',
-        description: 'No XML sitemaps were discovered via robots.txt or standard sitemap locations.',
+        description: 'No XML sitemaps were declared in robots.txt or discovered at standard locations.',
         recommendation: 'Create and submit an XML sitemap to help search engines discover newly published or updated URLs.',
         pageUrl: seedUrl,
-        evidence: { sitemapCount: 0 },
+        evidence: { sitemapCount: 0, probedCount: sitemaps.length },
       });
-    } else {
-      const validSitemaps = sitemaps.filter((s) => s.status === 'valid' || s.status === 'success');
-      if (validSitemaps.length > 0) {
-        recordLedger(
-          'TECH_SITEMAP_AVAILABILITY',
-          'executed_pass',
-          'pass',
-          true,
-          `Discovered ${validSitemaps.length} accessible XML sitemap(s)`
-        );
-      } else {
-        recordLedger(
-          'TECH_SITEMAP_AVAILABILITY',
-          'executed_fail',
-          'fail',
-          true,
-          'XML sitemaps present but all errored'
-        );
-        findings.push({
-          id: `${auditId}-sitewide-sitemaps-errored`,
-          auditId,
-          ruleId: 'TECH_SITEMAP_AVAILABILITY',
-          category: 'technical',
-          severity: 'high',
-          status: 'fail',
-          title: 'XML sitemaps present but errored',
-          description: 'XML sitemaps were discovered but all encountered fetch or parse errors.',
-          recommendation: 'Fix XML syntax errors or HTTP response issues for discovered sitemaps.',
-          pageUrl: seedUrl,
-          evidence: { sitemapCount: sitemaps.length },
-        });
-      }
     }
 
     // 6. TECH_SITEMAP_PARSE_ERROR (site-level)
     const fetchedSitemaps = sitemaps.filter(
       (s) => s.fetchStatus === 'fetched' || s.status === 'valid' || s.status === 'parse_error'
     );
-    const parseErrorSitemaps = sitemaps.filter((s) => s.status === 'parse_error');
 
     if (fetchedSitemaps.length === 0) {
       recordLedger(

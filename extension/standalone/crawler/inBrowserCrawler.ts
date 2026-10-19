@@ -13,7 +13,7 @@ import type {
 } from '../types';
 import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { StandaloneDomParser } from '../audit/domParserEngine';
-import { StandaloneSitemapParser } from './sitemapParser';
+import { StandaloneSitemapParser, isSsrfTarget, readBoundedResponseBody } from './sitemapParser';
 
 export interface CrawlCallbacks {
   onPageCrawled: (page: StandaloneCrawlPage) => Promise<void>;
@@ -24,6 +24,30 @@ export interface CrawlCallbacks {
 export interface RobotsRule {
   path: string;
   allow: boolean;
+}
+
+/**
+ * Normalizes a path/query according to RFC 9309 §2.2.2 & RFC 3986 §2.3.
+ * Decodes unreserved characters and uppercases percent-encoded hex sequences.
+ */
+export function normalizeRobotsPath(p: string): string {
+  let norm = p.replace(/%[0-9a-fA-F]{2}/g, (match) => match.toUpperCase());
+  norm = norm.replace(/%([0-9A-F]{2})/g, (match, hex) => {
+    const code = parseInt(hex, 16);
+    if (
+      (code >= 0x41 && code <= 0x5a) || // A-Z
+      (code >= 0x61 && code <= 0x7a) || // a-z
+      (code >= 0x30 && code <= 0x39) || // 0-9
+      code === 0x2d || // -
+      code === 0x2e || // .
+      code === 0x5f || // _
+      code === 0x7e    // ~
+    ) {
+      return String.fromCharCode(code);
+    }
+    return match;
+  });
+  return norm;
 }
 
 /**
@@ -79,11 +103,30 @@ export class InBrowserCrawler {
   private selectedUserAgent: string = '*';
   private robotsFetched = false;
   private robotsPolicyStatus: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | 'server_error_disallow' = 'not_present_permissive';
+  private robotsFailureReason:
+    | 'none'
+    | 'http_401_403'
+    | 'http_429'
+    | 'http_5xx'
+    | 'connection_refused'
+    | 'timeout'
+    | 'redirect_blocked'
+    | 'oversized'
+    | 'malformed_content' = 'none';
+  private robotsFailureMessage: string = '';
   private robotsEvidence?: StandaloneRobotsEvidence;
   private sitemapEvidence?: StandaloneSitemapEvidence;
 
   public getRobotsPolicyStatus(): 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | 'server_error_disallow' {
     return this.robotsPolicyStatus;
+  }
+
+  public getRobotsFailureReason(): string {
+    return this.robotsFailureReason;
+  }
+
+  public getRobotsFailureMessage(): string {
+    return this.robotsFailureMessage;
   }
 
   public getRobotsEvidence(): StandaloneRobotsEvidence | undefined {
@@ -197,6 +240,71 @@ export class InBrowserCrawler {
     return false;
   }
 
+  /**
+   * Manually handles HTTP redirects up to maxRedirects (3), strictly verifying each destination before requesting.
+   * Ensures destination remains on the exact authorized origin and does not target private ranges / SSRF.
+   */
+  private async fetchRobotsTxtWithControlledRedirect(
+    robotsUrl: string,
+    signal: AbortSignal
+  ): Promise<{ response: Response; finalUrl: string }> {
+    let currentUrl = robotsUrl;
+    let redirectsCount = 0;
+    const maxRedirects = 3;
+
+    while (true) {
+      if (signal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const u = new URL(currentUrl);
+      if (u.origin.toLowerCase() !== this.origin.toLowerCase()) {
+        throw new Error(`Robots.txt URL '${currentUrl}' is outside authorized origin scope '${this.origin}'`);
+      }
+      if (isSsrfTarget(currentUrl, this.origin)) {
+        throw new Error(`Robots.txt request to disallowed destination blocked: ${currentUrl}`);
+      }
+
+      const res = await fetch(currentUrl, {
+        method: 'GET',
+        signal,
+        redirect: 'manual',
+        headers: {
+          Accept: 'text/plain, */*;q=0.8',
+        },
+      });
+
+      // Redirect handling (301, 302, 307, 308)
+      if (res.status >= 300 && res.status < 400) {
+        redirectsCount++;
+        if (redirectsCount > maxRedirects) {
+          throw new Error(`Robots.txt redirect limit exceeded (${maxRedirects})`);
+        }
+
+        const location = res.headers.get('location');
+        if (!location) {
+          throw new Error(`HTTP ${res.status} redirect without Location header`);
+        }
+
+        const nextUrl = new URL(location, currentUrl).href;
+
+        // Security check: Must remain on authorized origin and not SSRF
+        const nextU = new URL(nextUrl);
+        if (nextU.origin.toLowerCase() !== this.origin.toLowerCase()) {
+          throw new Error(`Robots.txt redirect to out-of-scope origin blocked: ${nextUrl}`);
+        }
+        if (isSsrfTarget(nextUrl, this.origin)) {
+          throw new Error(`Robots.txt redirect to unsafe private/metadata destination blocked: ${nextUrl}`);
+        }
+
+        currentUrl = nextUrl;
+        continue;
+      }
+
+      return { response: res, finalUrl: currentUrl };
+    }
+  }
+
   public async fetchRobotsTxt(): Promise<StandaloneRobotsEvidence> {
     if (this.robotsFetched && this.robotsEvidence) {
       return this.robotsEvidence;
@@ -204,20 +312,48 @@ export class InBrowserCrawler {
     this.robotsFetched = true;
     const robotsUrl = `${this.origin}/robots.txt`;
 
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(robotsUrl, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
+    try {
+      const { response: res } = await this.fetchRobotsTxtWithControlledRedirect(robotsUrl, controller.signal);
       const status = res.status;
+
       if (status === 200) {
-        const text = await res.text();
+        // Response Content-Type handling: Check for disallowed binary content
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        const isBinary =
+          contentType.includes('image/') ||
+          contentType.includes('video/') ||
+          contentType.includes('audio/') ||
+          contentType.includes('application/pdf') ||
+          contentType.includes('application/zip') ||
+          contentType.includes('application/octet-stream');
+
+        if (isBinary) {
+          this.robotsPolicyStatus = 'fetch_failed_unverified';
+          this.robotsFailureReason = 'malformed_content';
+          this.robotsFailureMessage = `Disallowed binary Content-Type: ${contentType}`;
+          this.robotsEvidence = normalizeRobotsEvidence({
+            robotsUrl,
+            httpStatus: 200,
+            fetchStatus: 'error',
+            parserStatus: 'malformed',
+            selectedUserAgent: '*',
+            allowDirectives: [],
+            disallowDirectives: [],
+            sitemapDeclarations: [],
+            policyOutcome: 'fetch_failed_unverified',
+          })!;
+          return this.robotsEvidence;
+        }
+
+        // Bounded streaming read (512KB cap per RFC 9309 §2.2)
+        const text = await readBoundedResponseBody(res, 512 * 1024, controller.signal);
         this.parseRobotsTxt(text);
         this.robotsPolicyStatus = 'enforced';
+        this.robotsFailureReason = 'none';
+        this.robotsFailureMessage = '';
         this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: 200,
@@ -232,6 +368,8 @@ export class InBrowserCrawler {
         })!;
       } else if (status === 404 || status === 410) {
         this.robotsPolicyStatus = 'not_present_permissive';
+        this.robotsFailureReason = 'none';
+        this.robotsFailureMessage = '';
         this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: status,
@@ -245,6 +383,8 @@ export class InBrowserCrawler {
         })!;
       } else if (status === 403 || status === 401) {
         this.robotsPolicyStatus = 'forbidden';
+        this.robotsFailureReason = 'http_401_403';
+        this.robotsFailureMessage = `Robots.txt access denied (HTTP ${status})`;
         this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: status,
@@ -256,8 +396,26 @@ export class InBrowserCrawler {
           sitemapDeclarations: [],
           policyOutcome: 'forbidden',
         })!;
-      } else {
+      } else if (status === 429) {
         this.robotsPolicyStatus = 'fetch_failed_unverified';
+        this.robotsFailureReason = 'http_429';
+        this.robotsFailureMessage = 'Robots.txt rate limited (HTTP 429)';
+        this.robotsEvidence = normalizeRobotsEvidence({
+          robotsUrl,
+          httpStatus: 429,
+          fetchStatus: 'rate_limited',
+          parserStatus: 'not_present',
+          selectedUserAgent: '*',
+          allowDirectives: [],
+          disallowDirectives: [],
+          sitemapDeclarations: [],
+          policyOutcome: 'fetch_failed_unverified',
+        })!;
+      } else {
+        // 5xx or other non-success status: RFC 9309 §2.3.1.4 disallows crawling
+        this.robotsPolicyStatus = 'fetch_failed_unverified';
+        this.robotsFailureReason = 'http_5xx';
+        this.robotsFailureMessage = `Robots.txt unavailable due to server error (HTTP ${status})`;
         this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: status,
@@ -270,88 +428,178 @@ export class InBrowserCrawler {
           policyOutcome: 'fetch_failed_unverified',
         })!;
       }
-    } catch {
+    } catch (err: any) {
       this.robotsPolicyStatus = 'fetch_failed_unverified';
+      const isOversized = err?.message?.includes('exceeds maximum allowed size');
+      const isTimeout =
+        err?.name === 'AbortError' ||
+        err?.message?.toLowerCase().includes('aborted') ||
+        err?.message?.toLowerCase().includes('timeout');
+      const isRedirect =
+        err?.message?.toLowerCase().includes('redirect') ||
+        err?.message?.toLowerCase().includes('scope') ||
+        err?.message?.toLowerCase().includes('destination');
+
+      if (isOversized) {
+        this.robotsFailureReason = 'oversized';
+        this.robotsFailureMessage = 'Robots.txt response exceeded maximum allowed size (512KB)';
+      } else if (isTimeout) {
+        this.robotsFailureReason = 'timeout';
+        this.robotsFailureMessage = 'Request timeout after 4000ms';
+      } else if (isRedirect) {
+        this.robotsFailureReason = 'redirect_blocked';
+        this.robotsFailureMessage = err?.message || 'Robots.txt redirect blocked';
+      } else {
+        this.robotsFailureReason = 'connection_refused';
+        this.robotsFailureMessage = err?.message || 'Network error: Failed to fetch';
+      }
+
       this.robotsEvidence = normalizeRobotsEvidence({
         robotsUrl,
         httpStatus: 0,
         fetchStatus: 'error',
-        parserStatus: 'not_present',
+        parserStatus: isOversized ? 'oversized' : 'not_present',
         selectedUserAgent: '*',
         allowDirectives: [],
         disallowDirectives: [],
         sitemapDeclarations: [],
         policyOutcome: 'fetch_failed_unverified',
       })!;
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     return this.robotsEvidence!;
   }
 
   public parseRobotsTxt(robotsText: string): void {
-    const lines = robotsText.split('\n');
-    let hasSpecificGroup = false;
-
+    this.robotsFetched = true;
+    this.robotsPolicyStatus = 'enforced';
+    this.robotsFailureReason = 'none';
+    this.robotsFailureMessage = '';
     this.allowDirectives = [];
     this.disallowDirectives = [];
     this.sitemapDeclarations = [];
     this.rules = [];
+    this.robotsPolicyStatus = 'enforced';
 
-    // Pass 1: detect if a dedicated bot user-agent block exists
+    const lines = robotsText.split('\n');
+
+    interface Group {
+      userAgents: string[];
+      rules: RobotsRule[];
+      allow: string[];
+      disallow: string[];
+    }
+
+    const groups: Group[] = [];
+    let currentGroup: Group | null = null;
+    let inDirectives = false;
+
     for (const rawLine of lines) {
       const clean = (rawLine.split('#')[0] || '').trim();
-      if (!clean) continue;
-      const lower = clean.toLowerCase();
-      if (lower.startsWith('user-agent:')) {
-        const agent = clean.slice(11).trim().toLowerCase();
-        if (agent === 'websiteauditbot' || agent.includes('websiteaudit')) {
-          hasSpecificGroup = true;
-          break;
+      if (!clean) {
+        // Blank line terminates group directives per RFC 9309 §2.2.1
+        if (currentGroup && inDirectives) {
+          currentGroup = null;
+          inDirectives = false;
+        }
+        continue;
+      }
+
+      const colonIdx = clean.indexOf(':');
+      if (colonIdx === -1) {
+        // Malformed line without colon -> ignore per RFC 9309
+        continue;
+      }
+
+      const field = clean.slice(0, colonIdx).trim().toLowerCase();
+      const value = clean.slice(colonIdx + 1).trim();
+
+      if (field === 'sitemap') {
+        if (value && !this.sitemapDeclarations.includes(value)) {
+          this.sitemapDeclarations.push(value);
+        }
+        continue;
+      }
+
+      if (field === 'user-agent') {
+        const agent = value.toLowerCase();
+        // If we were reading directives and see another user-agent, that starts a new group
+        if (inDirectives || !currentGroup) {
+          currentGroup = {
+            userAgents: [agent],
+            rules: [],
+            allow: [],
+            disallow: [],
+          };
+          groups.push(currentGroup);
+          inDirectives = false;
+        } else {
+          // Consecutive user-agent line in the same group header
+          if (!currentGroup.userAgents.includes(agent)) {
+            currentGroup.userAgents.push(agent);
+          }
+        }
+        continue;
+      }
+
+      if (currentGroup) {
+        inDirectives = true;
+        if (field === 'disallow') {
+          if (!value) {
+            // RFC 9309 §2.2.2: Empty Disallow: indicates access is allowed / clears previous disallows
+            currentGroup.disallow = [];
+            currentGroup.rules = currentGroup.rules.filter((r) => r.allow);
+          } else {
+            currentGroup.disallow.push(value);
+            currentGroup.rules.push({ path: value, allow: false });
+          }
+        } else if (field === 'allow') {
+          if (value) {
+            currentGroup.allow.push(value);
+            currentGroup.rules.push({ path: value, allow: true });
+          }
         }
       }
     }
 
-    const targetAgent = hasSpecificGroup ? 'websiteauditbot' : '*';
-    this.selectedUserAgent = targetAgent;
+    // Group selection per RFC 9309 §2.2.1:
+    // If a specific group matches our bot name, select it.
+    // Otherwise fallback to '*' group.
+    const targetBot = 'websiteauditbot';
+    const specificGroups = groups.filter((g) =>
+      g.userAgents.some((a) => a === targetBot || a.includes('websiteaudit'))
+    );
 
-    let inTargetGroup = false;
-
-    for (const rawLine of lines) {
-      const clean = (rawLine.split('#')[0] || '').trim();
-      if (!clean) continue;
-      const lower = clean.toLowerCase();
-
-      if (lower.startsWith('user-agent:')) {
-        const agent = clean.slice(11).trim().toLowerCase();
-        inTargetGroup = agent === targetAgent || (!hasSpecificGroup && agent === '*');
-      } else if (lower.startsWith('sitemap:')) {
-        const smUrl = clean.slice(8).trim();
-        if (smUrl && !this.sitemapDeclarations.includes(smUrl)) {
-          this.sitemapDeclarations.push(smUrl);
+    if (specificGroups.length > 0) {
+      this.selectedUserAgent = targetBot;
+      for (const g of specificGroups) {
+        this.allowDirectives.push(...g.allow);
+        this.disallowDirectives.push(...g.disallow);
+        this.rules.push(...g.rules);
+      }
+    } else {
+      const wildcardGroups = groups.filter((g) => g.userAgents.includes('*'));
+      if (wildcardGroups.length > 0) {
+        this.selectedUserAgent = '*';
+        for (const g of wildcardGroups) {
+          this.allowDirectives.push(...g.allow);
+          this.disallowDirectives.push(...g.disallow);
+          this.rules.push(...g.rules);
         }
-      } else if (inTargetGroup) {
-        if (lower.startsWith('disallow:')) {
-          const path = clean.slice(9).trim();
-          if (path) {
-            this.disallowDirectives.push(path);
-            this.rules.push({ path, allow: false });
-          }
-        } else if (lower.startsWith('allow:')) {
-          const path = clean.slice(6).trim();
-          if (path) {
-            this.allowDirectives.push(path);
-            this.rules.push({ path, allow: true });
-          }
-        }
+      } else {
+        this.selectedUserAgent = '*';
       }
     }
   }
 
   /**
-   * RFC 9309 compliant path matching with longest-match precedence and wildcard support.
+   * RFC 9309 compliant path matching with longest-match precedence, query-string support,
+   * percent-encoded normalization, and conservative failure policy.
    */
   public isAllowedByRobots(urlOrPath: string): boolean {
-    // RFC 9309 §2.3.1.3: 401/403 on robots.txt MUST assume full disallow
+    // 1. RFC 9309 §2.3.1.3: 401/403 on robots.txt MUST assume full disallow
     if (
       this.robotsPolicyStatus === 'forbidden' ||
       this.robotsEvidence?.fetchStatus === 'forbidden' ||
@@ -361,7 +609,7 @@ export class InBrowserCrawler {
       return false;
     }
 
-    // RFC 9309 §2.3.1.4: 5xx on robots.txt MUST assume full disallow
+    // 2. RFC 9309 §2.3.1.4: 5xx on robots.txt MUST assume full disallow
     if (
       this.robotsEvidence?.httpStatus &&
       this.robotsEvidence.httpStatus >= 500 &&
@@ -370,51 +618,103 @@ export class InBrowserCrawler {
       return false;
     }
 
+    // 3. Rate limited (429) MUST assume full disallow
+    if (
+      this.robotsEvidence?.httpStatus === 429 ||
+      this.robotsEvidence?.fetchStatus === 'rate_limited'
+    ) {
+      return false;
+    }
+
+    // 4. Conservative failure policy: Network failures, timeouts, connection refused,
+    // redirect violations, oversized files, or unverified fetch MUST assume full disallow.
+    // Unknown access must not silently become unrestricted crawling!
+    if (
+      this.robotsPolicyStatus === 'fetch_failed_unverified' ||
+      this.robotsEvidence?.policyOutcome === 'fetch_failed_unverified' ||
+      this.robotsEvidence?.fetchStatus === 'error' ||
+      (this.robotsEvidence && this.robotsEvidence.httpStatus === 0)
+    ) {
+      return false;
+    }
+
+    // 5. RFC 9309 §2.3.1.2: 404/410 absent robots.txt -> unrestricted access
+    if (
+      this.robotsPolicyStatus === 'not_present_permissive' ||
+      this.robotsEvidence?.policyOutcome === 'not_present_permissive' ||
+      this.robotsEvidence?.httpStatus === 404 ||
+      this.robotsEvidence?.httpStatus === 410
+    ) {
+      return true;
+    }
+
+    // 6. If respectRobots is enabled but robots has not been fetched, conservative default is false
+    if (!this.robotsFetched && this.config.respectRobots) {
+      return false;
+    }
+
+    // 7. If rules array is empty after valid 200 parse, access is allowed per RFC 9309
     if (this.rules.length === 0) {
       return true;
     }
 
-    let pathname = urlOrPath;
+    let targetPath = urlOrPath;
     try {
       if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://')) {
-        pathname = new URL(urlOrPath).pathname;
+        const u = new URL(urlOrPath);
+        targetPath = u.pathname + (u.search || '');
       }
     } catch {
-      pathname = urlOrPath;
+      targetPath = urlOrPath;
+    }
+    if (!targetPath.startsWith('/')) {
+      targetPath = '/' + targetPath;
     }
 
+    const normalizedTarget = normalizeRobotsPath(targetPath);
+
     const matchingRules = this.rules.filter((rule) => {
-      if (!rule.path) return false;
+      if (rule.path === '') {
+        // Empty Disallow: directive allows all access per RFC 9309 §2.2.2
+        return true;
+      }
       if (rule.path === '/') return true;
 
-      let pattern = rule.path;
+      let pattern = normalizeRobotsPath(rule.path);
       let hasEndAnchor = false;
       if (pattern.endsWith('$')) {
         hasEndAnchor = true;
         pattern = pattern.slice(0, -1);
       }
+
       if (pattern.includes('*')) {
         const escaped = pattern
           .split('*')
           .map((p) => p.replace(/[-[\]{}()+?.,\\^$|#\s]/g, '\\$&'))
           .join('.*');
         const regex = new RegExp('^' + escaped + (hasEndAnchor ? '$' : ''));
-        return regex.test(pathname);
+        return regex.test(normalizedTarget) || regex.test(targetPath);
       }
+
       if (hasEndAnchor) {
-        return pathname === pattern;
+        return normalizedTarget === pattern || targetPath === pattern;
       }
-      return pathname.startsWith(pattern);
+
+      return normalizedTarget.startsWith(pattern) || targetPath.startsWith(pattern);
     });
 
     if (matchingRules.length === 0) {
       return true;
     }
 
-    // Sort descending by path length. On length tie, Allow takes precedence.
+    // RFC 9309 §2.2.2:
+    // Longest path match wins.
+    // On path length tie, Allow takes precedence over Disallow.
     matchingRules.sort((a, b) => {
-      if (b.path.length !== a.path.length) {
-        return b.path.length - a.path.length;
+      const lenA = a.path.length;
+      const lenB = b.path.length;
+      if (lenB !== lenA) {
+        return lenB - lenA;
       }
       return a.allow ? -1 : 1;
     });
@@ -486,17 +786,55 @@ export class InBrowserCrawler {
       const isInSitemap = this.isUrlInSitemap(item.url);
 
       // Robots.txt disallow enforcement: NEVER bypass robots.txt, NEVER fetch blocked URLs!
-      const pathname = new URL(item.url).pathname;
-      if (this.config.respectRobots && !this.isAllowedByRobots(pathname)) {
+      if (this.config.respectRobots && !this.isAllowedByRobots(item.url)) {
+        let status = 0;
+        let fetchStatus: StandaloneCrawlPage['fetchStatus'] = 'robots_blocked';
+        let errorCode: any = 'FETCH_ROBOTS_BLOCKED';
+        let errorMessage = 'URL blocked by robots.txt policy';
+
+        if (this.robotsFailureReason === 'connection_refused') {
+          fetchStatus = 'failed';
+          errorCode = 'FETCH_NETWORK_ERROR';
+          errorMessage = `Network error: ${this.robotsFailureMessage || 'Failed to fetch'}`;
+        } else if (this.robotsFailureReason === 'timeout') {
+          fetchStatus = 'timeout';
+          errorCode = 'FETCH_TIMEOUT';
+          errorMessage = 'Request timeout after 4000ms';
+        } else if (this.robotsFailureReason === 'http_429') {
+          fetchStatus = 'failed';
+          errorCode = 'FETCH_ROBOTS_BLOCKED';
+          errorMessage = 'Robots.txt rate limited (HTTP 429)';
+        } else if (this.robotsFailureReason === 'http_5xx') {
+          fetchStatus = 'failed';
+          errorCode = 'FETCH_ROBOTS_BLOCKED';
+          errorMessage = this.robotsFailureMessage || 'Robots.txt server error (HTTP 5xx)';
+        } else if (this.robotsFailureReason === 'http_401_403') {
+          fetchStatus = 'robots_blocked';
+          errorCode = 'FETCH_ROBOTS_BLOCKED';
+          errorMessage = this.robotsFailureMessage || 'Robots.txt access denied';
+        } else if (this.robotsFailureReason === 'oversized') {
+          fetchStatus = 'failed';
+          errorCode = 'FETCH_ROBOTS_BLOCKED';
+          errorMessage = 'Robots.txt response exceeded size limit (>512KB)';
+        } else if (this.robotsFailureReason === 'redirect_blocked') {
+          fetchStatus = 'failed';
+          errorCode = 'FETCH_ROBOTS_BLOCKED';
+          errorMessage = this.robotsFailureMessage || 'Robots.txt redirect blocked';
+        } else if (this.robotsFailureReason === 'malformed_content') {
+          fetchStatus = 'failed';
+          errorCode = 'FETCH_ROBOTS_BLOCKED';
+          errorMessage = this.robotsFailureMessage || 'Robots.txt content malformed';
+        }
+
         pageRecord = {
           id: `page-${crawledCount + 1}-${Date.now()}`,
           auditId: '',
           url: item.url,
           depth: item.depth,
-          httpStatus: 0,
-          fetchStatus: 'robots_blocked',
-          errorCode: 'FETCH_ROBOTS_BLOCKED' as any,
-          errorMessage: 'URL blocked by robots.txt disallow rule',
+          httpStatus: status,
+          fetchStatus,
+          errorCode,
+          errorMessage,
           title: 'URL Disallowed by robots.txt',
           headings: { h1: [], h2: [], h3: [] },
           links: [],
