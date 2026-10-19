@@ -4,13 +4,63 @@
  * redirect safety checks, content-type verification, and durable frontier state.
  */
 
-import type { StandaloneAuditConfig, StandaloneCrawlPage } from '../types';
+import type {
+  StandaloneAuditConfig,
+  StandaloneCrawlPage,
+  StandaloneContentCategory,
+  StandaloneRobotsEvidence,
+  StandaloneSitemapEvidence,
+} from '../types';
 import { StandaloneDomParser } from '../audit/domParserEngine';
+import { StandaloneSitemapParser } from './sitemapParser';
 
 export interface CrawlCallbacks {
   onPageCrawled: (page: StandaloneCrawlPage) => Promise<void>;
   onProgress: (crawled: number, totalDiscovered: number, currentUrl: string) => void;
   isCancelled: () => boolean;
+}
+
+export interface RobotsRule {
+  path: string;
+  allow: boolean;
+}
+
+/**
+ * Explicitly classifies an HTTP response or crawl outcome into canonical categories.
+ */
+export function classifyResponse(
+  httpStatus: number,
+  fetchStatus: string,
+  headers?: Record<string, string>,
+  errorCode?: string,
+  htmlSize?: number
+): StandaloneContentCategory {
+  if (
+    fetchStatus === 'timeout' ||
+    httpStatus === 0 ||
+    errorCode === 'FETCH_NETWORK_ERROR' ||
+    errorCode === 'FETCH_TIMEOUT' ||
+    errorCode === 'FETCH_PERMISSION_DENIED'
+  ) {
+    return 'NETWORK_FAILURE';
+  }
+  if (errorCode === 'FETCH_PARSE_FAILED') {
+    return 'PARSE_FAILURE';
+  }
+  if (httpStatus >= 400 || httpStatus === 429) {
+    return 'HTTP_ERROR';
+  }
+  const ct = (headers?.['content-type'] || '').toLowerCase();
+  if (ct && ct.trim()) {
+    if (ct.includes('text/html') || ct.includes('application/xhtml+xml')) {
+      return 'HTML_DOCUMENT';
+    }
+    return 'NON_HTML_RESOURCE';
+  }
+  if (htmlSize !== undefined && htmlSize > 0) {
+    return 'HTML_DOCUMENT';
+  }
+  return 'UNKNOWN_CONTENT_TYPE';
 }
 
 export class InBrowserCrawler {
@@ -21,11 +71,26 @@ export class InBrowserCrawler {
   private queue: Array<{ url: string; depth: number }> = [];
   private crawledUrls: string[] = [];
   private disallowedPaths: string[] = [];
+  private allowDirectives: string[] = [];
+  private disallowDirectives: string[] = [];
+  private sitemapDeclarations: string[] = [];
+  private rules: RobotsRule[] = [];
+  private selectedUserAgent: string = '*';
   private robotsFetched = false;
   private robotsPolicyStatus: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' = 'not_present_permissive';
+  private robotsEvidence?: StandaloneRobotsEvidence;
+  private sitemapEvidence?: StandaloneSitemapEvidence;
 
   public getRobotsPolicyStatus(): 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' {
     return this.robotsPolicyStatus;
+  }
+
+  public getRobotsEvidence(): StandaloneRobotsEvidence | undefined {
+    return this.robotsEvidence;
+  }
+
+  public getSitemapEvidence(): StandaloneSitemapEvidence | undefined {
+    return this.sitemapEvidence;
   }
 
   constructor(
@@ -75,6 +140,13 @@ export class InBrowserCrawler {
     }
   }
 
+  public isUrlInSitemap(urlStr: string): boolean {
+    const urls = this.sitemapEvidence?.urls || this.sitemapEvidence?.allSitemapUrls;
+    if (!urls || urls.length === 0) return false;
+    const norm = this.normalizeUrl(urlStr);
+    return urls.some((u: string) => this.normalizeUrl(u) === norm);
+  }
+
   public isInScope(urlStr: string): boolean {
     try {
       const u = new URL(urlStr);
@@ -89,19 +161,14 @@ export class InBrowserCrawler {
       // Allows seed host if user explicitly authorized testing on localhost / 127.0.0.1
       if (this.isPrivateOrForbiddenHost(u.hostname, this.hostname === u.hostname)) return false;
 
-      // Filter non-html extensions
+      // Filter non-html static asset extensions (images, media, fonts, archives)
       const path = u.pathname.toLowerCase();
       const nonHtmlExt = [
         '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp',
-        '.pdf', '.zip', '.css', '.js', '.woff', '.woff2',
-        '.mp4', '.mp3', '.tar', '.gz', '.xml', '.json'
+        '.zip', '.css', '.js', '.woff', '.woff2',
+        '.mp4', '.mp3', '.tar', '.gz', '.pdf'
       ];
       if (nonHtmlExt.some((ext) => path.endsWith(ext))) return false;
-
-      // Robots.txt disallow check
-      if (this.config.respectRobots && !this.isAllowedByRobots(u.pathname)) {
-        return false;
-      }
 
       return true;
     } catch {
@@ -129,63 +196,246 @@ export class InBrowserCrawler {
     return false;
   }
 
-  public async fetchRobotsTxt(): Promise<void> {
-    if (this.robotsFetched || !this.config.respectRobots) return;
+  public async fetchRobotsTxt(): Promise<StandaloneRobotsEvidence> {
+    if (this.robotsFetched && this.robotsEvidence) {
+      return this.robotsEvidence;
+    }
     this.robotsFetched = true;
+    const robotsUrl = `${this.origin}/robots.txt`;
 
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`${this.origin}/robots.txt`, {
+      const res = await fetch(robotsUrl, {
         method: 'GET',
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
 
-      if (res.status === 200) {
+      const status = res.status;
+      if (status === 200) {
         const text = await res.text();
         this.parseRobotsTxt(text);
         this.robotsPolicyStatus = 'enforced';
-      } else if (res.status === 404 || res.status === 410) {
+        this.robotsEvidence = {
+          robotsUrl,
+          httpStatus: 200,
+          fetchStatus: 'found',
+          parserStatus: text.trim() ? 'valid' : 'empty',
+          selectedUserAgent: this.selectedUserAgent,
+          allowDirectives: [...this.allowDirectives],
+          disallowDirectives: [...this.disallowDirectives],
+          sitemapDeclarations: [...this.sitemapDeclarations],
+          rawContent: text,
+          policyOutcome: 'enforced',
+        };
+      } else if (status === 404 || status === 410) {
         this.robotsPolicyStatus = 'not_present_permissive';
-      } else {
-        // 5xx server error, network block, or unexpected response: do NOT claim verified robots compliance
+        this.robotsEvidence = {
+          robotsUrl,
+          httpStatus: status,
+          fetchStatus: 'not_found',
+          parserStatus: 'not_present',
+          selectedUserAgent: '*',
+          allowDirectives: [],
+          disallowDirectives: [],
+          sitemapDeclarations: [],
+          policyOutcome: 'not_present_permissive',
+        };
+      } else if (status === 403 || status === 401) {
         this.robotsPolicyStatus = 'fetch_failed_unverified';
+        this.robotsEvidence = {
+          robotsUrl,
+          httpStatus: status,
+          fetchStatus: 'forbidden',
+          parserStatus: 'not_present',
+          selectedUserAgent: '*',
+          allowDirectives: [],
+          disallowDirectives: [],
+          sitemapDeclarations: [],
+          policyOutcome: 'fetch_failed_unverified',
+        };
+      } else {
+        this.robotsPolicyStatus = 'fetch_failed_unverified';
+        this.robotsEvidence = {
+          robotsUrl,
+          httpStatus: status,
+          fetchStatus: 'error',
+          parserStatus: 'not_present',
+          selectedUserAgent: '*',
+          allowDirectives: [],
+          disallowDirectives: [],
+          sitemapDeclarations: [],
+          policyOutcome: 'fetch_failed_unverified',
+        };
       }
     } catch {
-      // Fetch error or timeout: do NOT claim verified robots compliance
       this.robotsPolicyStatus = 'fetch_failed_unverified';
+      this.robotsEvidence = {
+        robotsUrl,
+        httpStatus: 0,
+        fetchStatus: 'error',
+        parserStatus: 'not_present',
+        selectedUserAgent: '*',
+        allowDirectives: [],
+        disallowDirectives: [],
+        sitemapDeclarations: [],
+        policyOutcome: 'fetch_failed_unverified',
+      };
     }
+
+    return this.robotsEvidence!;
   }
 
   public parseRobotsTxt(robotsText: string): void {
     const lines = robotsText.split('\n');
-    let appliesToAll = false;
+    let hasSpecificGroup = false;
+
+    this.allowDirectives = [];
+    this.disallowDirectives = [];
+    this.sitemapDeclarations = [];
+    this.rules = [];
+
+    // Pass 1: detect if a dedicated bot user-agent block exists
+    for (const rawLine of lines) {
+      const clean = (rawLine.split('#')[0] || '').trim();
+      if (!clean) continue;
+      const lower = clean.toLowerCase();
+      if (lower.startsWith('user-agent:')) {
+        const agent = clean.slice(11).trim().toLowerCase();
+        if (agent === 'websiteauditbot' || agent.includes('websiteaudit')) {
+          hasSpecificGroup = true;
+          break;
+        }
+      }
+    }
+
+    const targetAgent = hasSpecificGroup ? 'websiteauditbot' : '*';
+    this.selectedUserAgent = targetAgent;
+
+    let inTargetGroup = false;
 
     for (const rawLine of lines) {
-      const line = (rawLine.split('#')[0] || '').trim();
-      if (!line) continue;
-      const lower = line.toLowerCase();
+      const clean = (rawLine.split('#')[0] || '').trim();
+      if (!clean) continue;
+      const lower = clean.toLowerCase();
 
       if (lower.startsWith('user-agent:')) {
-        const agent = line.slice(11).trim();
-        appliesToAll = agent === '*' || agent.toLowerCase().includes('bot');
-      } else if (appliesToAll && lower.startsWith('disallow:')) {
-        const path = line.slice(9).trim();
-        if (path) {
-          this.disallowedPaths.push(path);
+        const agent = clean.slice(11).trim().toLowerCase();
+        inTargetGroup = agent === targetAgent || (!hasSpecificGroup && agent === '*');
+      } else if (lower.startsWith('sitemap:')) {
+        const smUrl = clean.slice(8).trim();
+        if (smUrl && !this.sitemapDeclarations.includes(smUrl)) {
+          this.sitemapDeclarations.push(smUrl);
+        }
+      } else if (inTargetGroup) {
+        if (lower.startsWith('disallow:')) {
+          const path = clean.slice(9).trim();
+          if (path) {
+            this.disallowDirectives.push(path);
+            this.rules.push({ path, allow: false });
+          }
+        } else if (lower.startsWith('allow:')) {
+          const path = clean.slice(6).trim();
+          if (path) {
+            this.allowDirectives.push(path);
+            this.rules.push({ path, allow: true });
+          }
         }
       }
     }
   }
 
-  public isAllowedByRobots(pathname: string): boolean {
-    for (const dis of this.disallowedPaths) {
-      if (dis === '/' || pathname.startsWith(dis)) {
-        return false;
+  /**
+   * RFC 9309 compliant path matching with longest-match precedence and wildcard support.
+   */
+  public isAllowedByRobots(urlOrPath: string): boolean {
+    if (this.rules.length === 0) {
+      return true;
+    }
+
+    let pathname = urlOrPath;
+    try {
+      if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://')) {
+        pathname = new URL(urlOrPath).pathname;
+      }
+    } catch {
+      pathname = urlOrPath;
+    }
+
+    const matchingRules = this.rules.filter((rule) => {
+      if (!rule.path) return false;
+      if (rule.path === '/') return true;
+
+      let pattern = rule.path;
+      let hasEndAnchor = false;
+      if (pattern.endsWith('$')) {
+        hasEndAnchor = true;
+        pattern = pattern.slice(0, -1);
+      }
+      if (pattern.includes('*')) {
+        const escaped = pattern
+          .split('*')
+          .map((p) => p.replace(/[-[\]{}()+?.,\\^$|#\s]/g, '\\$&'))
+          .join('.*');
+        const regex = new RegExp('^' + escaped + (hasEndAnchor ? '$' : ''));
+        return regex.test(pathname);
+      }
+      if (hasEndAnchor) {
+        return pathname === pattern;
+      }
+      return pathname.startsWith(pattern);
+    });
+
+    if (matchingRules.length === 0) {
+      return true;
+    }
+
+    // Sort descending by path length. On length tie, Allow takes precedence.
+    matchingRules.sort((a, b) => {
+      if (b.path.length !== a.path.length) {
+        return b.path.length - a.path.length;
+      }
+      return a.allow ? -1 : 1;
+    });
+
+    return matchingRules[0]?.allow ?? true;
+  }
+
+  public async discoverSitemaps(): Promise<StandaloneSitemapEvidence> {
+    const seedSitemapUrls: string[] = [];
+    const sitemaps = this.robotsEvidence?.sitemapDeclarations || this.robotsEvidence?.sitemapsDeclared || [];
+    if (sitemaps.length > 0) {
+      seedSitemapUrls.push(...sitemaps);
+    }
+    // Standard sitemap fallback location
+    seedSitemapUrls.push(`${this.origin}/sitemap.xml`);
+
+    const parser = new StandaloneSitemapParser({
+      maxSitemaps: 10,
+      maxDepth: 3,
+      maxUrlsPerSitemap: 500,
+      maxSitemapUrls: 2000,
+      fetchTimeoutMs: 5000,
+    });
+
+    const evidence = await parser.discoverAndParse(seedSitemapUrls, this.origin);
+    this.sitemapEvidence = evidence;
+
+    // Enqueue discovered in-scope sitemap URLs up to maxPages budget
+    const discoveredUrls = evidence.urls || evidence.allSitemapUrls || [];
+    for (const sitemapUrl of discoveredUrls) {
+      const norm = this.normalizeUrl(sitemapUrl);
+      if (this.isInScope(norm) && !this.seenUrls.has(norm)) {
+        this.seenUrls.add(norm);
+        this.queue.push({ url: norm, depth: 1 });
+        if (this.queue.length >= this.config.maxPages) {
+          break;
+        }
       }
     }
-    return true;
+
+    return evidence;
   }
 
   public async run(callbacks: CrawlCallbacks): Promise<void> {
@@ -194,6 +444,11 @@ export class InBrowserCrawler {
     // Load robots.txt once before beginning crawl
     if (this.config.respectRobots && !this.robotsFetched) {
       await this.fetchRobotsTxt();
+    }
+
+    // Discover and parse XML sitemaps once before beginning crawl
+    if (!this.sitemapEvidence) {
+      await this.discoverSitemaps();
     }
 
     while (this.queue.length > 0 && crawledCount < this.config.maxPages) {
@@ -208,6 +463,37 @@ export class InBrowserCrawler {
 
       const startTime = performance.now();
       let pageRecord: StandaloneCrawlPage;
+      const isInSitemap = this.isUrlInSitemap(item.url);
+
+      // Robots.txt disallow enforcement: NEVER bypass robots.txt, NEVER fetch blocked URLs!
+      const pathname = new URL(item.url).pathname;
+      if (this.config.respectRobots && !this.isAllowedByRobots(pathname)) {
+        pageRecord = {
+          id: `page-${crawledCount + 1}-${Date.now()}`,
+          auditId: '',
+          url: item.url,
+          depth: item.depth,
+          httpStatus: 0,
+          fetchStatus: 'robots_blocked',
+          errorCode: 'FETCH_ROBOTS_BLOCKED' as any,
+          errorMessage: 'URL blocked by robots.txt disallow rule',
+          title: 'URL Disallowed by robots.txt',
+          headings: { h1: [], h2: [], h3: [] },
+          links: [],
+          images: [],
+          headers: {},
+          htmlSize: 0,
+          responseTimeMs: 0,
+          fetchedAt: Date.now(),
+          isInSitemap,
+          contentTypeCategory: 'NETWORK_FAILURE',
+        };
+        await callbacks.onPageCrawled(pageRecord);
+        this.crawledUrls.push(item.url);
+        crawledCount++;
+        continue;
+      }
+
       const maxRetries = 2;
       let attempt = 0;
       let fetchSuccess = false;
@@ -236,6 +522,8 @@ export class InBrowserCrawler {
             htmlSize: 0,
             responseTimeMs: 0,
             fetchedAt: Date.now(),
+            isInSitemap,
+            contentTypeCategory: 'NETWORK_FAILURE',
           };
           await callbacks.onPageCrawled(pageRecord);
           this.crawledUrls.push(item.url);
@@ -279,6 +567,8 @@ export class InBrowserCrawler {
               htmlSize: 0,
               responseTimeMs: elapsed,
               fetchedAt: Date.now(),
+              isInSitemap,
+              contentTypeCategory: 'HTTP_ERROR',
               title: `Disallowed redirect destination: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
             };
             await callbacks.onPageCrawled(pageRecord);
@@ -288,16 +578,25 @@ export class InBrowserCrawler {
             break;
           }
 
-          // Content-Type validation: only parse HTML documents
-          const contentType = (headers['content-type'] || '').toLowerCase();
-          if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+          // Content-Type classification: explicitly distinguish HTML from non-HTML / error / unknown
+          let contentTypeCategory = classifyResponse(
+            response.status,
+            response.ok ? 'success' : 'failed',
+            headers
+          );
+
+          // If response is explicitly a non-HTML resource (PDF, image, audio, video, zip, json), do not buffer large body or invoke DOM parser!
+          if (contentTypeCategory === 'NON_HTML_RESOURCE') {
+            const ctHeader = headers['content-type'] || '';
             pageRecord = {
               id: `page-${crawledCount + 1}-${Date.now()}`,
               auditId: '',
               url: item.url,
               depth: item.depth,
               httpStatus: response.status,
-              fetchStatus: 'skipped',
+              fetchStatus: response.ok ? 'success' : 'failed',
+              contentTypeCategory,
+              isInSitemap,
               headings: { h1: [], h2: [], h3: [] },
               links: [],
               images: [],
@@ -305,7 +604,7 @@ export class InBrowserCrawler {
               htmlSize: 0,
               responseTimeMs: elapsed,
               fetchedAt: Date.now(),
-              title: `Non-HTML Content-Type (${contentType || 'unknown'})`,
+              title: `Non-HTML Resource (${ctHeader || 'binary'})`,
             };
             await callbacks.onPageCrawled(pageRecord);
             this.crawledUrls.push(item.url);
@@ -316,6 +615,37 @@ export class InBrowserCrawler {
 
           // Streaming Bounded response read: strict 5MB cap
           const { html, isOversized, totalBytes } = await this.readBoundedHtml(response, 5 * 1024 * 1024);
+
+          // If content-type was unknown/omitted, sniff body to verify if it is an HTML document
+          if (contentTypeCategory === 'UNKNOWN_CONTENT_TYPE') {
+            if (html && /<(?:!doctype\s+html|html|head|body)\b/i.test(html)) {
+              contentTypeCategory = 'HTML_DOCUMENT';
+            } else {
+              pageRecord = {
+                id: `page-${crawledCount + 1}-${Date.now()}`,
+                auditId: '',
+                url: item.url,
+                depth: item.depth,
+                httpStatus: response.status,
+                fetchStatus: response.ok ? 'success' : 'failed',
+                contentTypeCategory: 'UNKNOWN_CONTENT_TYPE',
+                isInSitemap,
+                headings: { h1: [], h2: [], h3: [] },
+                links: [],
+                images: [],
+                headers,
+                htmlSize: totalBytes,
+                responseTimeMs: elapsed,
+                fetchedAt: Date.now(),
+                title: 'Unknown Content-Type',
+              };
+              await callbacks.onPageCrawled(pageRecord);
+              this.crawledUrls.push(item.url);
+              crawledCount++;
+              fetchSuccess = true;
+              break;
+            }
+          }
 
           if (isOversized) {
             pageRecord = {
@@ -334,6 +664,8 @@ export class InBrowserCrawler {
               htmlSize: totalBytes,
               responseTimeMs: elapsed,
               fetchedAt: Date.now(),
+              isInSitemap,
+              contentTypeCategory: 'HTML_DOCUMENT',
               title: `Oversized Response Exceeded 5MB Limit (${Math.round(totalBytes / 1024 / 1024)}MB)`,
             };
             await callbacks.onPageCrawled(pageRecord);
@@ -365,6 +697,8 @@ export class InBrowserCrawler {
               htmlSize: totalBytes,
               responseTimeMs: elapsed,
               fetchedAt: Date.now(),
+              isInSitemap,
+              contentTypeCategory: 'PARSE_FAILURE',
               title: 'Parse Failed',
             };
             await callbacks.onPageCrawled(pageRecord);
@@ -403,11 +737,13 @@ export class InBrowserCrawler {
             htmlSize: totalBytes,
             responseTimeMs: elapsed,
             fetchedAt: Date.now(),
+            isInSitemap,
+            contentTypeCategory: 'HTML_DOCUMENT',
             evidence: parsedEvidence, // Retain original full evidence
           };
 
           // Enqueue discovered child links if within depth limit and fetch was successful
-          if (response.ok && item.depth < this.config.maxDepth) {
+          if (response.ok && item.depth < (this.config.maxDepth ?? 3) && parsedEvidence?.links) {
             for (const rawLink of parsedEvidence.links) {
               const norm = this.normalizeUrl(rawLink);
               if (this.isInScope(norm) && !this.seenUrls.has(norm)) {
@@ -464,6 +800,8 @@ export class InBrowserCrawler {
             htmlSize: 0,
             responseTimeMs: elapsed,
             fetchedAt: Date.now(),
+            isInSitemap,
+            contentTypeCategory: 'NETWORK_FAILURE',
           };
 
           await callbacks.onPageCrawled(pageRecord);
@@ -474,8 +812,8 @@ export class InBrowserCrawler {
       }
 
       // Polite crawling delay
-      if (this.config.delayMs > 0 && this.queue.length > 0) {
-        await new Promise((res) => setTimeout(res, this.config.delayMs));
+      if ((this.config.delayMs ?? 0) > 0 && this.queue.length > 0) {
+        await new Promise((res) => setTimeout(res, this.config.delayMs ?? 0));
       }
     }
   }

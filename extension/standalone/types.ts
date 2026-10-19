@@ -28,11 +28,23 @@ export type StandaloneFetchErrorCode =
 
 export interface StandaloneAuditConfig {
   maxPages: number;
-  maxDepth: number;
-  concurrency: number;
-  delayMs: number;
-  respectRobots: boolean;
+  maxDepth?: number;
+  concurrency?: number;
+  delayMs?: number;
+  crawlDelayMs?: number;
+  respectRobots?: boolean;
+  respectRobotsTxt?: boolean;
+  discoverSitemaps?: boolean;
+  userAgent?: string;
 }
+
+export type StandaloneContentCategory =
+  | 'HTML_DOCUMENT'
+  | 'NON_HTML_RESOURCE'
+  | 'HTTP_ERROR'
+  | 'NETWORK_FAILURE'
+  | 'PARSE_FAILURE'
+  | 'UNKNOWN_CONTENT_TYPE';
 
 export interface StandaloneCrawlPage {
   id: string;
@@ -40,9 +52,11 @@ export interface StandaloneCrawlPage {
   url: string;
   depth: number;
   httpStatus: number;
-  fetchStatus: 'success' | 'failed' | 'skipped' | 'timeout';
+  fetchStatus: 'success' | 'failed' | 'skipped' | 'timeout' | 'robots_blocked';
   errorCode?: StandaloneFetchErrorCode;
   errorMessage?: string;
+  contentTypeCategory?: StandaloneContentCategory;
+  isInSitemap?: boolean;
   title?: string;
   metaDescription?: string;
   headings: {
@@ -95,7 +109,7 @@ export interface StandaloneSeoFinding {
   description: string;
   recommendation: string;
   pageUrl: string;
-  evidence: Record<string, any>;
+  evidence?: Record<string, any>;
 }
 
 export interface StandaloneFindingsSummary {
@@ -236,6 +250,50 @@ export interface StandaloneStageCheckpoints {
   scoringFinished: boolean;
 }
 
+export interface StandaloneRobotsEvidence {
+  robotsUrl?: string;
+  url?: string;
+  httpStatus: number;
+  fetchStatus?: 'found' | 'not_found' | 'forbidden' | 'error' | string;
+  status?: 'found' | 'not_found' | 'forbidden' | 'error' | string;
+  parserStatus?: 'valid' | 'empty' | 'not_present' | string;
+  rawContent?: string;
+  selectedUserAgent?: string;
+  selectedUserAgentGroup?: string;
+  allowDirectives?: string[];
+  disallowDirectives?: string[];
+  sitemapDeclarations?: string[];
+  sitemapsDeclared?: string[];
+  hasDirectives?: boolean;
+  policyOutcome?: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | string;
+}
+
+export interface StandaloneSitemapEntry {
+  sitemapUrl?: string;
+  url?: string;
+  status: 'valid' | 'fetch_error' | 'parse_error' | string;
+  httpStatus?: number;
+  errorMessage?: string;
+  error?: string;
+  urlsCount?: number;
+  urlCount?: number;
+  urls?: string[];
+  isIndex?: boolean;
+  childSitemaps?: string[];
+  lastModified?: string;
+}
+
+export interface StandaloneSitemapEvidence {
+  sitemapsDiscovered?: StandaloneSitemapEntry[];
+  sitemaps?: StandaloneSitemapEntry[] | any[];
+  allSitemapUrls?: string[];
+  urls?: string[];
+  totalDiscoveredUrlsCount?: number;
+  indexCount?: number;
+  hasErrors?: boolean;
+  errors: string[];
+}
+
 export interface StandaloneAuditJob {
   id: string;
   targetUrl: string;
@@ -248,6 +306,8 @@ export interface StandaloneAuditJob {
   stageCheckpoints?: StandaloneStageCheckpoints;
   authoritativeRunId?: string;
   robotsPolicyStatus?: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified';
+  robotsEvidence?: StandaloneRobotsEvidence;
+  sitemapEvidence?: StandaloneSitemapEvidence;
   config: StandaloneAuditConfig;
   discoveredUrls: string[];
   pendingQueue: Array<{ url: string; depth: number }>;

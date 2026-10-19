@@ -48,7 +48,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
   const [crawledPages, setCrawledPages] = useState<StandaloneCrawlPage[]>([]);
   const [findings, setFindings] = useState<StandaloneSeoFinding[]>([]);
   const [technologies, setTechnologies] = useState<StandaloneTechFinding[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'tech' | 'issues' | 'coverage'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'technical' | 'tech' | 'issues' | 'coverage'>('overview');
   const [issuesViewFilter, setIssuesViewFilter] = useState<'issues' | 'passed' | 'all'>('issues');
   const [expandedFindingId, setExpandedFindingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -511,6 +511,16 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
               Pages ({crawledPages.length})
             </button>
             <button
+              onClick={() => setActiveTab('technical')}
+              className={`px-3 py-1.5 rounded-t font-medium transition-colors ${
+                activeTab === 'technical'
+                  ? 'text-indigo-400 border-b-2 border-indigo-500 bg-slate-900/40'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Technical SEO
+            </button>
+            <button
               onClick={() => setActiveTab('tech')}
               className={`px-3 py-1.5 rounded-t font-medium transition-colors ${
                 activeTab === 'tech'
@@ -538,7 +548,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Coverage & Rules ({scorecard?.coverage?.executedRulesTotal ?? 9}/51)
+              Coverage & Rules ({scorecard?.coverage?.executedRulesTotal ?? 33}/51)
             </button>
           </div>
 
@@ -702,6 +712,175 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Tab: Technical SEO */}
+          {activeTab === 'technical' && (
+            <div className="space-y-3 text-xs">
+              {/* Robots.txt Card */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    <span>Robots.txt Analysis (RFC 9309)</span>
+                  </div>
+                  <span
+                    className={`px-2 py-0.5 text-[10px] font-mono rounded uppercase ${
+                      activeJob.robotsEvidence?.status === 'found'
+                        ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800'
+                        : activeJob.robotsEvidence?.status === 'not_found'
+                        ? 'bg-blue-950/60 text-blue-400 border border-blue-800'
+                        : 'bg-amber-950/60 text-amber-400 border border-amber-800'
+                    }`}
+                  >
+                    {activeJob.robotsEvidence?.status || activeJob.robotsPolicyStatus || 'Unknown'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Fetch Status</span>
+                    <span className="text-slate-200 font-semibold">
+                      {activeJob.robotsEvidence?.httpStatus ? `HTTP ${activeJob.robotsEvidence.httpStatus}` : (activeJob.robotsEvidence?.status || 'N/A')}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Policy Enforced</span>
+                    <span className="text-indigo-300 font-semibold">{activeJob.robotsPolicyStatus || 'not_present_permissive'}</span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Directives</span>
+                    <span className="text-slate-200 font-semibold">
+                      +{activeJob.robotsEvidence?.allowDirectives?.length || 0} / -{activeJob.robotsEvidence?.disallowDirectives?.length || 0}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Sitemaps Declared</span>
+                    <span className="text-emerald-400 font-semibold">
+                      {activeJob.robotsEvidence?.sitemapsDeclared?.length || 0}
+                    </span>
+                  </div>
+                </div>
+
+                {activeJob.robotsEvidence?.sitemapsDeclared && activeJob.robotsEvidence.sitemapsDeclared.length > 0 && (
+                  <div className="text-[11px] space-y-1">
+                    <span className="text-slate-400 font-medium">Declared Sitemaps:</span>
+                    <div className="space-y-0.5">
+                      {activeJob.robotsEvidence.sitemapsDeclared.map((sm, i) => (
+                        <div key={i} className="text-indigo-300 font-mono text-[10px] truncate bg-slate-950/40 px-2 py-1 rounded border border-slate-800/60">
+                          {sm}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* XML Sitemap Card */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <FileText className="w-4 h-4 text-indigo-400" />
+                    <span>XML Sitemap Discovery & Parsing</span>
+                  </div>
+                  <span
+                    className={`px-2 py-0.5 text-[10px] font-mono rounded uppercase ${
+                      activeJob.sitemapEvidence?.sitemaps?.some((s) => s.status === 'valid' || s.status === 'success')
+                        ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800'
+                        : activeJob.sitemapEvidence?.sitemaps && activeJob.sitemapEvidence.sitemaps.length > 0
+                        ? 'bg-rose-950/60 text-rose-400 border border-rose-800'
+                        : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {activeJob.sitemapEvidence?.sitemaps?.length ? `${activeJob.sitemapEvidence.sitemaps.length} Discovered` : 'None Discovered'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Discovered Files</span>
+                    <span className="text-slate-200 font-semibold">{activeJob.sitemapEvidence?.sitemaps?.length || 0}</span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Total URLs Parsed</span>
+                    <span className="text-emerald-400 font-semibold">{activeJob.sitemapEvidence?.urls?.length || 0}</span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Parse Errors</span>
+                    <span className={`font-semibold ${(activeJob.sitemapEvidence?.errors?.length || 0) > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                      {activeJob.sitemapEvidence?.errors?.length || 0}
+                    </span>
+                  </div>
+                </div>
+
+                {activeJob.sitemapEvidence?.sitemaps && activeJob.sitemapEvidence.sitemaps.length > 0 ? (
+                  <div className="space-y-1">
+                    <span className="text-slate-400 font-medium text-[11px]">Sitemaps Processed:</span>
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {activeJob.sitemapEvidence.sitemaps.map((sm, i) => (
+                        <div key={i} className="flex items-center justify-between p-1.5 rounded bg-slate-950/60 border border-slate-800 text-[10px] font-mono">
+                          <span className="truncate flex-1 mr-2 text-slate-300">{sm.url || sm.sitemapUrl}</span>
+                          <div className="flex items-center space-x-1.5 shrink-0">
+                            {(sm.urlCount !== undefined || sm.urlsCount !== undefined) && (
+                              <span className="text-slate-400">{sm.urlCount ?? sm.urlsCount} URLs</span>
+                            )}
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] uppercase ${
+                                sm.status === 'valid' || sm.status === 'success'
+                                  ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800'
+                                  : 'bg-rose-950/60 text-rose-400 border border-rose-800'
+                              }`}
+                            >
+                              {sm.status}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-slate-500 italic p-2 bg-slate-950/40 rounded border border-slate-800/40">
+                    No XML sitemaps declared in /robots.txt or discovered at /sitemap.xml.
+                  </div>
+                )}
+              </div>
+
+              {/* Technical Issues Summary */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                    <span>Technical SEO Findings</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {findings.filter((f) => f.category === 'technical' && (f.status === 'fail' || f.status === 'warning')).length} Issues
+                  </span>
+                </div>
+
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {findings
+                    .filter((f) => f.category === 'technical' && (f.status === 'fail' || f.status === 'warning'))
+                    .map((f) => (
+                      <div key={f.id} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[11px] space-y-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-200">{f.title}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase ${
+                            f.status === 'fail' ? 'bg-rose-950/60 text-rose-400 border border-rose-800' : 'bg-amber-950/60 text-amber-400 border border-amber-800'
+                          }`}>
+                            {f.ruleId}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400">{f.description}</p>
+                      </div>
+                    ))}
+                  {findings.filter((f) => f.category === 'technical' && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
+                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      ✓ Zero technical SEO errors or warnings detected.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -1074,7 +1253,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 mb-2">
-                  Authoritative 51-rule backend parity tracking (Target Phase 2A: 25/51 implemented):
+                  Authoritative 51-rule backend parity tracking (Target Phase 2B Checkpoint 1: 33/51 implemented):
                 </p>
 
                 {/* Family Breakdown */}
@@ -1086,9 +1265,9 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-medium text-slate-300">Technical SEO (7/22 implemented)</span>
+                    <span className="font-medium text-slate-300">Technical SEO (15/22 implemented)</span>
                     <span className="font-mono text-amber-400">
-                      {scorecard?.coverage?.familyCoverage?.technical?.executed ?? 0} / 22 executed (31.8% Implemented)
+                      {scorecard?.coverage?.familyCoverage?.technical?.executed ?? 0} / 22 executed (68.2% Implemented)
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px]">
@@ -1122,7 +1301,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                     })}
                   </div>
                   <div className="mt-2 text-slate-500 font-sans text-[11px]">
-                    26 Canonical Rules (Hreflang, Schema.org JSON-LD, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, Sitemap Validation, etc.) scheduled for Phase 2B / Phase 3 migration.
+                    18 Canonical Rules (Hreflang, Schema.org JSON-LD, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, etc.) scheduled for subsequent checkpoints.
                   </div>
                 </div>
               </div>

@@ -9,12 +9,21 @@ import type {
   StandaloneExecutionLedger,
   StandaloneRuleExecutionRecord,
   StandaloneSeoFinding,
+  StandaloneContentCategory,
+  StandaloneRobotsEvidence,
+  StandaloneSitemapEvidence,
 } from '../types';
+import { classifyResponse } from '../crawler/inBrowserCrawler';
 
 export interface PageEvaluationResult {
   findings: StandaloneSeoFinding[];
   ledgerRecords: StandaloneRuleExecutionRecord[];
   ledger?: StandaloneExecutionLedger;
+}
+
+export interface StandaloneAuditContext {
+  robotsEvidence?: StandaloneRobotsEvidence;
+  sitemapEvidence?: StandaloneSitemapEvidence;
 }
 
 export class StandaloneRulesEngine {
@@ -36,16 +45,29 @@ export class StandaloneRulesEngine {
    */
   public static evaluatePageDetailed(
     page: StandaloneCrawlPage,
-    auditId: string
+    auditId: string,
+    auditContext?: StandaloneAuditContext
   ): PageEvaluationResult {
     const findings: StandaloneSeoFinding[] = [];
     const ledgerRecords: StandaloneRuleExecutionRecord[] = [];
     const now = Date.now();
 
-    const isUsableHtml =
-      page.fetchStatus === 'success' &&
-      page.httpStatus >= 200 &&
-      page.httpStatus < 400;
+    // Explicit Content Classification
+    const category: StandaloneContentCategory =
+      page.contentTypeCategory ||
+      classifyResponse(page.httpStatus, page.fetchStatus, page.headers, page.errorCode, page.htmlSize);
+
+    const sitemapUrlList =
+      auditContext?.sitemapEvidence?.allSitemapUrls ||
+      auditContext?.sitemapEvidence?.urls ||
+      [];
+    const isInSitemap =
+      page.isInSitemap ??
+      Boolean(
+        sitemapUrlList.some(
+          (u) => u.replace(/\/$/, '') === page.url.replace(/\/$/, '')
+        )
+      );
 
     // Helper to push a ledger record
     const recordLedger = (
@@ -71,190 +93,63 @@ export class StandaloneRulesEngine {
       });
     };
 
-    // Gate: Inaccessible pages or failed fetches (httpStatus 0 or >= 400)
-    // Gate: Inaccessible pages or failed fetches (httpStatus 0 or >= 400)
-    if (!isUsableHtml) {
-      if (page.httpStatus >= 400 && page.httpStatus < 500) {
-        recordLedger('TECH_HTTP_4XX', 'executed_fail', 'fail', true, `HTTP ${page.httpStatus} Client Error`);
-        recordLedger('TECH_HTTP_5XX', 'executed_pass', 'pass', true);
-        findings.push({
-          id: `${auditId}-${page.id}-http-4xx`,
-          auditId,
-          ruleId: 'TECH_HTTP_4XX',
-          category: 'technical',
-          severity: 'high',
-          status: 'fail',
-          title: `HTTP ${page.httpStatus} Client Error`,
-          description: `The page returned a 4xx client error status code: ${page.httpStatus}.`,
-          recommendation: 'Update broken internal links or fix resource configuration.',
-          pageUrl: page.url,
-          evidence: { httpStatus: page.httpStatus },
-        });
-      } else if (page.httpStatus >= 500) {
-        recordLedger('TECH_HTTP_4XX', 'executed_pass', 'pass', true);
-        recordLedger('TECH_HTTP_5XX', 'executed_fail', 'fail', true, `HTTP ${page.httpStatus} Server Error`);
-        findings.push({
-          id: `${auditId}-${page.id}-http-5xx`,
-          auditId,
-          ruleId: 'TECH_HTTP_5XX',
-          category: 'technical',
-          severity: 'critical',
-          status: 'fail',
-          title: `HTTP ${page.httpStatus} Server Error`,
-          description: `The page returned a 5xx server error status code: ${page.httpStatus}.`,
-          recommendation: 'Investigate web server logs, application crashes, or upstream gateway errors.',
-          pageUrl: page.url,
-          evidence: { httpStatus: page.httpStatus },
-        });
-      } else {
-        // httpStatus 0 (network fetch error)
-        recordLedger(
-          'TECH_HTTP_4XX',
-          'unknown',
-          'unknown',
-          false,
-          page.errorMessage || 'Fetch failed without HTTP response'
-        );
-        recordLedger(
-          'TECH_HTTP_5XX',
-          'unknown',
-          'unknown',
-          false,
-          page.errorMessage || 'Fetch failed without HTTP response'
-        );
-      }
-
-      // TECH_HTTP_429 on error responses
-      if (page.httpStatus === 429) {
-        recordLedger('TECH_HTTP_429', 'executed_fail', 'fail', true, 'HTTP 429 Too Many Requests (Rate Limited)');
-        findings.push({
-          id: `${auditId}-${page.id}-http-429`,
-          auditId,
-          ruleId: 'TECH_HTTP_429',
-          category: 'technical',
-          severity: 'high',
-          status: 'fail',
-          title: 'HTTP 429 Too Many Requests (Rate Limited)',
-          description: 'Server responded with HTTP 429 rate limiting. Aggressive rate limiting causes incomplete crawl discovery and de-indexing.',
-          recommendation: 'Ensure rate limiting mechanisms do not throttle legitimate verified search engine bots.',
-          pageUrl: page.url,
-          evidence: { httpStatus: 429, fetchStatus: page.fetchStatus },
-        });
-      } else if (page.httpStatus === 0) {
-        recordLedger(
-          'TECH_HTTP_429',
-          'unknown',
-          'unknown',
-          false,
-          page.errorMessage || 'Fetch failed without HTTP response'
-        );
-      } else {
-        recordLedger('TECH_HTTP_429', 'executed_pass', 'pass', true);
-      }
-
-      // TECH_HTTP_UNSUPPORTED_CONTENT on failed fetches / error status
-      if (page.fetchStatus !== 'success' || page.httpStatus === 0 || page.httpStatus >= 400) {
-        recordLedger(
-          'TECH_HTTP_UNSUPPORTED_CONTENT',
-          'not_evaluated',
-          'unknown',
-          false,
-          `Page fetch failed or returned error HTTP ${page.httpStatus}; Content-Type unavailable`
-        );
-      } else {
-        const ct = (page.headers?.['content-type'] || '').toLowerCase();
-        if (ct && !ct.includes('text/html') && !ct.includes('application/xhtml+xml')) {
-          recordLedger('TECH_HTTP_UNSUPPORTED_CONTENT', 'executed_pass', 'pass', true, `Page returned non-HTML Content-Type: '${ct}'`);
-        } else {
-          recordLedger('TECH_HTTP_UNSUPPORTED_CONTENT', 'executed_pass', 'pass', true);
-        }
-      }
-
-      // TECH_X_ROBOTS_TAG on error responses (if headers are present)
-      if (!page.headers || Object.keys(page.headers).length === 0) {
-        recordLedger('TECH_X_ROBOTS_TAG', 'unknown', 'unknown', false, 'HTTP response headers were not recorded; X-Robots-Tag status cannot be determined');
-      } else {
-        const xRobots = page.headers['x-robots-tag'];
-        if (!xRobots || !xRobots.trim()) {
-          recordLedger('TECH_X_ROBOTS_TAG', 'executed_pass', 'pass', true);
-        } else {
-          const tokens = xRobots.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
-          const hasIndex = tokens.includes('index');
-          const hasNoindex = tokens.includes('noindex') || tokens.includes('none');
-          if (hasIndex && hasNoindex) {
-            recordLedger('TECH_X_ROBOTS_TAG', 'executed_warning', 'warning', true, `Conflicting X-Robots-Tag directives: '${xRobots}'`);
-            findings.push({
-              id: `${auditId}-${page.id}-xrobots-conflict`,
-              auditId,
-              ruleId: 'TECH_X_ROBOTS_TAG',
-              category: 'technical',
-              severity: 'high',
-              status: 'warning',
-              title: 'Conflicting X-Robots-Tag directives',
-              description: `HTTP header specifies conflicting directives: '${xRobots}'. 'noindex' takes precedence in search engines.`,
-              recommendation: 'Ensure the X-Robots-Tag header declares consistent indexing instructions.',
-              pageUrl: page.url,
-              evidence: { xRobotsTag: xRobots, tokens },
-            });
-          } else if (hasNoindex) {
-            recordLedger('TECH_X_ROBOTS_TAG', 'executed_warning', 'warning', true, `X-Robots-Tag noindex directive present: '${xRobots}'`);
-            findings.push({
-              id: `${auditId}-${page.id}-xrobots-noindex`,
-              auditId,
-              ruleId: 'TECH_X_ROBOTS_TAG',
-              category: 'technical',
-              severity: 'medium',
-              status: 'warning',
-              title: 'X-Robots-Tag noindex directive present',
-              description: `HTTP response returned X-Robots-Tag: '${xRobots}'. Search engines observing this header will not index the document.`,
-              recommendation: 'Verify that this resource should be blocked from search indexes. Remove header if it should be indexed.',
-              pageUrl: page.url,
-              evidence: { xRobotsTag: xRobots, tokens },
-            });
-          } else {
-            recordLedger('TECH_X_ROBOTS_TAG', 'executed_pass', 'pass', true);
-          }
-        }
-      }
-
-      // Inaccessible pages or failed fetches: do NOT report content errors!
-      const unreachedRules = [
-        'TECH_HTTPS_USAGE',
-        'TECH_META_ROBOTS_DIRECTIVES',
-        'ONPAGE_TITLE_PRESENT',
-        'ONPAGE_TITLE_LENGTH',
-        'ONPAGE_TITLE_REPETITIVE',
-        'ONPAGE_META_DESC_PRESENT',
-        'ONPAGE_META_DESC_LENGTH',
-        'ONPAGE_H1_PRESENCE',
-        'ONPAGE_H1_MULTIPLE',
-        'ONPAGE_H1_EMPTY',
-        'ONPAGE_HEADING_HIERARCHY',
-        'ONPAGE_CANONICAL_PRESENCE',
-        'ONPAGE_CANONICAL_VALID',
-        'ONPAGE_IMAGE_ALT_MISSING',
-        'ONPAGE_IMAGE_ALT_EMPTY',
-        'ONPAGE_INTERNAL_OUTLINKS',
-        'ONPAGE_EMPTY_ANCHOR_TEXT',
-        'ONPAGE_HTML_LANG',
-      ];
-      for (const rId of unreachedRules) {
-        recordLedger(
-          rId,
-          'not_evaluated',
-          'unknown',
-          false,
-          'Page fetch failed or returned non-HTML error status; content evidence unavailable'
-        );
-      }
-      return { findings, ledgerRecords };
+    // 1. TECH_HTTP_4XX
+    if (page.httpStatus >= 400 && page.httpStatus < 500) {
+      recordLedger('TECH_HTTP_4XX', 'executed_fail', 'fail', true, `HTTP ${page.httpStatus} Client Error`);
+      findings.push({
+        id: `${auditId}-${page.id}-http-4xx`,
+        auditId,
+        ruleId: 'TECH_HTTP_4XX',
+        category: 'technical',
+        severity: 'high',
+        status: 'fail',
+        title: `HTTP ${page.httpStatus} Client Error`,
+        description: `The page returned a 4xx client error status code: ${page.httpStatus}.`,
+        recommendation: 'Update broken internal links or fix resource configuration.',
+        pageUrl: page.url,
+        evidence: { httpStatus: page.httpStatus },
+      });
+    } else if (page.httpStatus === 0) {
+      recordLedger(
+        'TECH_HTTP_4XX',
+        'unknown',
+        'unknown',
+        false,
+        page.errorMessage || 'Fetch failed without HTTP response'
+      );
+    } else {
+      recordLedger('TECH_HTTP_4XX', 'executed_pass', 'pass', true);
     }
 
-    // Usable HTML Pages: Both HTTP status rules passed
-    recordLedger('TECH_HTTP_4XX', 'executed_pass', 'pass', true);
-    recordLedger('TECH_HTTP_5XX', 'executed_pass', 'pass', true);
+    // 2. TECH_HTTP_5XX
+    if (page.httpStatus >= 500) {
+      recordLedger('TECH_HTTP_5XX', 'executed_fail', 'fail', true, `HTTP ${page.httpStatus} Server Error`);
+      findings.push({
+        id: `${auditId}-${page.id}-http-5xx`,
+        auditId,
+        ruleId: 'TECH_HTTP_5XX',
+        category: 'technical',
+        severity: 'critical',
+        status: 'fail',
+        title: `HTTP ${page.httpStatus} Server Error`,
+        description: `The page returned a 5xx server error status code: ${page.httpStatus}.`,
+        recommendation: 'Investigate web server logs, application crashes, or upstream gateway errors.',
+        pageUrl: page.url,
+        evidence: { httpStatus: page.httpStatus },
+      });
+    } else if (page.httpStatus === 0) {
+      recordLedger(
+        'TECH_HTTP_5XX',
+        'unknown',
+        'unknown',
+        false,
+        page.errorMessage || 'Fetch failed without HTTP response'
+      );
+    } else {
+      recordLedger('TECH_HTTP_5XX', 'executed_pass', 'pass', true);
+    }
 
-    // TECH_HTTP_429
+    // 3. TECH_HTTP_429
     if (page.httpStatus === 429) {
       recordLedger('TECH_HTTP_429', 'executed_fail', 'fail', true, 'HTTP 429 Too Many Requests (Rate Limited)');
       findings.push({
@@ -270,23 +165,52 @@ export class StandaloneRulesEngine {
         pageUrl: page.url,
         evidence: { httpStatus: 429, fetchStatus: page.fetchStatus },
       });
+    } else if (page.httpStatus === 0) {
+      recordLedger(
+        'TECH_HTTP_429',
+        'unknown',
+        'unknown',
+        false,
+        page.errorMessage || 'Fetch failed without HTTP response'
+      );
     } else {
       recordLedger('TECH_HTTP_429', 'executed_pass', 'pass', true);
     }
 
-    // TECH_HTTP_UNSUPPORTED_CONTENT
-    const ct = (page.headers?.['content-type'] || '').toLowerCase();
-    if (ct && !ct.includes('text/html') && !ct.includes('application/xhtml+xml')) {
-      recordLedger('TECH_HTTP_UNSUPPORTED_CONTENT', 'executed_pass', 'pass', true, `Page returned non-HTML Content-Type: '${ct}'`);
+    // 4. TECH_HTTP_UNSUPPORTED_CONTENT
+    if (page.fetchStatus === 'failed' || page.fetchStatus === 'timeout' || page.httpStatus === 0) {
+      recordLedger(
+        'TECH_HTTP_UNSUPPORTED_CONTENT',
+        'not_evaluated',
+        'unknown',
+        false,
+        `Page fetch failed or returned error HTTP ${page.httpStatus}; Content-Type unavailable`
+      );
+    } else if (category === 'NON_HTML_RESOURCE') {
+      const ct = (page.headers?.['content-type'] || '').toLowerCase();
+      recordLedger(
+        'TECH_HTTP_UNSUPPORTED_CONTENT',
+        'executed_pass',
+        'pass',
+        true,
+        `Page returned non-HTML Content-Type: '${ct}'`
+      );
     } else {
       recordLedger('TECH_HTTP_UNSUPPORTED_CONTENT', 'executed_pass', 'pass', true);
     }
 
-    // TECH_HTTPS_USAGE
-    if (page.url.startsWith('https://')) {
+    // 5. TECH_HTTPS_USAGE
+    if (page.httpStatus === 0 && page.fetchStatus === 'failed') {
+      recordLedger(
+        'TECH_HTTPS_USAGE',
+        'not_evaluated',
+        'unknown',
+        false,
+        'Page fetch failed; protocol compliance unverified'
+      );
+    } else if (page.url.startsWith('https://')) {
       recordLedger('TECH_HTTPS_USAGE', 'executed_pass', 'pass', true);
     } else if (this.isLoopbackHost(page.url)) {
-      // Local development loopback host: permitted for authorized local test fixtures
       recordLedger(
         'TECH_HTTPS_USAGE',
         'executed_pass',
@@ -324,7 +248,272 @@ export class StandaloneRulesEngine {
       });
     }
 
-    // TECH_META_ROBOTS_DIRECTIVES
+    // 6. TECH_X_ROBOTS_TAG
+    if (!page.headers || Object.keys(page.headers).length === 0) {
+      recordLedger(
+        'TECH_X_ROBOTS_TAG',
+        'unknown',
+        'unknown',
+        false,
+        'HTTP response headers were not recorded; X-Robots-Tag status cannot be determined'
+      );
+    } else {
+      const xRobots = page.headers['x-robots-tag'];
+      if (!xRobots || !xRobots.trim()) {
+        recordLedger('TECH_X_ROBOTS_TAG', 'executed_pass', 'pass', true);
+      } else {
+        const tokens = xRobots.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+        const hasIndex = tokens.includes('index');
+        const hasNoindex = tokens.includes('noindex') || tokens.includes('none');
+
+        if (hasIndex && hasNoindex) {
+          recordLedger('TECH_X_ROBOTS_TAG', 'executed_warning', 'warning', true, `Conflicting X-Robots-Tag directives: '${xRobots}'`);
+          findings.push({
+            id: `${auditId}-${page.id}-xrobots-conflict`,
+            auditId,
+            ruleId: 'TECH_X_ROBOTS_TAG',
+            category: 'technical',
+            severity: 'high',
+            status: 'warning',
+            title: 'Conflicting X-Robots-Tag directives',
+            description: `HTTP header specifies conflicting directives: '${xRobots}'. 'noindex' takes precedence in search engines.`,
+            recommendation: 'Ensure the X-Robots-Tag header declares consistent indexing instructions.',
+            pageUrl: page.url,
+            evidence: { xRobotsTag: xRobots, tokens },
+          });
+        } else if (hasNoindex) {
+          recordLedger('TECH_X_ROBOTS_TAG', 'executed_warning', 'warning', true, `X-Robots-Tag noindex directive present: '${xRobots}'`);
+          findings.push({
+            id: `${auditId}-${page.id}-xrobots-noindex`,
+            auditId,
+            ruleId: 'TECH_X_ROBOTS_TAG',
+            category: 'technical',
+            severity: 'medium',
+            status: 'warning',
+            title: 'X-Robots-Tag noindex directive present',
+            description: `HTTP response returned X-Robots-Tag: '${xRobots}'. Search engines observing this header will not index the document.`,
+            recommendation: 'Verify that this resource should be blocked from search indexes. Remove header if it should be indexed.',
+            pageUrl: page.url,
+            evidence: { xRobotsTag: xRobots, tokens },
+          });
+        } else {
+          recordLedger('TECH_X_ROBOTS_TAG', 'executed_pass', 'pass', true);
+        }
+      }
+    }
+
+    // 7. TECH_ROBOTS_DISALLOW
+    if (page.fetchStatus === 'robots_blocked') {
+      recordLedger(
+        'TECH_ROBOTS_DISALLOW',
+        'executed_warning',
+        'warning',
+        true,
+        'URL disallowed by robots.txt'
+      );
+      findings.push({
+        id: `${auditId}-${page.id}-robots-disallowed`,
+        auditId,
+        ruleId: 'TECH_ROBOTS_DISALLOW',
+        category: 'technical',
+        severity: 'medium',
+        status: 'warning',
+        title: 'URL disallowed by robots.txt',
+        description: 'This URL was blocked from crawling by site robots.txt rules. Note that disallow blocks crawling, not indexation (pages can still be indexed if linked elsewhere).',
+        recommendation: "If this page should be indexed, remove the Disallow directive in robots.txt. If it should NOT be indexed, use a 'noindex' tag instead.",
+        pageUrl: page.url,
+        evidence: { pageUrl: page.url, fetchStatus: 'robots_blocked' },
+      });
+    } else {
+      recordLedger('TECH_ROBOTS_DISALLOW', 'executed_pass', 'pass', true);
+    }
+
+    // 8. TECH_SITEMAP_URL_STATUS
+    if (!isInSitemap) {
+      recordLedger('TECH_SITEMAP_URL_STATUS', 'executed_pass', 'pass', true, 'URL not listed in XML sitemap');
+    } else {
+      if (page.httpStatus === 200) {
+        recordLedger('TECH_SITEMAP_URL_STATUS', 'executed_pass', 'pass', true, 'Sitemap URL returns HTTP 200 OK');
+      } else {
+        recordLedger(
+          'TECH_SITEMAP_URL_STATUS',
+          'executed_fail',
+          'fail',
+          true,
+          `Non-200 URL listed in XML sitemap (HTTP ${page.httpStatus || 'unknown'})`
+        );
+        findings.push({
+          id: `${auditId}-${page.id}-sitemap-non-200`,
+          auditId,
+          ruleId: 'TECH_SITEMAP_URL_STATUS',
+          category: 'technical',
+          severity: 'high',
+          status: 'fail',
+          title: `Non-200 URL listed in XML sitemap (HTTP ${page.httpStatus || 'unknown'})`,
+          description: `URL is included in an XML sitemap but returns HTTP ${page.httpStatus || 'error'}. Google guidelines require sitemaps to contain only indexable, HTTP 200 URLs.`,
+          recommendation: 'Remove non-200 URLs (redirects, 404s, error pages) from XML sitemaps immediately.',
+          pageUrl: page.url,
+          evidence: { pageUrl: page.url, httpStatus: page.httpStatus, inSitemap: true },
+        });
+      }
+    }
+
+    // 9. TECH_SITEMAP_NOINDEX_CONFLICT
+    if (!isInSitemap) {
+      recordLedger(
+        'TECH_SITEMAP_NOINDEX_CONFLICT',
+        'not_applicable',
+        'na',
+        false,
+        'URL is not in an XML sitemap'
+      );
+    } else {
+      const metaRobots = (page.metaRobots || page.evidence?.metaRobots || '').toLowerCase();
+      const xRobots = (page.headers?.['x-robots-tag'] || '').toLowerCase();
+      const isNoindex =
+        metaRobots.includes('noindex') ||
+        metaRobots.includes('none') ||
+        xRobots.includes('noindex') ||
+        xRobots.includes('none');
+
+      if (isNoindex) {
+        recordLedger(
+          'TECH_SITEMAP_NOINDEX_CONFLICT',
+          'executed_fail',
+          'fail',
+          true,
+          'Contradictory indexing: Sitemap URL specifies noindex'
+        );
+        findings.push({
+          id: `${auditId}-${page.id}-sitemap-noindex-conflict`,
+          auditId,
+          ruleId: 'TECH_SITEMAP_NOINDEX_CONFLICT',
+          category: 'technical',
+          severity: 'high',
+          status: 'fail',
+          title: 'Contradictory indexing: Sitemap URL specifies noindex',
+          description:
+            "This URL is submitted in an XML sitemap but specifies 'noindex' (via meta tag or X-Robots-Tag). Submitting a noindexed URL wastes crawl budget and creates conflicting signals.",
+          recommendation: "Either remove the URL from the sitemap or remove the 'noindex' directive.",
+          pageUrl: page.url,
+          evidence: {
+            pageUrl: page.url,
+            metaRobots: page.metaRobots,
+            xRobotsTag: page.headers?.['x-robots-tag'],
+            inSitemap: true,
+          },
+        });
+      } else {
+        recordLedger('TECH_SITEMAP_NOINDEX_CONFLICT', 'executed_pass', 'pass', true);
+      }
+    }
+
+    // 10. TECH_SITEMAP_CANONICAL_CONFLICT
+    if (!isInSitemap) {
+      recordLedger(
+        'TECH_SITEMAP_CANONICAL_CONFLICT',
+        'not_applicable',
+        'na',
+        false,
+        'URL is not in an XML sitemap'
+      );
+    } else {
+      const canonical = page.canonicalUrl || page.evidence?.canonicalUrl;
+      if (!canonical) {
+        recordLedger(
+          'TECH_SITEMAP_CANONICAL_CONFLICT',
+          'executed_pass',
+          'pass',
+          true,
+          'Sitemap URL has no canonical declaration'
+        );
+      } else {
+        const normPage = page.url.replace(/\/$/, '');
+        const normCan = canonical.replace(/\/$/, '');
+        if (normPage !== normCan) {
+          recordLedger(
+            'TECH_SITEMAP_CANONICAL_CONFLICT',
+            'executed_warning',
+            'warning',
+            true,
+            'Sitemap URL specifies different canonical target'
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-sitemap-canonical-conflict`,
+            auditId,
+            ruleId: 'TECH_SITEMAP_CANONICAL_CONFLICT',
+            category: 'technical',
+            severity: 'medium',
+            status: 'warning',
+            title: 'Sitemap URL specifies different canonical target',
+            description: `This URL is submitted in an XML sitemap but specifies canonical target '${canonical}'. Google guidelines state that only canonical URLs should be submitted in XML sitemaps.`,
+            recommendation:
+              'Submit only the canonical version in your XML sitemap, or update the canonical tag if this page is authoritative.',
+            pageUrl: page.url,
+            evidence: { pageUrl: page.url, canonicalUrl: canonical, inSitemap: true },
+          });
+        } else {
+          recordLedger('TECH_SITEMAP_CANONICAL_CONFLICT', 'executed_pass', 'pass', true);
+        }
+      }
+    }
+
+    // Non-HTML Evidence Gating: If not a usable HTML document, do NOT evaluate on-page HTML rules!
+    const onPageRules = [
+      'ONPAGE_TITLE_PRESENT',
+      'ONPAGE_TITLE_LENGTH',
+      'ONPAGE_TITLE_REPETITIVE',
+      'ONPAGE_META_DESC_PRESENT',
+      'ONPAGE_META_DESC_LENGTH',
+      'ONPAGE_H1_PRESENCE',
+      'ONPAGE_H1_MULTIPLE',
+      'ONPAGE_H1_EMPTY',
+      'ONPAGE_HEADING_HIERARCHY',
+      'ONPAGE_CANONICAL_PRESENCE',
+      'ONPAGE_CANONICAL_VALID',
+      'ONPAGE_IMAGE_ALT_MISSING',
+      'ONPAGE_IMAGE_ALT_EMPTY',
+      'ONPAGE_INTERNAL_OUTLINKS',
+      'ONPAGE_EMPTY_ANCHOR_TEXT',
+      'ONPAGE_HTML_LANG',
+    ];
+
+    if (category !== 'HTML_DOCUMENT') {
+      recordLedger(
+        'TECH_META_ROBOTS_DIRECTIVES',
+        'not_applicable',
+        'na',
+        false,
+        'Non-HTML resource does not contain HTML <meta> tags'
+      );
+
+      if (category === 'NON_HTML_RESOURCE' || category === 'UNKNOWN_CONTENT_TYPE') {
+        const ctName = page.headers?.['content-type'] || 'binary';
+        for (const rId of onPageRules) {
+          recordLedger(
+            rId,
+            'not_applicable',
+            'na',
+            false,
+            `Resource is ${category === 'NON_HTML_RESOURCE' ? 'non-HTML (' + ctName + ')' : 'missing Content-Type'}; on-page HTML rules are not applicable`
+          );
+        }
+      } else {
+        for (const rId of onPageRules) {
+          recordLedger(
+            rId,
+            'not_evaluated',
+            'unknown',
+            false,
+            `Page fetch failed or returned non-HTML error status; content evidence unavailable`
+          );
+        }
+      }
+
+      return { findings, ledgerRecords };
+    }
+
+    // TECH_META_ROBOTS_DIRECTIVES (HTML documents only)
     const rawMetaRobots = page.metaRobots || page.evidence?.metaRobots;
     if (!rawMetaRobots || !rawMetaRobots.trim()) {
       recordLedger('TECH_META_ROBOTS_DIRECTIVES', 'executed_pass', 'pass', true);
@@ -381,54 +570,6 @@ export class StandaloneRulesEngine {
         });
       } else {
         recordLedger('TECH_META_ROBOTS_DIRECTIVES', 'executed_pass', 'pass', true);
-      }
-    }
-
-    // TECH_X_ROBOTS_TAG
-    if (!page.headers || Object.keys(page.headers).length === 0) {
-      recordLedger('TECH_X_ROBOTS_TAG', 'unknown', 'unknown', false, 'HTTP response headers were not recorded; X-Robots-Tag status cannot be determined');
-    } else {
-      const xRobots = page.headers['x-robots-tag'];
-      if (!xRobots || !xRobots.trim()) {
-        recordLedger('TECH_X_ROBOTS_TAG', 'executed_pass', 'pass', true);
-      } else {
-        const tokens = xRobots.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
-        const hasIndex = tokens.includes('index');
-        const hasNoindex = tokens.includes('noindex') || tokens.includes('none');
-
-        if (hasIndex && hasNoindex) {
-          recordLedger('TECH_X_ROBOTS_TAG', 'executed_warning', 'warning', true, `Conflicting X-Robots-Tag directives: '${xRobots}'`);
-          findings.push({
-            id: `${auditId}-${page.id}-xrobots-conflict`,
-            auditId,
-            ruleId: 'TECH_X_ROBOTS_TAG',
-            category: 'technical',
-            severity: 'high',
-            status: 'warning',
-            title: 'Conflicting X-Robots-Tag directives',
-            description: `HTTP header specifies conflicting directives: '${xRobots}'. 'noindex' takes precedence in search engines.`,
-            recommendation: 'Ensure the X-Robots-Tag header declares consistent indexing instructions.',
-            pageUrl: page.url,
-            evidence: { xRobotsTag: xRobots, tokens },
-          });
-        } else if (hasNoindex) {
-          recordLedger('TECH_X_ROBOTS_TAG', 'executed_warning', 'warning', true, `X-Robots-Tag noindex directive present: '${xRobots}'`);
-          findings.push({
-            id: `${auditId}-${page.id}-xrobots-noindex`,
-            auditId,
-            ruleId: 'TECH_X_ROBOTS_TAG',
-            category: 'technical',
-            severity: 'medium',
-            status: 'warning',
-            title: 'X-Robots-Tag noindex directive present',
-            description: `HTTP response returned X-Robots-Tag: '${xRobots}'. Search engines observing this header will not index the document.`,
-            recommendation: 'Verify that this resource should be blocked from search indexes. Remove header if it should be indexed.',
-            pageUrl: page.url,
-            evidence: { xRobotsTag: xRobots, tokens },
-          });
-        } else {
-          recordLedger('TECH_X_ROBOTS_TAG', 'executed_pass', 'pass', true);
-        }
       }
     }
 
@@ -910,14 +1051,18 @@ export class StandaloneRulesEngine {
   /**
    * Evaluates sitewide canonical rules and records execution outcomes in the ledger.
    */
+  /**
+   * Evaluates sitewide canonical rules and records execution outcomes in the ledger.
+   */
   public static evaluateSitewideDetailed(
     pages: StandaloneCrawlPage[],
-    auditId: string
+    auditId: string,
+    auditContext?: StandaloneAuditContext
   ): PageEvaluationResult {
     const findings: StandaloneSeoFinding[] = [];
     const ledgerRecords: StandaloneRuleExecutionRecord[] = [];
     const now = Date.now();
-    const seedUrl = pages[0]?.url || '';
+    const seedUrl = pages[0]?.url || auditContext?.robotsEvidence?.url || '';
 
     const recordLedger = (
       canonicalRuleId: string,
@@ -942,8 +1087,15 @@ export class StandaloneRulesEngine {
       });
     };
 
+    // 1. Duplicate Title Tags (SITE_TITLE_DUPLICATE) & 2. Orphan Pages (SITE_NO_OBSERVED_INTERNAL_INLINKS)
+    // Only evaluate duplicate title and orphan page rules if at least 2 usable HTML pages exist
     const usablePages = pages.filter(
-      (p) => p.fetchStatus === 'success' && p.httpStatus >= 200 && p.httpStatus < 400
+      (p) =>
+        p.fetchStatus === 'success' &&
+        p.httpStatus >= 200 &&
+        p.httpStatus < 400 &&
+        (p.contentTypeCategory === 'HTML_DOCUMENT' ||
+          (!p.contentTypeCategory && (p.headers?.['content-type']?.includes('text/html') ?? true)))
     );
 
     if (usablePages.length <= 1) {
@@ -961,90 +1113,291 @@ export class StandaloneRulesEngine {
         false,
         'Requires at least 2 usable pages for orphan page analysis'
       );
-      return { findings, ledgerRecords };
-    }
-
-    // 1. Duplicate Title Tags (SITE_TITLE_DUPLICATE)
-    const titleMap = new Map<string, string[]>();
-    for (const p of usablePages) {
-      if (p.title) {
-        const norm = p.title.trim().toLowerCase();
-        const list = titleMap.get(norm) || [];
-        list.push(p.url);
-        titleMap.set(norm, list);
-      }
-    }
-
-    let duplicateTitlesFound = false;
-    for (const [title, urls] of titleMap.entries()) {
-      if (urls.length > 1) {
-        duplicateTitlesFound = true;
-        findings.push({
-          id: `${auditId}-sitewide-dup-title-${title.slice(0, 20)}`,
-          auditId,
-          ruleId: 'SITE_TITLE_DUPLICATE',
-          category: 'sitewide',
-          severity: 'high',
-          status: 'fail',
-          title: `Duplicate Title Tag Across ${urls.length} Pages`,
-          description: `The title "${title}" is shared across multiple pages.`,
-          recommendation: 'Ensure every indexed page has a distinct title that describes its specific content.',
-          pageUrl: urls[0] ?? '',
-          evidence: { title, duplicateUrls: urls },
-        });
-      }
-    }
-
-    if (duplicateTitlesFound) {
-      recordLedger('SITE_TITLE_DUPLICATE', 'executed_fail', 'fail', true, 'Found duplicate title tags across pages');
     } else {
-      recordLedger('SITE_TITLE_DUPLICATE', 'executed_pass', 'pass', true);
-    }
-
-    // 2. Orphan Pages (SITE_NO_OBSERVED_INTERNAL_INLINKS)
-    const inboundCounts = new Map<string, number>();
-    for (const p of usablePages) {
-      inboundCounts.set(p.url, 0);
-    }
-
-    for (const p of usablePages) {
-      for (const dest of p.links) {
-        if (inboundCounts.has(dest) && dest !== p.url) {
-          inboundCounts.set(dest, (inboundCounts.get(dest) || 0) + 1);
+      // Duplicate Title Tags
+      const titleMap = new Map<string, string[]>();
+      for (const p of usablePages) {
+        if (p.title) {
+          const norm = p.title.trim().toLowerCase();
+          const list = titleMap.get(norm) || [];
+          list.push(p.url);
+          titleMap.set(norm, list);
         }
       }
-    }
 
-    let orphansFound = false;
-    for (const [url, count] of inboundCounts.entries()) {
-      if (count === 0 && url !== seedUrl) {
-        orphansFound = true;
-        findings.push({
-          id: `${auditId}-sitewide-orphan-${url.slice(-20)}`,
-          auditId,
-          ruleId: 'SITE_NO_OBSERVED_INTERNAL_INLINKS',
-          category: 'sitewide',
-          severity: 'medium',
-          status: 'warning',
-          title: 'Orphan Page (No Inbound Internal Links)',
-          description: `No crawled pages link to: ${url}.`,
-          recommendation: 'Add internal links from related category or content pages so users and crawlers can find it.',
-          pageUrl: url,
-          evidence: { inboundLinks: 0 },
-        });
+      let duplicateTitlesFound = false;
+      for (const [title, urls] of titleMap.entries()) {
+        if (urls.length > 1) {
+          duplicateTitlesFound = true;
+          findings.push({
+            id: `${auditId}-sitewide-dup-title-${title.slice(0, 20)}`,
+            auditId,
+            ruleId: 'SITE_TITLE_DUPLICATE',
+            category: 'sitewide',
+            severity: 'high',
+            status: 'fail',
+            title: `Duplicate Title Tag Across ${urls.length} Pages`,
+            description: `The title "${title}" is shared across multiple pages.`,
+            recommendation: 'Ensure every indexed page has a distinct title that describes its specific content.',
+            pageUrl: urls[0] ?? '',
+            evidence: { title, duplicateUrls: urls },
+          });
+        }
+      }
+
+      if (duplicateTitlesFound) {
+        recordLedger('SITE_TITLE_DUPLICATE', 'executed_fail', 'fail', true, 'Found duplicate title tags across pages');
+      } else {
+        recordLedger('SITE_TITLE_DUPLICATE', 'executed_pass', 'pass', true);
+      }
+
+      // Orphan Pages
+      const inboundCounts = new Map<string, number>();
+      for (const p of usablePages) {
+        inboundCounts.set(p.url, 0);
+      }
+
+      for (const p of usablePages) {
+        for (const dest of p.links) {
+          if (inboundCounts.has(dest) && dest !== p.url) {
+            inboundCounts.set(dest, (inboundCounts.get(dest) || 0) + 1);
+          }
+        }
+      }
+
+      let orphansFound = false;
+      for (const [url, count] of inboundCounts.entries()) {
+        if (count === 0 && url !== seedUrl) {
+          orphansFound = true;
+          findings.push({
+            id: `${auditId}-sitewide-orphan-${url.slice(-20)}`,
+            auditId,
+            ruleId: 'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'warning',
+            title: 'Orphan Page (No Inbound Internal Links)',
+            description: `No crawled pages link to: ${url}.`,
+            recommendation: 'Add internal links from related category or content pages so users and crawlers can find it.',
+            pageUrl: url,
+            evidence: { inboundLinks: 0 },
+          });
+        }
+      }
+
+      if (orphansFound) {
+        recordLedger(
+          'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+          'executed_warning',
+          'warning',
+          true,
+          'Found orphan pages with zero inbound links'
+        );
+      } else {
+        recordLedger('SITE_NO_OBSERVED_INTERNAL_INLINKS', 'executed_pass', 'pass', true);
       }
     }
 
-    if (orphansFound) {
+    // 3. TECH_ROBOTS_FETCH_STATUS (site-level)
+    const robotsStatus = auditContext?.robotsEvidence?.status;
+    if (!robotsStatus) {
       recordLedger(
-        'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+        'TECH_ROBOTS_FETCH_STATUS',
+        'unknown',
+        'unknown',
+        false,
+        'Robots.txt status unknown or not recorded'
+      );
+    } else if (robotsStatus === 'found') {
+      recordLedger(
+        'TECH_ROBOTS_FETCH_STATUS',
+        'executed_pass',
+        'pass',
+        true,
+        'Site provides an accessible robots.txt file (HTTP 200)'
+      );
+    } else if (robotsStatus === 'not_found') {
+      recordLedger(
+        'TECH_ROBOTS_FETCH_STATUS',
+        'executed_pass',
+        'pass',
+        true,
+        'robots.txt absent (HTTP 404); unrestricted access under RFC 9309'
+      );
+    } else if (robotsStatus === 'forbidden') {
+      recordLedger(
+        'TECH_ROBOTS_FETCH_STATUS',
         'executed_warning',
         'warning',
         true,
-        'Found orphan pages with zero inbound links'
+        'robots.txt inaccessible (HTTP 403 Forbidden)'
+      );
+      findings.push({
+        id: `${auditId}-sitewide-robots-forbidden`,
+        auditId,
+        ruleId: 'TECH_ROBOTS_FETCH_STATUS',
+        category: 'technical',
+        severity: 'high',
+        status: 'warning',
+        title: 'Robots.txt inaccessible (HTTP 403 Forbidden)',
+        description: 'robots.txt returned HTTP 403 (Forbidden). RFC 9309 advises crawlers to conservatively halt crawling when robots.txt is blocked.',
+        recommendation: 'Ensure /robots.txt is publicly accessible without IP restrictions or authentication.',
+        pageUrl: seedUrl,
+        evidence: { robotsTxtStatus: robotsStatus, auditTarget: seedUrl },
+      });
+    } else {
+      recordLedger(
+        'TECH_ROBOTS_FETCH_STATUS',
+        'executed_warning',
+        'warning',
+        true,
+        `robots.txt fetch issue (${robotsStatus})`
+      );
+      findings.push({
+        id: `${auditId}-sitewide-robots-fetch-issue`,
+        auditId,
+        ruleId: 'TECH_ROBOTS_FETCH_STATUS',
+        category: 'technical',
+        severity: 'high',
+        status: 'warning',
+        title: `Robots.txt fetch issue (${robotsStatus})`,
+        description: `robots.txt could not be fetched normally (status: '${robotsStatus}'). Search engines may delay crawling during persistent server errors.`,
+        recommendation: 'Investigate web server configuration and ensure /robots.txt responds with HTTP 200.',
+        pageUrl: seedUrl,
+        evidence: { robotsTxtStatus: robotsStatus, auditTarget: seedUrl },
+      });
+    }
+
+    // 4. TECH_ROBOTS_SITEMAP_DECLARATION (site-level)
+    const declaredSitemaps = auditContext?.robotsEvidence?.sitemapsDeclared || [];
+    if (declaredSitemaps.length > 0) {
+      recordLedger(
+        'TECH_ROBOTS_SITEMAP_DECLARATION',
+        'executed_pass',
+        'pass',
+        true,
+        `robots.txt declares ${declaredSitemaps.length} XML sitemap URL(s)`
       );
     } else {
-      recordLedger('SITE_NO_OBSERVED_INTERNAL_INLINKS', 'executed_pass', 'pass', true);
+      recordLedger(
+        'TECH_ROBOTS_SITEMAP_DECLARATION',
+        'executed_warning',
+        'warning',
+        true,
+        'No sitemap declaration in robots.txt'
+      );
+      findings.push({
+        id: `${auditId}-sitewide-robots-no-sitemap`,
+        auditId,
+        ruleId: 'TECH_ROBOTS_SITEMAP_DECLARATION',
+        category: 'technical',
+        severity: 'low',
+        status: 'warning',
+        title: 'No sitemap declaration in robots.txt',
+        description: "robots.txt does not declare any 'Sitemap:' directives. While optional, declaring sitemaps in robots.txt accelerates search engine discovery.",
+        recommendation: "Add 'Sitemap: https://yourdomain.com/sitemap.xml' to the end of robots.txt.",
+        pageUrl: seedUrl,
+        evidence: { robotsTxtPresent: Boolean(auditContext?.robotsEvidence?.rawContent) },
+      });
+    }
+
+    // 5. TECH_SITEMAP_AVAILABILITY (site-level)
+    const sitemaps = auditContext?.sitemapEvidence?.sitemaps || [];
+    if (sitemaps.length === 0) {
+      recordLedger(
+        'TECH_SITEMAP_AVAILABILITY',
+        'executed_warning',
+        'warning',
+        true,
+        'No XML sitemaps discovered'
+      );
+      findings.push({
+        id: `${auditId}-sitewide-no-sitemaps`,
+        auditId,
+        ruleId: 'TECH_SITEMAP_AVAILABILITY',
+        category: 'technical',
+        severity: 'low',
+        status: 'warning',
+        title: 'No XML sitemaps discovered',
+        description: 'No XML sitemaps were discovered via robots.txt or standard sitemap locations.',
+        recommendation: 'Create and submit an XML sitemap to help search engines discover newly published or updated URLs.',
+        pageUrl: seedUrl,
+        evidence: { sitemapCount: 0 },
+      });
+    } else {
+      const validSitemaps = sitemaps.filter((s) => s.status === 'valid' || s.status === 'success');
+      if (validSitemaps.length > 0) {
+        recordLedger(
+          'TECH_SITEMAP_AVAILABILITY',
+          'executed_pass',
+          'pass',
+          true,
+          `Discovered ${validSitemaps.length} accessible XML sitemap(s)`
+        );
+      } else {
+        recordLedger(
+          'TECH_SITEMAP_AVAILABILITY',
+          'executed_fail',
+          'fail',
+          true,
+          'XML sitemaps present but all errored'
+        );
+        findings.push({
+          id: `${auditId}-sitewide-sitemaps-errored`,
+          auditId,
+          ruleId: 'TECH_SITEMAP_AVAILABILITY',
+          category: 'technical',
+          severity: 'high',
+          status: 'fail',
+          title: 'XML sitemaps present but errored',
+          description: 'XML sitemaps were discovered but all encountered fetch or parse errors.',
+          recommendation: 'Fix XML syntax errors or HTTP response issues for discovered sitemaps.',
+          pageUrl: seedUrl,
+          evidence: { sitemapCount: sitemaps.length },
+        });
+      }
+    }
+
+    // 6. TECH_SITEMAP_PARSE_ERROR (site-level)
+    const erroredSitemaps = sitemaps.filter(
+      (s) => s.status === 'parse_error' || s.status === 'fetch_error'
+    );
+    if (erroredSitemaps.length > 0) {
+      recordLedger(
+        'TECH_SITEMAP_PARSE_ERROR',
+        'executed_fail',
+        'fail',
+        true,
+        `Encountered errors processing ${erroredSitemaps.length} sitemap(s)`
+      );
+      findings.push({
+        id: `${auditId}-sitewide-sitemap-parse-errors`,
+        auditId,
+        ruleId: 'TECH_SITEMAP_PARSE_ERROR',
+        category: 'technical',
+        severity: 'high',
+        status: 'fail',
+        title: 'XML sitemap parse or fetch errors',
+        description: `Encountered errors processing ${erroredSitemaps.length} sitemap(s). Invalid XML prevents search engines from parsing submitted URLs.`,
+        recommendation: 'Validate XML syntax and ensure sitemap endpoints return valid, uncorrupted XML documents.',
+        pageUrl: seedUrl,
+        evidence: {
+          erroredSitemaps: erroredSitemaps.map((e) => ({
+            url: e.url,
+            error: e.error,
+            status: e.status,
+          })),
+          errorCount: erroredSitemaps.length,
+        },
+      });
+    } else {
+      recordLedger(
+        'TECH_SITEMAP_PARSE_ERROR',
+        'executed_pass',
+        'pass',
+        true,
+        sitemaps.length > 0 ? 'All processed sitemaps parsed cleanly' : 'No sitemaps discovered; no parse errors'
+      );
     }
 
     return { findings, ledgerRecords };
@@ -1053,8 +1406,12 @@ export class StandaloneRulesEngine {
   /**
    * Backward-compatible sitewide evaluation returning findings.
    */
-  public static evaluateSitewide(pages: StandaloneCrawlPage[], auditId: string): StandaloneSeoFinding[] {
-    return this.evaluateSitewideDetailed(pages, auditId).findings;
+  public static evaluateSitewide(
+    pages: StandaloneCrawlPage[],
+    auditId: string,
+    auditContext?: StandaloneAuditContext
+  ): StandaloneSeoFinding[] {
+    return this.evaluateSitewideDetailed(pages, auditId, auditContext).findings;
   }
 
   /**
@@ -1062,18 +1419,24 @@ export class StandaloneRulesEngine {
    */
   public static evaluateAudit(
     pages: StandaloneCrawlPage[],
-    auditId: string
+    auditId: string,
+    auditContext?: StandaloneAuditContext
   ): PageEvaluationResult {
     const allFindings: StandaloneSeoFinding[] = [];
     const allLedger: StandaloneRuleExecutionRecord[] = [];
 
     const usablePages = pages.filter(
-      (p) => p.fetchStatus === 'success' && p.httpStatus >= 200 && p.httpStatus < 400
+      (p) =>
+        p.fetchStatus === 'success' &&
+        p.httpStatus >= 200 &&
+        p.httpStatus < 400 &&
+        (p.contentTypeCategory === 'HTML_DOCUMENT' ||
+          (!p.contentTypeCategory && (p.headers?.['content-type']?.includes('text/html') ?? true)))
     );
 
     // Page evaluations
     for (const p of pages) {
-      const { findings, ledgerRecords } = this.evaluatePageDetailed(p, auditId);
+      const { findings, ledgerRecords } = this.evaluatePageDetailed(p, auditId, auditContext);
       allFindings.push(...findings);
       allLedger.push(...ledgerRecords);
     }
@@ -1081,7 +1444,8 @@ export class StandaloneRulesEngine {
     // Sitewide evaluations
     const { findings: siteFindings, ledgerRecords: siteLedger } = this.evaluateSitewideDetailed(
       usablePages,
-      auditId
+      auditId,
+      auditContext
     );
     allFindings.push(...siteFindings);
     allLedger.push(...siteLedger);

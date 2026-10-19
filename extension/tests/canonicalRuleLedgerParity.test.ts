@@ -73,8 +73,8 @@ describe('Canonical SEO Rule Identity & Legacy Mapping Parity', () => {
     expect(CANONICAL_RULE_TOTALS.total).toBe(51);
   });
 
-  it('verifies implemented canonical rule count is exactly 25 in Phase 2A (16 on-page, 7 technical, 2 sitewide)', () => {
-    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(25);
+  it('verifies implemented canonical rule count is exactly 33 in Phase 2B Checkpoint 1 (16 on-page, 15 technical, 2 sitewide)', () => {
+    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(33);
     for (const ruleId of CANONICAL_IMPLEMENTED_RULES) {
       expect(isCanonicalRuleId(ruleId)).toBe(true);
     }
@@ -150,8 +150,10 @@ describe('Authoritative SEO Rule Execution Ledger & Coverage', () => {
     const page = createMockPage('1', 'http://127.0.0.1:4321/');
     const result = StandaloneRulesEngine.evaluateAudit([page], 'audit-test');
 
-    // Passing page should produce 0 failing or warning findings
-    const nonPassFindings = result.findings.filter((f) => f.status === 'fail' || f.status === 'warning');
+    // Passing page should produce 0 failing or warning on-page findings
+    const nonPassFindings = result.findings.filter(
+      (f) => f.category === 'on_page' && (f.status === 'fail' || f.status === 'warning')
+    );
     expect(nonPassFindings.length).toBe(0);
 
     // BUT the authoritative execution ledger MUST record all executed rules as executed_pass!

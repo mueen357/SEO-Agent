@@ -44,7 +44,12 @@ export class StandaloneScoringCalculator {
     if (Array.isArray(pages)) {
       attemptedPagesCount = pages.length;
       usablePagesCount = pages.filter(
-        (p) => p.fetchStatus === 'success' && p.httpStatus >= 200 && p.httpStatus < 400
+        (p) =>
+          p.fetchStatus === 'success' &&
+          p.httpStatus >= 200 &&
+          p.httpStatus < 400 &&
+          (p.contentTypeCategory === 'HTML_DOCUMENT' ||
+            (!p.contentTypeCategory && (p.headers?.['content-type']?.includes('text/html') ?? true)))
       ).length;
       failedPagesCount = pages.filter(
         (p) => p.fetchStatus !== 'success' || p.httpStatus === 0 || p.httpStatus >= 400

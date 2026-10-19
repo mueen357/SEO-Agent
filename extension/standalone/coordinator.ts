@@ -378,12 +378,19 @@ export class StandaloneAuditCoordinator {
 
         job.stageCheckpoints.crawlingFinished = true;
         job.robotsPolicyStatus = crawler.getRobotsPolicyStatus();
+        job.robotsEvidence = crawler.getRobotsEvidence();
+        job.sitemapEvidence = crawler.getSitemapEvidence();
         await StandaloneAuditStorage.saveJob(job);
       }
 
       // Evidence Availability Gate: verify whether usable HTML pages were retrieved
       const usablePages = crawledPages.filter(
-        (p) => p.fetchStatus === 'success' && p.httpStatus >= 200 && p.httpStatus < 400
+        (p) =>
+          p.fetchStatus === 'success' &&
+          p.httpStatus >= 200 &&
+          p.httpStatus < 400 &&
+          (p.contentTypeCategory === 'HTML_DOCUMENT' ||
+            (!p.contentTypeCategory && (p.headers?.['content-type']?.includes('text/html') ?? true)))
       );
       const failedPages = crawledPages.filter(
         (p) => p.fetchStatus !== 'success' || p.httpStatus === 0 || p.httpStatus >= 400
@@ -417,12 +424,13 @@ export class StandaloneAuditCoordinator {
         this.notify(job, 'AUDIT_PROGRESS');
 
         const { findings: allFindings, ledgerRecords: allLedger } =
-          StandaloneRulesEngine.evaluateAudit(crawledPages, auditId);
+          StandaloneRulesEngine.evaluateAudit(crawledPages, auditId, {
+            robotsEvidence: job.robotsEvidence,
+            sitemapEvidence: job.sitemapEvidence,
+          });
 
-        await StandaloneAuditStorage.replaceFindings(auditId, allFindings);
-        await StandaloneAuditStorage.replaceExecutionLedger(auditId, allLedger);
         job.stageCheckpoints.seoFinished = true;
-        await StandaloneAuditStorage.saveJob(job);
+        await StandaloneAuditStorage.publishSeoStageResults(auditId, allFindings, allLedger, job);
       }
 
       // Stage 3: Technology Stack Detection (if not already finished)

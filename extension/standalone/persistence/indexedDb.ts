@@ -294,16 +294,142 @@ export class StandaloneAuditStorage {
     auditId: string,
     records: StandaloneRuleExecutionRecord[]
   ): Promise<void> {
-    await this.clearExecutionLedgerForAudit(auditId);
-    await this.saveExecutionLedger(records);
+    if (typeof indexedDB === 'undefined') {
+      this.inMemoryExecutionLedger.set(auditId, records.map((r) => ({ ...r })));
+      return;
+    }
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('execution_ledger', 'readwrite');
+      const store = tx.objectStore('execution_ledger');
+      const index = store.index('auditId');
+      const req = index.openKeyCursor(IDBKeyRange.only(auditId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        } else {
+          for (const r of records) {
+            store.put(r);
+          }
+        }
+      };
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    });
   }
 
   public static async replaceFindings(
     auditId: string,
     findings: StandaloneSeoFinding[]
   ): Promise<void> {
-    await this.clearFindingsForAudit(auditId);
-    await this.saveFindings(findings);
+    if (typeof indexedDB === 'undefined') {
+      this.inMemoryFindings.set(auditId, findings.map((f) => ({ ...f })));
+      return;
+    }
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('findings', 'readwrite');
+      const store = tx.objectStore('findings');
+      const index = store.index('auditId');
+      const req = index.openKeyCursor(IDBKeyRange.only(auditId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        } else {
+          for (const f of findings) {
+            store.put(f);
+          }
+        }
+      };
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    });
+  }
+
+  /**
+   * Genuine Atomic Stage Publication:
+   * Replaces findings, execution ledger records, and saves the updated job
+   * checkpoint within a single IndexedDB readwrite transaction.
+   * If any operation fails, the entire transaction rolls back atomically.
+   */
+  public static async publishSeoStageResults(
+    auditId: string,
+    findings: StandaloneSeoFinding[],
+    records: StandaloneRuleExecutionRecord[],
+    job?: StandaloneAuditJob
+  ): Promise<void> {
+    if (typeof indexedDB === 'undefined') {
+      this.inMemoryFindings.set(auditId, findings.map((f) => ({ ...f })));
+      this.inMemoryExecutionLedger.set(auditId, records.map((r) => ({ ...r })));
+      if (job) {
+        this.inMemoryAudits.set(auditId, { ...job });
+      }
+      return;
+    }
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const storeNames: Array<'findings' | 'execution_ledger' | 'audits'> = job
+        ? ['findings', 'execution_ledger', 'audits']
+        : ['findings', 'execution_ledger'];
+      const tx = db.transaction(storeNames, 'readwrite');
+      const findingsStore = tx.objectStore('findings');
+      const ledgerStore = tx.objectStore('execution_ledger');
+
+      let findingsDeleted = false;
+      let ledgerDeleted = false;
+
+      const checkAndInsert = () => {
+        if (!findingsDeleted || !ledgerDeleted) return;
+        for (const f of findings) {
+          findingsStore.put(f);
+        }
+        for (const r of records) {
+          ledgerStore.put(r);
+        }
+        if (job) {
+          const auditsStore = tx.objectStore('audits');
+          auditsStore.put(job);
+        }
+      };
+
+      const findingsReq = findingsStore.index('auditId').openKeyCursor(IDBKeyRange.only(auditId));
+      findingsReq.onsuccess = () => {
+        const cursor = findingsReq.result;
+        if (cursor) {
+          findingsStore.delete(cursor.primaryKey);
+          cursor.continue();
+        } else {
+          findingsDeleted = true;
+          checkAndInsert();
+        }
+      };
+      findingsReq.onerror = () => reject(findingsReq.error);
+
+      const ledgerReq = ledgerStore.index('auditId').openKeyCursor(IDBKeyRange.only(auditId));
+      ledgerReq.onsuccess = () => {
+        const cursor = ledgerReq.result;
+        if (cursor) {
+          ledgerStore.delete(cursor.primaryKey);
+          cursor.continue();
+        } else {
+          ledgerDeleted = true;
+          checkAndInsert();
+        }
+      };
+      ledgerReq.onerror = () => reject(ledgerReq.error);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    });
   }
 
   public static async saveExecutionLedger(records: StandaloneRuleExecutionRecord[]): Promise<void> {

@@ -27,6 +27,14 @@ export class StandaloneExporter {
       exportVersion: '2.0.0',
       exportedAt: new Date().toISOString(),
       audit: job,
+      robotsEvidence: job.robotsEvidence,
+      sitemapEvidence: job.sitemapEvidence
+        ? {
+            sitemaps: job.sitemapEvidence.sitemaps,
+            totalUrls: job.sitemapEvidence.urls?.length || 0,
+            errors: job.sitemapEvidence.errors,
+          }
+        : undefined,
       scorecard: job.scorecard,
       scoreCoverage: job.scorecard?.coverage,
       summary: {
@@ -94,6 +102,32 @@ export class StandaloneExporter {
           this.escapeCsv(String(p.httpStatus)),
           this.escapeCsv(p.title || 'Untitled'),
           this.escapeCsv(`Response Time: ${p.responseTimeMs}ms`),
+        ].join(',')
+      );
+    }
+
+    // Robots.txt & Sitemap summary rows
+    if (job.robotsEvidence) {
+      rows.push(
+        [
+          'ROBOTS_TXT',
+          this.escapeCsv(job.robotsEvidence.url || job.robotsEvidence.robotsUrl || ''),
+          this.escapeCsv(job.robotsEvidence.status || job.robotsEvidence.fetchStatus || ''),
+          this.escapeCsv(String(job.robotsEvidence.httpStatus || '')),
+          this.escapeCsv(`Policy: ${job.robotsPolicyStatus || 'unspecified'}`),
+          this.escapeCsv(`Sitemaps Declared: ${job.robotsEvidence.sitemapsDeclared?.length || 0}`),
+        ].join(',')
+      );
+    }
+    if (job.sitemapEvidence) {
+      rows.push(
+        [
+          'SITEMAP_INDEX',
+          this.escapeCsv(job.targetUrl),
+          this.escapeCsv(`Discovered: ${job.sitemapEvidence.sitemaps?.length || 0}`),
+          this.escapeCsv(`URLs: ${job.sitemapEvidence.urls?.length || 0}`),
+          this.escapeCsv(`Errors: ${job.sitemapEvidence.errors?.length || 0}`),
+          this.escapeCsv('XML Sitemap Analysis Summary'),
         ].join(',')
       );
     }
