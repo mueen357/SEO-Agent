@@ -54,6 +54,7 @@ function createMockPage(
     metaDescription: 'A well-crafted meta description between 70 and 160 characters designed for search engine snippets.',
     canonicalUrl: url,
     headings: { h1: ['Single Main Heading'], h2: ['Subheading'], h3: [] },
+    htmlLang: 'en',
     links: ['http://127.0.0.1:4321/about'],
     images: [{ src: '/img.jpg', alt: 'Descriptive alt text' }],
     ...overrides,
@@ -72,8 +73,8 @@ describe('Canonical SEO Rule Identity & Legacy Mapping Parity', () => {
     expect(CANONICAL_RULE_TOTALS.total).toBe(51);
   });
 
-  it('verifies implemented canonical rule count is exactly 14 in this checkpoint', () => {
-    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(14);
+  it('verifies implemented canonical rule count is exactly 25 in Phase 2A (16 on-page, 7 technical, 2 sitewide)', () => {
+    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(25);
     for (const ruleId of CANONICAL_IMPLEMENTED_RULES) {
       expect(isCanonicalRuleId(ruleId)).toBe(true);
     }

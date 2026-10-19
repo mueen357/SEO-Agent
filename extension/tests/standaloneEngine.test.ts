@@ -202,7 +202,9 @@ describe('Standalone Engine - Client SEO Rules Engine', () => {
     const h1Missing = findings.find((f) => f.ruleId === 'ONPAGE_H1_PRESENCE' && f.status === 'fail');
     expect(h1Missing).toBeDefined();
 
-    const imgMissingAlt = findings.find((f) => f.ruleId === 'ONPAGE_IMAGE_ALT_MISSING' && f.status === 'warning');
+    const imgMissingAlt = findings.find(
+      (f) => f.ruleId === 'ONPAGE_IMAGE_ALT_MISSING' && (f.status === 'fail' || f.status === 'warning')
+    );
     expect(imgMissingAlt).toBeDefined();
 
     const httpInsecure = findings.find((f) => f.ruleId === 'TECH_HTTPS_USAGE' && f.status === 'fail');

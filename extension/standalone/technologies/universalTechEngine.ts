@@ -233,7 +233,7 @@ export class UniversalTechEngine {
    */
   private static matchDomMarker(
     marker: string,
-    evidence: ParsedHtmlEvidence
+    evidence: Partial<ParsedHtmlEvidence>
   ): boolean {
     const normMarker = marker.trim();
 
@@ -282,7 +282,7 @@ export class UniversalTechEngine {
   }
 
   public static evaluate(
-    evidence: ParsedHtmlEvidence,
+    evidence: Partial<ParsedHtmlEvidence>,
     headers: Record<string, string>,
     auditId: string
   ): StandaloneTechFinding[] {
@@ -644,27 +644,59 @@ export class UniversalTechEngine {
       }
     }
 
-    // Technology Implications Resolution (e.g., WordPress implies PHP)
+    // Technology Implications Resolution (e.g., WordPress implies PHP, Next.js implies React)
     for (const [techId, finding] of Array.from(detectedMap.entries())) {
+      // Do not infer dependencies from weak, possible, third-party embeds, or already-inferred dependencies
+      if (
+        finding.confidence < 0.70 ||
+        finding.status === 'possible' ||
+        finding.provenance === 'third_party_embed' ||
+        finding.provenance === 'inferred_dependency'
+      ) {
+        continue;
+      }
+
       const entry = this.compiledCatalog.get(techId);
       if (!entry) continue;
 
+      const isParentConfirmed = finding.confidence >= 0.90 && finding.status === 'confirmed';
+
       for (const impliedId of entry.tech.implies || []) {
-        if (!detectedMap.has(impliedId) && this.compiledCatalog.has(impliedId)) {
-          const impliedTech = this.compiledCatalog.get(impliedId)!.tech;
+        if (!this.compiledCatalog.has(impliedId)) continue;
+        const impliedTech = this.compiledCatalog.get(impliedId)!.tech;
+
+        const existing = detectedMap.get(impliedId);
+        // Direct evidence for the child always takes precedence over inference
+        if (existing && existing.provenance !== 'inferred_dependency') {
+          continue;
+        }
+
+        const inferredConfidence = isParentConfirmed ? 0.60 : 0.40;
+        const inferredStatus = isParentConfirmed ? 'inferred' : 'possible';
+        const parentConfidencePct = Math.round(finding.confidence * 100);
+        const explanation = isParentConfirmed
+          ? `Inferred architectural dependency from confirmed ${finding.name} (observed parent confidence: ${parentConfidencePct}%)`
+          : `Tentative architectural dependency inferred from detected ${finding.name} (observed parent confidence: ${parentConfidencePct}%)`;
+
+        if (!existing) {
           detectedMap.set(impliedId, {
             id: `${auditId}-${impliedId}`,
             auditId,
             technologyId: impliedId,
             name: impliedTech.name,
             category: impliedTech.category,
-            confidence: 0.60,
-            status: 'inferred',
+            confidence: inferredConfidence,
+            status: inferredStatus,
             provenance: 'inferred_dependency',
-            evidenceSummary: `Inferred architectural dependency from confirmed ${finding.name}`,
+            evidenceSummary: explanation,
             version: undefined,
             versionOrNull: null,
           });
+        } else if (existing.provenance === 'inferred_dependency' && isParentConfirmed && existing.confidence < 0.60) {
+          // Upgrade tentative inference to confirmed parent inference
+          existing.confidence = 0.60;
+          existing.status = 'inferred';
+          existing.evidenceSummary = explanation;
         }
       }
     }

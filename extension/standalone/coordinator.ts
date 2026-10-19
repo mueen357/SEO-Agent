@@ -419,8 +419,8 @@ export class StandaloneAuditCoordinator {
         const { findings: allFindings, ledgerRecords: allLedger } =
           StandaloneRulesEngine.evaluateAudit(crawledPages, auditId);
 
-        await StandaloneAuditStorage.saveFindings(allFindings);
-        await StandaloneAuditStorage.saveExecutionLedger(allLedger);
+        await StandaloneAuditStorage.replaceFindings(auditId, allFindings);
+        await StandaloneAuditStorage.replaceExecutionLedger(auditId, allLedger);
         job.stageCheckpoints.seoFinished = true;
         await StandaloneAuditStorage.saveJob(job);
       }

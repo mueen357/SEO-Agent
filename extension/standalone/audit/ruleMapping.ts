@@ -6,6 +6,19 @@
  */
 
 import type { StandaloneSeoFinding } from '../types';
+import canonicalRulesJson from './canonical_seo_rules.json';
+
+export interface CanonicalRuleDefinition {
+  rule_id: string;
+  title: string;
+  scoring_family: 'on_page' | 'technical' | 'sitewide';
+  display_category: string;
+  severity: string;
+  is_sitewide: boolean;
+  description?: string;
+  version?: string;
+  doc?: string;
+}
 
 export interface LegacyRuleMappingEntry {
   legacyId: string;
@@ -17,93 +30,61 @@ export interface LegacyRuleMappingEntry {
 }
 
 /**
- * Authoritative 51-rule manifest exported from backend RuleRegistry.
+ * Authoritative 51-rule manifest derived directly from canonical_seo_rules.json.
+ * Single source of machine-readable truth.
  */
+export const CANONICAL_RULES_MANIFEST: readonly CanonicalRuleDefinition[] =
+  canonicalRulesJson as unknown as CanonicalRuleDefinition[];
+
+export const CANONICAL_RULE_BY_ID = new Map<string, CanonicalRuleDefinition>(
+  CANONICAL_RULES_MANIFEST.map((r) => [r.rule_id, r])
+);
+
 export const CANONICAL_51_RULES = {
-  on_page: [
-    'ONPAGE_TITLE_PRESENT',
-    'ONPAGE_TITLE_LENGTH',
-    'ONPAGE_TITLE_REPETITIVE',
-    'ONPAGE_META_DESC_PRESENT',
-    'ONPAGE_META_DESC_LENGTH',
-    'ONPAGE_H1_PRESENCE',
-    'ONPAGE_H1_MULTIPLE',
-    'ONPAGE_H1_EMPTY',
-    'ONPAGE_HEADING_HIERARCHY',
-    'ONPAGE_CANONICAL_PRESENCE',
-    'ONPAGE_CANONICAL_VALID',
-    'ONPAGE_IMAGE_ALT_MISSING',
-    'ONPAGE_IMAGE_ALT_EMPTY',
-    'ONPAGE_INTERNAL_OUTLINKS',
-    'ONPAGE_EMPTY_ANCHOR_TEXT',
-    'ONPAGE_HTML_LANG',
-  ],
-  technical: [
-    'TECH_HTTP_4XX',
-    'TECH_HTTP_5XX',
-    'TECH_HTTP_429',
-    'TECH_HTTP_UNSUPPORTED_CONTENT',
-    'TECH_META_ROBOTS_DIRECTIVES',
-    'TECH_X_ROBOTS_TAG',
-    'TECH_ROBOTS_FETCH_STATUS',
-    'TECH_ROBOTS_DISALLOW',
-    'TECH_ROBOTS_SITEMAP_DECLARATION',
-    'TECH_SITEMAP_AVAILABILITY',
-    'TECH_SITEMAP_PARSE_ERROR',
-    'TECH_SITEMAP_URL_STATUS',
-    'TECH_SITEMAP_NOINDEX_CONFLICT',
-    'TECH_SITEMAP_CANONICAL_CONFLICT',
-    'TECH_REDIRECT_CHAIN',
-    'TECH_REDIRECT_LOOP',
-    'TECH_REDIRECT_FAILURE',
-    'TECH_CANONICAL_TARGET_STATUS',
-    'TECH_CANONICAL_CONFLICT',
-    'TECH_CANONICAL_MULTIPLE',
-    'TECH_HTTPS_USAGE',
-    'TECH_HTTPS_DOWNGRADE',
-  ],
-  sitewide: [
-    'SITE_CONTENT_DUPLICATE_EXACT',
-    'SITE_CONTENT_DUPLICATE_NEAR',
-    'SITE_TITLE_DUPLICATE',
-    'SITE_META_DESCRIPTION_DUPLICATE',
-    'SITE_H1_DUPLICATE',
-    'SITE_NO_OBSERVED_INTERNAL_INLINKS',
-    'SITE_LOW_INTERNAL_INLINKS',
-    'SITE_DEEP_CRAWL_PATH',
-    'SITE_INTERNAL_LINK_TO_4XX',
-    'SITE_INTERNAL_LINK_TO_5XX',
-    'SITE_INTERNAL_LINK_TO_REDIRECT',
-    'SITE_DUPLICATE_CANONICAL_REVIEW',
-    'SITE_CONTENT_CANONICAL_CONFLICT',
-  ],
+  on_page: CANONICAL_RULES_MANIFEST.filter((r) => r.scoring_family === 'on_page').map((r) => r.rule_id),
+  technical: CANONICAL_RULES_MANIFEST.filter((r) => r.scoring_family === 'technical').map((r) => r.rule_id),
+  sitewide: CANONICAL_RULES_MANIFEST.filter((r) => r.scoring_family === 'sitewide').map((r) => r.rule_id),
 } as const;
 
-export const ALL_CANONICAL_RULE_IDS = new Set<string>([
-  ...CANONICAL_51_RULES.on_page,
-  ...CANONICAL_51_RULES.technical,
-  ...CANONICAL_51_RULES.sitewide,
-]);
+export const ALL_CANONICAL_RULE_IDS = new Set<string>(
+  CANONICAL_RULES_MANIFEST.map((r) => r.rule_id)
+);
+
+export const ALL_CANONICAL_51_RULES: readonly string[] = CANONICAL_RULES_MANIFEST.map((r) => r.rule_id);
 
 /**
- * 14 Canonical Rules verified and actively implemented in Standalone client rules engine.
+ * 25 Canonical Rules verified and actively implemented in Standalone client rules engine:
+ * - 16 On-Page (100% complete coverage)
+ * - 7 Technical
+ * - 2 Sitewide
  */
 export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
-  // On-Page (9)
+  // On-Page (16/16 - 100% coverage)
   'ONPAGE_TITLE_PRESENT',
   'ONPAGE_TITLE_LENGTH',
+  'ONPAGE_TITLE_REPETITIVE',
   'ONPAGE_META_DESC_PRESENT',
   'ONPAGE_META_DESC_LENGTH',
   'ONPAGE_H1_PRESENCE',
   'ONPAGE_H1_MULTIPLE',
+  'ONPAGE_H1_EMPTY',
+  'ONPAGE_HEADING_HIERARCHY',
   'ONPAGE_CANONICAL_PRESENCE',
   'ONPAGE_CANONICAL_VALID',
   'ONPAGE_IMAGE_ALT_MISSING',
-  // Technical (3)
+  'ONPAGE_IMAGE_ALT_EMPTY',
+  'ONPAGE_INTERNAL_OUTLINKS',
+  'ONPAGE_EMPTY_ANCHOR_TEXT',
+  'ONPAGE_HTML_LANG',
+  // Technical (7/22)
   'TECH_HTTP_4XX',
   'TECH_HTTP_5XX',
+  'TECH_HTTP_429',
+  'TECH_HTTP_UNSUPPORTED_CONTENT',
+  'TECH_META_ROBOTS_DIRECTIVES',
+  'TECH_X_ROBOTS_TAG',
   'TECH_HTTPS_USAGE',
-  // Sitewide (2)
+  // Sitewide (2/13)
   'SITE_TITLE_DUPLICATE',
   'SITE_NO_OBSERVED_INTERNAL_INLINKS',
 ]);
@@ -186,12 +167,6 @@ export const LEGACY_TO_CANONICAL_RULE_MAP: Record<string, LegacyRuleMappingEntry
   },
 };
 
-export const ALL_CANONICAL_51_RULES: readonly string[] = [
-  ...CANONICAL_51_RULES.on_page,
-  ...CANONICAL_51_RULES.technical,
-  ...CANONICAL_51_RULES.sitewide,
-];
-
 export function isCanonicalRuleId(ruleId: string): boolean {
   return ALL_CANONICAL_RULE_IDS.has(ruleId);
 }
@@ -202,10 +177,58 @@ export function getCanonicalRulesForLegacyId(legacyId: string): string[] {
 }
 
 export function getCanonicalRuleCategory(ruleId: string): 'on_page' | 'technical' | 'sitewide' | 'unknown' {
-  if ((CANONICAL_51_RULES.on_page as readonly string[]).includes(ruleId)) return 'on_page';
-  if ((CANONICAL_51_RULES.technical as readonly string[]).includes(ruleId)) return 'technical';
-  if ((CANONICAL_51_RULES.sitewide as readonly string[]).includes(ruleId)) return 'sitewide';
+  const def = CANONICAL_RULE_BY_ID.get(ruleId);
+  if (def) return def.scoring_family;
   return 'unknown';
+}
+
+/**
+ * Validates the canonical registry integrity against runtime expectations.
+ */
+export function validateCanonicalRegistry(): {
+  valid: boolean;
+  isValid: boolean;
+  errors: string[];
+  totalCanonicalRules: number;
+  implementedCount: number;
+  familyCounts: {
+    on_page: number;
+    technical: number;
+    sitewide: number;
+  };
+} {
+  const errors: string[] = [];
+  if (CANONICAL_RULES_MANIFEST.length !== 51) {
+    errors.push(`Expected 51 canonical rules, found ${CANONICAL_RULES_MANIFEST.length}`);
+  }
+  const seen = new Set<string>();
+  for (const r of CANONICAL_RULES_MANIFEST) {
+    if (seen.has(r.rule_id)) {
+      errors.push(`Duplicate canonical rule_id: ${r.rule_id}`);
+    }
+    seen.add(r.rule_id);
+    if (!['on_page', 'technical', 'sitewide'].includes(r.scoring_family)) {
+      errors.push(`Invalid scoring family for ${r.rule_id}: ${r.scoring_family}`);
+    }
+  }
+  for (const implId of CANONICAL_IMPLEMENTED_RULES) {
+    if (!seen.has(implId)) {
+      errors.push(`Implemented rule ${implId} does not exist in authoritative canonical manifest`);
+    }
+  }
+  const familyCounts = {
+    on_page: CANONICAL_51_RULES.on_page.length,
+    technical: CANONICAL_51_RULES.technical.length,
+    sitewide: CANONICAL_51_RULES.sitewide.length,
+  };
+  return {
+    valid: errors.length === 0,
+    isValid: errors.length === 0,
+    errors,
+    totalCanonicalRules: CANONICAL_RULES_MANIFEST.length,
+    implementedCount: CANONICAL_IMPLEMENTED_RULES.size,
+    familyCounts,
+  };
 }
 
 /**

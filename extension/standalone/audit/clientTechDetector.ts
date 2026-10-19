@@ -261,7 +261,7 @@ import { UniversalTechEngine } from '../technologies/universalTechEngine';
 
 export class StandaloneTechDetector {
   public static detect(
-    evidence: ParsedHtmlEvidence,
+    evidence: Partial<ParsedHtmlEvidence>,
     headers: Record<string, string>,
     auditId: string
   ): StandaloneTechFinding[] {

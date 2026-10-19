@@ -8,9 +8,27 @@ export interface ParsedHtmlEvidence {
   metaDescription?: string;
   canonicalUrl?: string;
   metaRobots?: string;
-  headings: { h1: string[]; h2: string[]; h3: string[] };
+  htmlLang?: string | null;
+  headings: {
+    h1: string[];
+    h2: string[];
+    h3: string[];
+    h4?: string[];
+    h5?: string[];
+    h6?: string[];
+  };
+  headingCounts?: Record<'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6', number>;
+  h1RawCount?: number;
+  h1HasContent?: boolean;
   links: string[];
-  images: Array<{ src: string; alt: string }>;
+  linksDetailed?: Array<{ href: string; text: string; isInternal: boolean }>;
+  internalOutlinksCount?: number;
+  externalOutlinksCount?: number;
+  emptyAnchorCount?: number;
+  images: Array<{ src: string; alt: string; hasAlt?: boolean }>;
+  imageCount?: number;
+  missingAltCount?: number;
+  emptyAltCount?: number;
   metaGenerators: string[];
   scriptSources: string[];
   stylesheetHrefs: string[];
@@ -117,31 +135,110 @@ export class StandaloneDomParser {
     const metaRobotsEl = doc.querySelector('meta[name="robots" i]');
     const metaRobots = metaRobotsEl?.getAttribute('content')?.trim() || undefined;
 
-    // Headings
-    const h1 = Array.from(doc.querySelectorAll('h1')).map((h) => h.textContent?.trim() || '').filter(Boolean);
-    const h2 = Array.from(doc.querySelectorAll('h2')).map((h) => h.textContent?.trim() || '').filter(Boolean);
-    const h3 = Array.from(doc.querySelectorAll('h3')).map((h) => h.textContent?.trim() || '').filter(Boolean);
+    // HTML Lang
+    const htmlEl = doc.documentElement;
+    let htmlLang: string | null | undefined = undefined;
+    if (htmlEl) {
+      if (htmlEl.hasAttribute('lang')) {
+        htmlLang = htmlEl.getAttribute('lang');
+      } else {
+        htmlLang = null;
+      }
+    }
+
+    // Headings H1 through H6
+    const h1Els = Array.from(doc.querySelectorAll('h1'));
+    const h2Els = Array.from(doc.querySelectorAll('h2'));
+    const h3Els = Array.from(doc.querySelectorAll('h3'));
+    const h4Els = Array.from(doc.querySelectorAll('h4'));
+    const h5Els = Array.from(doc.querySelectorAll('h5'));
+    const h6Els = Array.from(doc.querySelectorAll('h6'));
+
+    const h1RawCount = h1Els.length;
+    const h1Texts = h1Els.map((h) => h.textContent?.trim() || '');
+    const h1HasContent = h1Texts.some((t) => t.length > 0);
+
+    const headings = {
+      h1: h1Texts.filter(Boolean),
+      h2: h2Els.map((h) => h.textContent?.trim() || '').filter(Boolean),
+      h3: h3Els.map((h) => h.textContent?.trim() || '').filter(Boolean),
+      h4: h4Els.map((h) => h.textContent?.trim() || '').filter(Boolean),
+      h5: h5Els.map((h) => h.textContent?.trim() || '').filter(Boolean),
+      h6: h6Els.map((h) => h.textContent?.trim() || '').filter(Boolean),
+    };
+
+    const headingCounts = {
+      h1: h1RawCount,
+      h2: h2Els.length,
+      h3: h3Els.length,
+      h4: h4Els.length,
+      h5: h5Els.length,
+      h6: h6Els.length,
+    };
 
     // Links (resolved to absolute URLs)
     const baseHref = pageUrl;
-    const links: string[] = [];
+    let baseOrigin = '';
+    try {
+      baseOrigin = new URL(baseHref).origin;
+    } catch {}
+
+    const linkStrings: string[] = [];
+    const linksDetailed: Array<{ href: string; text: string; isInternal: boolean }> = [];
+    let internalOutlinksCount = 0;
+    let externalOutlinksCount = 0;
+    let emptyAnchorCount = 0;
+
     doc.querySelectorAll('a[href]').forEach((a) => {
       const href = a.getAttribute('href');
       if (href && !href.startsWith('#') && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
         try {
           const resolved = new URL(href, baseHref).href;
-          links.push(resolved);
+          linkStrings.push(resolved);
+          const text = (a.textContent || '').trim();
+          const ariaLabel = (a.getAttribute('aria-label') || '').trim();
+          const hasText = text.length > 0 || ariaLabel.length > 0;
+          if (!hasText) {
+            emptyAnchorCount++;
+          }
+          let isInternal = false;
+          try {
+            isInternal = Boolean(baseOrigin && new URL(resolved).origin === baseOrigin);
+          } catch {}
+          if (isInternal) {
+            internalOutlinksCount++;
+          } else {
+            externalOutlinksCount++;
+          }
+          if (linksDetailed.length < 50) {
+            linksDetailed.push({ href: resolved, text, isInternal });
+          }
         } catch {
           // Ignore invalid URL
         }
       }
     });
+    const links = Array.from(new Set(linkStrings));
 
     // Images
     const images: Array<{ src: string; alt: string }> = [];
-    doc.querySelectorAll('img').forEach((img) => {
+    let missingAltCount = 0;
+    let emptyAltCount = 0;
+    const imgEls = Array.from(doc.querySelectorAll('img'));
+    const imageCount = imgEls.length;
+
+    imgEls.forEach((img) => {
       const src = img.getAttribute('src') || img.getAttribute('data-src') || '';
-      const alt = img.getAttribute('alt') || '';
+      const hasAlt = img.hasAttribute('alt');
+      const rawAlt = img.getAttribute('alt');
+      const alt = rawAlt ? rawAlt.trim() : '';
+
+      if (!hasAlt) {
+        missingAltCount++;
+      } else if (alt === '') {
+        emptyAltCount++;
+      }
+
       if (src) {
         try {
           images.push({ src: new URL(src, baseHref).href, alt });
@@ -247,9 +344,20 @@ export class StandaloneDomParser {
       metaDescription,
       canonicalUrl,
       metaRobots,
-      headings: { h1, h2, h3 },
-      links: Array.from(new Set(links)),
+      htmlLang,
+      headings,
+      headingCounts,
+      h1RawCount,
+      h1HasContent,
+      links,
+      linksDetailed,
+      internalOutlinksCount,
+      externalOutlinksCount,
+      emptyAnchorCount,
       images,
+      imageCount,
+      missingAltCount,
+      emptyAltCount,
       metaGenerators,
       scriptSources,
       stylesheetHrefs,
@@ -263,7 +371,6 @@ export class StandaloneDomParser {
     };
   }
 
-  /** Regex fallback when DOMParser is unavailable (e.g. background service worker context) */
   private static fallbackParse(html: string, pageUrl: string): ParsedHtmlEvidence {
     const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
     const metaDescMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i) ||
@@ -273,35 +380,117 @@ export class StandaloneDomParser {
     const robotsMatch = html.match(/<meta[^>]*name=["']robots["'][^>]*content=["']([^"']*)["']/i) ||
                         html.match(/<meta[^>]*content=["']([^"']*)["'][^>]*name=["']robots["']/i);
 
+    // HTML Lang
+    let htmlLang: string | null | undefined = undefined;
+    const htmlTagForLang = html.match(/<html\s+([^>]+)>/i);
+    if (htmlTagForLang && htmlTagForLang[1]) {
+      const langAttr = htmlTagForLang[1].match(/lang=["']([^"']*)["']/i);
+      if (langAttr) {
+        htmlLang = langAttr[1];
+      } else {
+        htmlLang = null;
+      }
+    } else if (/<html\b/i.test(html)) {
+      htmlLang = null;
+    }
+
     const h1Match = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/gi) || [];
     const h2Match = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/gi) || [];
     const h3Match = html.match(/<h3[^>]*>([\s\S]*?)<\/h3>/gi) || [];
+    const h4Match = html.match(/<h4[^>]*>([\s\S]*?)<\/h4>/gi) || [];
+    const h5Match = html.match(/<h5[^>]*>([\s\S]*?)<\/h5>/gi) || [];
+    const h6Match = html.match(/<h6[^>]*>([\s\S]*?)<\/h6>/gi) || [];
 
-    const h1 = h1Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
-    const h2 = h2Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
-    const h3 = h3Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
+    const h1RawCount = h1Match.length;
+    const h1Texts = h1Match.map((h) => h.replace(/<[^>]+>/g, '').trim());
+    const h1HasContent = h1Texts.some((t) => t.length > 0);
+
+    const headings = {
+      h1: h1Texts.filter(Boolean),
+      h2: h2Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean),
+      h3: h3Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean),
+      h4: h4Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean),
+      h5: h5Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean),
+      h6: h6Match.map((h) => h.replace(/<[^>]+>/g, '').trim()).filter(Boolean),
+    };
+
+    const headingCounts = {
+      h1: h1RawCount,
+      h2: h2Match.length,
+      h3: h3Match.length,
+      h4: h4Match.length,
+      h5: h5Match.length,
+      h6: h6Match.length,
+    };
 
     // Links
-    const links: string[] = [];
-    const linkMatches = html.matchAll(/<a[^>]+href=["']([^"']+)["']/gi);
+    let baseOrigin = '';
+    try {
+      baseOrigin = new URL(pageUrl).origin;
+    } catch {}
+
+    const linkStrings: string[] = [];
+    const linksDetailed: Array<{ href: string; text: string; isInternal: boolean }> = [];
+    let internalOutlinksCount = 0;
+    let externalOutlinksCount = 0;
+    let emptyAnchorCount = 0;
+
+    const linkMatches = html.matchAll(/<a\s+([^>]+)>([\s\S]*?)<\/a>/gi);
     for (const m of linkMatches) {
-      const href = m[1];
+      const attrs = m[1] || '';
+      const innerHtml = m[2] || '';
+      const hrefMatch = attrs.match(/href=["']([^"']+)["']/i);
+      const ariaMatch = attrs.match(/aria-label=["']([^"']*)["']/i);
+      const href = hrefMatch ? hrefMatch[1] : '';
+
       if (href && !href.startsWith('#') && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
         try {
-          links.push(new URL(href, pageUrl).href);
+          const resolved = new URL(href, pageUrl).href;
+          linkStrings.push(resolved);
+          const text = innerHtml.replace(/<[^>]+>/g, '').trim();
+          const ariaLabel = ariaMatch?.[1] ? ariaMatch[1].trim() : '';
+          const hasText = text.length > 0 || ariaLabel.length > 0;
+          if (!hasText) {
+            emptyAnchorCount++;
+          }
+          let isInternal = false;
+          try {
+            isInternal = Boolean(baseOrigin && new URL(resolved).origin === baseOrigin);
+          } catch {}
+          if (isInternal) {
+            internalOutlinksCount++;
+          } else {
+            externalOutlinksCount++;
+          }
+          if (linksDetailed.length < 50) {
+            linksDetailed.push({ href: resolved, text, isInternal });
+          }
         } catch {}
       }
     }
+    const links = Array.from(new Set(linkStrings));
 
     // Images
     const images: Array<{ src: string; alt: string }> = [];
-    const imgMatches = html.matchAll(/<img[^>]+>/gi);
+    let missingAltCount = 0;
+    let emptyAltCount = 0;
+    const imgMatches = Array.from(html.matchAll(/<img\s+([^>]+)>/gi));
+    const imageCount = imgMatches.length;
+
     for (const m of imgMatches) {
-      const tag = m[0];
-      const srcMatch = tag.match(/src=["']([^"']+)["']/i);
-      const altMatch = tag.match(/alt=["']([^"']*)["']/i);
+      const tagAttrs = m[1] || '';
+      const srcMatch = tagAttrs.match(/src=["']([^"']+)["']/i);
+      const hasAlt = /alt\s*=/i.test(tagAttrs);
+      const altMatch = tagAttrs.match(/alt=["']([^"']*)["']/i);
+      const alt = (altMatch && altMatch[1]) ? altMatch[1].trim() : '';
+
+      if (!hasAlt) {
+        missingAltCount++;
+      } else if (alt === '') {
+        emptyAltCount++;
+      }
+
       if (srcMatch && srcMatch[1]) {
-        const alt: string = (altMatch && altMatch[1]) ? altMatch[1] : '';
         const srcStr: string = srcMatch[1];
         try {
           images.push({ src: new URL(srcStr, pageUrl).href, alt });
@@ -409,9 +598,20 @@ export class StandaloneDomParser {
       metaDescription: metaDescMatch && metaDescMatch[1] ? metaDescMatch[1].trim() : undefined,
       canonicalUrl: canonicalMatch && canonicalMatch[1] ? canonicalMatch[1].trim() : undefined,
       metaRobots: robotsMatch && robotsMatch[1] ? robotsMatch[1].trim() : undefined,
-      headings: { h1, h2, h3 },
-      links: Array.from(new Set(links)),
+      htmlLang,
+      headings,
+      headingCounts,
+      h1RawCount,
+      h1HasContent,
+      links,
+      linksDetailed,
+      internalOutlinksCount,
+      externalOutlinksCount,
+      emptyAnchorCount,
       images,
+      imageCount,
+      missingAltCount,
+      emptyAltCount,
       metaGenerators,
       scriptSources,
       stylesheetHrefs,

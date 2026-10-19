@@ -78,9 +78,9 @@ describe('Standalone Live Fixture Acceptance (http://127.0.0.1:4321/)', () => {
     const ledgerRecords = await StandaloneAuditStorage.getExecutionLedgerForAudit(job.id);
     expect(ledgerRecords).toBeDefined();
     expect(ledgerRecords.length).toBeGreaterThan(0);
-    // 14 distinct canonical rules evaluated across crawled pages and site graph
+    // 25 distinct canonical rules evaluated across crawled pages and site graph in Phase 2A
     const distinctRules = new Set(ledgerRecords.map((r) => r.canonicalRuleId));
-    expect(distinctRules.size).toBe(14);
+    expect(distinctRules.size).toBe(25);
 
     // 6. Scorecard evidence and availability gate
     expect(job.scorecard).toBeDefined();
@@ -92,12 +92,12 @@ describe('Standalone Live Fixture Acceptance (http://127.0.0.1:4321/)', () => {
     expect(job.scorecard?.attemptedPagesCount).toBe(5);
     expect(job.scorecard?.failedPagesCount).toBe(0);
 
-    // 7. Honest Score Coverage (Provisional state when 14/51 canonical rules evaluated)
+    // 7. Honest Score Coverage (Provisional state when 25/51 canonical rules evaluated)
     expect(job.scorecard?.coverage).toBeDefined();
     expect(job.scorecard?.coverage?.scoreState).toBe('provisional');
-    expect(job.scorecard?.coverage?.executedRulesTotal).toBe(14);
+    expect(job.scorecard?.coverage?.executedRulesTotal).toBe(25);
     expect(job.scorecard?.coverage?.expectedRulesTotal).toBe(51);
-    expect(job.scorecard?.coverage?.distinctExecutedCanonicalRules).toHaveLength(14);
-    expect(job.scorecard?.coverage?.coverageRatio).toBeCloseTo(14 / 51, 2);
+    expect(job.scorecard?.coverage?.distinctExecutedCanonicalRules).toHaveLength(25);
+    expect(job.scorecard?.coverage?.coverageRatio).toBeCloseTo(25 / 51, 2);
   });
 });

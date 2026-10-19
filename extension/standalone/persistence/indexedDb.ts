@@ -244,6 +244,68 @@ export class StandaloneAuditStorage {
     });
   }
 
+  public static async clearFindingsForAudit(auditId: string): Promise<void> {
+    if (typeof indexedDB === 'undefined') {
+      this.inMemoryFindings.delete(auditId);
+      return;
+    }
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('findings', 'readwrite');
+      const store = tx.objectStore('findings');
+      const index = store.index('auditId');
+      const req = index.openKeyCursor(IDBKeyRange.only(auditId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  public static async clearExecutionLedgerForAudit(auditId: string): Promise<void> {
+    if (typeof indexedDB === 'undefined') {
+      this.inMemoryExecutionLedger.delete(auditId);
+      return;
+    }
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('execution_ledger', 'readwrite');
+      const store = tx.objectStore('execution_ledger');
+      const index = store.index('auditId');
+      const req = index.openKeyCursor(IDBKeyRange.only(auditId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          store.delete(cursor.primaryKey);
+          cursor.continue();
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  public static async replaceExecutionLedger(
+    auditId: string,
+    records: StandaloneRuleExecutionRecord[]
+  ): Promise<void> {
+    await this.clearExecutionLedgerForAudit(auditId);
+    await this.saveExecutionLedger(records);
+  }
+
+  public static async replaceFindings(
+    auditId: string,
+    findings: StandaloneSeoFinding[]
+  ): Promise<void> {
+    await this.clearFindingsForAudit(auditId);
+    await this.saveFindings(findings);
+  }
+
   public static async saveExecutionLedger(records: StandaloneRuleExecutionRecord[]): Promise<void> {
     if (!records.length) return;
     if (typeof indexedDB === 'undefined') {

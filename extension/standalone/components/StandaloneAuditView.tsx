@@ -17,6 +17,8 @@ import {
   Cpu,
   Layers,
   StopCircle,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import type {
   StandaloneAuditJob,
@@ -28,6 +30,10 @@ import { StandaloneAuditStorage } from '../persistence/indexedDb';
 import { standaloneCoordinator } from '../coordinator';
 import { StandaloneExporter } from '../export/exporter';
 import { StandaloneFindingsClassifier } from '../audit/findingsClassifier';
+import {
+  CANONICAL_51_RULES,
+  CANONICAL_IMPLEMENTED_RULES,
+} from '../audit/ruleMapping';
 
 export interface StandaloneAuditViewProps {
   activeUrl?: string;
@@ -44,6 +50,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
   const [technologies, setTechnologies] = useState<StandaloneTechFinding[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'tech' | 'issues' | 'coverage'>('overview');
   const [issuesViewFilter, setIssuesViewFilter] = useState<'issues' | 'passed' | 'all'>('issues');
+  const [expandedFindingId, setExpandedFindingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const activeJobRef = React.useRef<StandaloneAuditJob | null>(null);
@@ -786,36 +793,100 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                       const s = f.status?.toLowerCase();
                       return s === 'fail' || s === 'failed' || s === 'warning' || s === 'warn';
                     })
-                    .map((f) => (
-                      <div
-                        key={f.id}
-                        className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs space-y-1"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-slate-200">{f.title}</span>
-                          <span
-                            className={`px-1.5 py-0.5 text-[9px] font-semibold uppercase rounded ${
-                              f.severity === 'critical'
-                                ? 'bg-rose-950/80 text-rose-300 border border-rose-800'
-                                : f.severity === 'high'
-                                ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
-                                : 'bg-blue-950/80 text-blue-300 border border-blue-800'
-                            }`}
-                          >
-                            {f.severity}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-400">{f.description}</div>
-                        <div className="text-[10px] text-indigo-300/80 font-mono">
-                          Rec: {f.recommendation}
-                        </div>
-                        {f.pageUrl && (
-                          <div className="text-[10px] text-slate-500 font-mono truncate">
-                            Page: {f.pageUrl}
+                    .map((f) => {
+                      const isExpanded = expandedFindingId === f.id;
+                      return (
+                        <div
+                          key={f.id}
+                          className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs space-y-1.5 transition-all cursor-pointer hover:border-slate-700"
+                          onClick={() => setExpandedFindingId(isExpanded ? null : f.id)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-1.5 truncate mr-2">
+                              {isExpanded ? (
+                                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              )}
+                              <span className="font-medium text-slate-200 truncate">{f.title}</span>
+                            </div>
+                            <div className="flex items-center space-x-1 shrink-0">
+                              <span
+                                className={`px-1.5 py-0.5 text-[9px] font-semibold uppercase rounded ${
+                                  f.severity === 'critical'
+                                    ? 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                                    : f.severity === 'high'
+                                    ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
+                                    : 'bg-blue-950/80 text-blue-300 border border-blue-800'
+                                }`}
+                              >
+                                {f.severity}
+                              </span>
+                              <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-slate-800 text-slate-300 border border-slate-700">
+                                {f.ruleId}
+                              </span>
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    ))
+                          <div className="text-[11px] text-slate-400">{f.description}</div>
+                          {f.pageUrl && (
+                            <div className="text-[10px] text-slate-500 font-mono truncate">
+                              Page: {f.pageUrl}
+                            </div>
+                          )}
+
+                          {/* Per-Rule Detailed Drill-Down */}
+                          {isExpanded && (
+                            <div
+                              className="mt-2 pt-2 border-t border-slate-800/80 space-y-2 text-[11px] bg-slate-950/60 -mx-2 -mb-2 p-2.5 rounded-b"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                                  <span className="text-slate-500 block uppercase">Rule ID</span>
+                                  <span className="text-indigo-300 font-semibold">{f.ruleId}</span>
+                                </div>
+                                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                                  <span className="text-slate-500 block uppercase">Category</span>
+                                  <span className="text-slate-200 uppercase font-semibold">{f.category || 'ON-PAGE'}</span>
+                                </div>
+                                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                                  <span className="text-slate-500 block uppercase">Result</span>
+                                  <span className="text-rose-400 font-semibold uppercase">{f.status}</span>
+                                </div>
+                                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                                  <span className="text-slate-500 block uppercase">Severity</span>
+                                  <span className="text-amber-400 font-semibold uppercase">{f.severity}</span>
+                                </div>
+                              </div>
+
+                              <div>
+                                <span className="text-slate-500 font-semibold text-[10px] uppercase block">Affected Page URL:</span>
+                                <span className="font-mono text-slate-300 break-all text-[10px]">{f.pageUrl}</span>
+                              </div>
+
+                              <div>
+                                <span className="text-slate-500 font-semibold text-[10px] uppercase block">Supporting Evidence:</span>
+                                <div className="text-slate-300 bg-slate-900/60 p-2 rounded border border-slate-800 text-[10px] leading-relaxed">
+                                  {f.description}
+                                </div>
+                                {f.evidence && Object.keys(f.evidence).length > 0 && (
+                                  <pre className="mt-1 bg-slate-900/90 p-1.5 rounded border border-slate-800/80 text-[10px] font-mono text-slate-300 overflow-x-auto max-h-32">
+                                    {JSON.stringify(f.evidence, null, 2)}
+                                  </pre>
+                                )}
+                              </div>
+
+                              <div>
+                                <span className="text-emerald-400 font-semibold text-[10px] uppercase block">Recommended Fix:</span>
+                                <div className="text-emerald-300/90 bg-emerald-950/30 p-2 rounded border border-emerald-900/40 text-[10px] leading-relaxed">
+                                  {f.recommendation}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                 )
               )}
 
@@ -828,49 +899,164 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                 ) : (
                   findings
                     .filter((f) => f.status?.toLowerCase() === 'pass' || f.status?.toLowerCase() === 'passed')
-                    .map((f) => (
-                      <div
-                        key={f.id}
-                        className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs flex items-center justify-between"
-                      >
-                        <div className="truncate flex-1 mr-2">
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-emerald-400 font-bold">✓</span>
-                            <span className="font-medium text-slate-200">{f.title}</span>
+                    .map((f) => {
+                      const isExpanded = expandedFindingId === f.id;
+                      return (
+                        <div
+                          key={f.id}
+                          className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs space-y-1.5 transition-all cursor-pointer hover:border-slate-700"
+                          onClick={() => setExpandedFindingId(isExpanded ? null : f.id)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="truncate flex-1 mr-2">
+                              <div className="flex items-center space-x-1.5">
+                                {isExpanded ? (
+                                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                ) : (
+                                  <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                )}
+                                <span className="text-emerald-400 font-bold">✓</span>
+                                <span className="font-medium text-slate-200 truncate">{f.title}</span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-mono truncate mt-0.5 ml-5">
+                                {f.pageUrl}
+                              </div>
+                            </div>
+                            <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800 shrink-0">
+                              {f.ruleId}
+                            </span>
                           </div>
-                          <div className="text-[10px] text-slate-500 font-mono truncate mt-0.5">
-                            {f.pageUrl}
-                          </div>
+
+                          {/* Per-Rule Detailed Drill-Down for Passed Checks */}
+                          {isExpanded && (
+                            <div
+                              className="mt-2 pt-2 border-t border-slate-800/80 space-y-2 text-[11px] bg-slate-950/60 -mx-2 -mb-2 p-2.5 rounded-b"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                                  <span className="text-slate-500 block uppercase">Rule ID</span>
+                                  <span className="text-indigo-300 font-semibold">{f.ruleId}</span>
+                                </div>
+                                <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                                  <span className="text-slate-500 block uppercase">Result</span>
+                                  <span className="text-emerald-400 font-semibold uppercase">PASS</span>
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-slate-500 font-semibold text-[10px] uppercase block">Observed Evidence:</span>
+                                <div className="text-slate-300 bg-slate-900/60 p-2 rounded border border-slate-800 text-[10px] leading-relaxed">
+                                  {f.description}
+                                </div>
+                                {f.evidence && Object.keys(f.evidence).length > 0 && (
+                                  <pre className="mt-1 bg-slate-900/90 p-1.5 rounded border border-slate-800/80 text-[10px] font-mono text-slate-300 overflow-x-auto max-h-32">
+                                    {JSON.stringify(f.evidence, null, 2)}
+                                  </pre>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800">
-                          {f.ruleId}
-                        </span>
-                      </div>
-                    ))
+                      );
+                    })
                 )
               )}
 
               {/* All records view */}
               {issuesViewFilter === 'all' && (
-                findings.map((f) => (
-                  <div
-                    key={f.id}
-                    className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-slate-200">{f.title}</span>
-                      <div className="flex items-center space-x-1">
-                        <span className="px-1.5 py-0.5 text-[9px] uppercase font-mono rounded bg-slate-800 text-slate-300">
-                          {f.status}
-                        </span>
-                        <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800">
-                          {f.ruleId}
-                        </span>
+                findings.map((f) => {
+                  const isExpanded = expandedFindingId === f.id;
+                  const isFail = f.status === 'fail';
+                  const isWarn = f.status === 'warning';
+                  const isPass = f.status === 'pass';
+                  return (
+                    <div
+                      key={f.id}
+                      className="bg-slate-900/60 border border-slate-800/80 rounded p-2 text-xs space-y-1.5 transition-all cursor-pointer hover:border-slate-700"
+                      onClick={() => setExpandedFindingId(isExpanded ? null : f.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-1.5 truncate mr-2">
+                          {isExpanded ? (
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          ) : (
+                            <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          )}
+                          <span
+                            className={`font-bold shrink-0 ${
+                              isPass ? 'text-emerald-400' : isFail ? 'text-rose-400' : isWarn ? 'text-amber-400' : 'text-slate-400'
+                            }`}
+                          >
+                            {isPass ? '✓' : isFail ? '✗' : isWarn ? '!' : '•'}
+                          </span>
+                          <span className="font-medium text-slate-200 truncate">{f.title}</span>
+                        </div>
+                        <div className="flex items-center space-x-1 shrink-0">
+                          <span
+                            className={`px-1.5 py-0.5 text-[9px] uppercase font-mono rounded ${
+                              isPass
+                                ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
+                                : isFail
+                                ? 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                                : isWarn
+                                ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
+                                : 'bg-slate-800 text-slate-300'
+                            }`}
+                          >
+                            {f.status}
+                          </span>
+                          <span className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800">
+                            {f.ruleId}
+                          </span>
+                        </div>
                       </div>
+                      <div className="text-[11px] text-slate-400">{f.description}</div>
+                      {f.pageUrl && (
+                        <div className="text-[10px] text-slate-500 font-mono truncate">
+                          Page: {f.pageUrl}
+                        </div>
+                      )}
+
+                      {/* Drill down */}
+                      {isExpanded && (
+                        <div
+                          className="mt-2 pt-2 border-t border-slate-800/80 space-y-2 text-[11px] bg-slate-950/60 -mx-2 -mb-2 p-2.5 rounded-b"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                            <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                              <span className="text-slate-500 block uppercase">Rule ID</span>
+                              <span className="text-indigo-300 font-semibold">{f.ruleId}</span>
+                            </div>
+                            <div className="bg-slate-900/80 p-1.5 rounded border border-slate-800">
+                              <span className="text-slate-500 block uppercase">Status</span>
+                              <span className="font-semibold uppercase text-slate-200">{f.status}</span>
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 font-semibold text-[10px] uppercase block">Observed Evidence:</span>
+                            <div className="text-slate-300 bg-slate-900/60 p-2 rounded border border-slate-800 text-[10px] leading-relaxed">
+                              {f.description}
+                            </div>
+                            {f.evidence && Object.keys(f.evidence).length > 0 && (
+                              <pre className="mt-1 bg-slate-900/90 p-1.5 rounded border border-slate-800/80 text-[10px] font-mono text-slate-300 overflow-x-auto max-h-32">
+                                {JSON.stringify(f.evidence, null, 2)}
+                              </pre>
+                            )}
+                          </div>
+                          {f.recommendation && (
+                            <div>
+                              <span className="text-emerald-400 font-semibold text-[10px] uppercase block">Recommendation:</span>
+                              <div className="text-emerald-300/90 bg-emerald-950/30 p-2 rounded border border-emerald-900/40 text-[10px]">
+                                {f.recommendation}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-[11px] text-slate-400">{f.description}</div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}
@@ -881,53 +1067,62 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <h4 className="font-semibold text-indigo-300">
-                    Canonical SEO Rule Coverage: {scorecard?.coverage?.executedRulesTotal ?? 9} / 51 Rules Evaluated
+                    Canonical SEO Rule Coverage: {scorecard?.coverage?.executedRulesTotal ?? 0} / 51 Rules Evaluated
                   </h4>
                   <span className="px-1.5 py-0.5 text-[10px] font-mono uppercase rounded bg-amber-950/60 text-amber-300 border border-amber-800">
-                    Provisional ({Math.round(((scorecard?.coverage?.executedRulesTotal ?? 9) / 51) * 100)}%)
+                    Provisional ({Math.round(((scorecard?.coverage?.executedRulesTotal ?? 0) / 51) * 100)}%)
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 mb-2">
-                  Parity tracking against authoritative 51 backend SEO rule registry:
+                  Authoritative 51-rule backend parity tracking (Target Phase 2A: 25/51 implemented):
                 </p>
 
                 {/* Family Breakdown */}
                 <div className="space-y-2 mb-3 bg-slate-950/60 p-2.5 rounded border border-slate-800/80">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-medium text-slate-300">On-Page SEO (16 canonical rules)</span>
+                    <span className="font-medium text-slate-300">On-Page SEO (16/16 implemented)</span>
                     <span className="font-mono text-emerald-400">
-                      {scorecard?.coverage?.familyCoverage?.on_page?.executed ?? 6} / 16 executed
+                      {scorecard?.coverage?.familyCoverage?.on_page?.executed ?? 0} / 16 executed (100% Implemented)
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-medium text-slate-300">Technical SEO (22 canonical rules)</span>
-                    <span className="font-mono text-emerald-400">
-                      {scorecard?.coverage?.familyCoverage?.technical?.executed ?? 2} / 22 executed
+                    <span className="font-medium text-slate-300">Technical SEO (7/22 implemented)</span>
+                    <span className="font-mono text-amber-400">
+                      {scorecard?.coverage?.familyCoverage?.technical?.executed ?? 0} / 22 executed (31.8% Implemented)
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-medium text-slate-300">Site-Wide SEO (13 canonical rules)</span>
-                    <span className="font-mono text-emerald-400">
-                      {scorecard?.coverage?.familyCoverage?.sitewide?.executed ?? 1} / 13 executed
+                    <span className="font-medium text-slate-300">Site-Wide SEO (2/13 implemented)</span>
+                    <span className="font-mono text-blue-400">
+                      {scorecard?.coverage?.familyCoverage?.sitewide?.executed ?? 0} / 13 executed (15.4% Implemented)
                     </span>
                   </div>
                 </div>
 
-                <div className="font-mono text-[10px] space-y-1 text-slate-400">
-                  <div className="text-indigo-300 font-semibold text-[11px]">Standalone Evaluated Rules (9):</div>
-                  <div className="grid grid-cols-2 gap-1 text-emerald-400">
-                    <span>✓ ONPAGE_TITLE_TAG</span>
-                    <span>✓ ONPAGE_TITLE_LENGTH</span>
-                    <span>✓ ONPAGE_META_DESCRIPTION</span>
-                    <span>✓ ONPAGE_META_DESCRIPTION_LENGTH</span>
-                    <span>✓ ONPAGE_H1_PRESENCE</span>
-                    <span>✓ ONPAGE_IMAGE_ALT_TEXT</span>
-                    <span>✓ TECH_HTTPS_SECURITY</span>
-                    <span>✓ TECH_ROBOTS_TXT</span>
-                    <span>✓ SITE_CANONICAL_CONSISTENCY</span>
+                <div className="space-y-2 font-mono text-[10px]">
+                  <div className="text-indigo-300 font-semibold text-[11px]">
+                    Implemented Canonical Rules ({CANONICAL_IMPLEMENTED_RULES.size} Total):
                   </div>
-                  <div className="mt-2 text-slate-500">
-                    42 Canonical Rules (Hreflang, Schema.org JSON-LD, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, Sitemap Validation, etc.) scheduled for Phase 2/3 browser-native migration.
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-slate-300">
+                    {Array.from(CANONICAL_IMPLEMENTED_RULES).map((ruleId) => {
+                      const isExecuted = scorecard?.coverage?.distinctExecutedCanonicalRules?.includes(ruleId);
+                      return (
+                        <div
+                          key={ruleId}
+                          className={`flex items-center space-x-1.5 p-1 rounded border ${
+                            isExecuted
+                              ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
+                              : 'bg-slate-900/60 border-slate-800/80 text-slate-400'
+                          }`}
+                        >
+                          <span>{isExecuted ? '✓' : '○'}</span>
+                          <span className="truncate">{ruleId}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 text-slate-500 font-sans text-[11px]">
+                    26 Canonical Rules (Hreflang, Schema.org JSON-LD, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, Sitemap Validation, etc.) scheduled for Phase 2B / Phase 3 migration.
                   </div>
                 </div>
               </div>
@@ -944,7 +1139,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                 <p className="text-[11px] text-slate-400 mb-1">
                   Exported directly from backend Python catalog with full multi-vector signatures (headers, meta, scripts, styles, DOM markers, version rules):
                 </p>
-                <div className="text-[10px] text-slate-400 leading-relaxed">
+                <div className="text-[10px] text-slate-400 leading-relaxed font-sans">
                   WordPress, WooCommerce, Elementor, Shopify, Webflow, Squarespace, Wix, Framer, Ghost, Drupal, Joomla, Next.js, Nuxt.js, React, Vue, Angular, Svelte, Astro, Tailwind, Bootstrap, Google Analytics, GTM, Meta Pixel, Cloudflare, Apache, Nginx, PHP, and 146 additional technologies.
                 </div>
               </div>
