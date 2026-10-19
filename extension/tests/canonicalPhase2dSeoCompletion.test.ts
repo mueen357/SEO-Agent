@@ -668,4 +668,127 @@ describe('Phase 2D-B: SEO Completion & Final Canonical Rules', () => {
       }
     });
   });
+
+  // =========================================================================
+  // 11. EDGE CASES & SAFETY REGRESSIONS
+  // =========================================================================
+  describe('11. Edge Cases & Safety Regressions', () => {
+    it('excludes pairs where SimHash Hamming distance is 4 (exceeds <= 3 threshold)', () => {
+      const sigA = '0000000000000000';
+      const sigB = '000000000000000f'; // 4 bits flipped (0xf = 0b1111)
+      expect(simhashHammingDistance(sigA, sigB)).toBe(4);
+
+      const page1 = createMockPage('p1', 'https://example.com/item-1', {
+        normalizedMainTextHash: 'hash-item-1',
+        mainTextSimhash: sigA,
+        mainTextWordCount: 150,
+        contentQualityStatus: 'usable',
+      });
+      const page2 = createMockPage('p2', 'https://example.com/item-2', {
+        normalizedMainTextHash: 'hash-item-2',
+        mainTextSimhash: sigB,
+        mainTextWordCount: 150,
+        contentQualityStatus: 'usable',
+      });
+
+      const result = StandaloneRulesEngine.evaluateSitewideDetailed([page1, page2], 'audit-test');
+      const nearFindings = result.findings.filter((f) => f.ruleId === 'SITE_CONTENT_DUPLICATE_NEAR');
+      expect(nearFindings.length).toBe(0);
+
+      const ledger = result.ledgerRecords.find((r) => r.canonicalRuleId === 'SITE_CONTENT_DUPLICATE_NEAR');
+      expect(ledger!.executionStatus).toBe('executed_pass');
+    });
+
+    it('excludes pairs with length similarity < 0.8 even if SimHash signatures are identical', () => {
+      const sig = '1234567890abcdef';
+      const page1 = createMockPage('p1', 'https://example.com/short-article', {
+        normalizedMainTextHash: 'hash-short',
+        mainTextSimhash: sig,
+        mainTextWordCount: 70, // 70 / 100 = 0.7 < 0.8
+        contentQualityStatus: 'usable',
+      });
+      const page2 = createMockPage('p2', 'https://example.com/long-article', {
+        normalizedMainTextHash: 'hash-long',
+        mainTextSimhash: sig,
+        mainTextWordCount: 100,
+        contentQualityStatus: 'usable',
+      });
+
+      const result = StandaloneRulesEngine.evaluateSitewideDetailed([page1, page2], 'audit-test');
+      const nearFindings = result.findings.filter((f) => f.ruleId === 'SITE_CONTENT_DUPLICATE_NEAR');
+      expect(nearFindings.length).toBe(0);
+    });
+
+    it('does not classify uncrawled link destinations as broken 4xx or 5xx', () => {
+      const pageSource = createMockPage('pSource', 'https://example.com/', {
+        links: ['https://example.com/external-or-uncrawled'],
+      });
+
+      const result = StandaloneRulesEngine.evaluateSitewideDetailed([pageSource], 'audit-test');
+      const broken4xx = result.findings.filter((f) => f.ruleId === 'SITE_INTERNAL_LINK_TO_4XX');
+      const broken5xx = result.findings.filter((f) => f.ruleId === 'SITE_INTERNAL_LINK_TO_5XX');
+
+      expect(broken4xx.length).toBe(0);
+      expect(broken5xx.length).toBe(0);
+    });
+  });
+
+  // =========================================================================
+  // 12. PERFORMANCE & MEMORY SAFETY BENCHMARKING (5, 25, 50, 100 PAGES)
+  // =========================================================================
+  describe('12. Performance & Memory Safety Benchmarking', () => {
+    function generateSyntheticFixture(pageCount: number): StandaloneCrawlPage[] {
+      const pages: StandaloneCrawlPage[] = [];
+      for (let i = 0; i < pageCount; i++) {
+        const id = `bench-page-${i}`;
+        const url = `https://example.com/resource-${i}`;
+        // Interconnect with subsequent 2 pages in ring topology
+        const link1 = `https://example.com/resource-${(i + 1) % pageCount}`;
+        const link2 = `https://example.com/resource-${(i + 2) % pageCount}`;
+        // Create controlled duplicate groups every 10 pages
+        const cluster = Math.floor(i / 10);
+        const simhash = `${cluster.toString(16).padStart(4, '0')}${'a'.repeat(12)}`.slice(0, 16);
+        const contentHash = `hash-cluster-${cluster}-${i % 10}`;
+
+        pages.push(
+          createMockPage(id, url, {
+            depth: i === 0 ? 0 : (i % 3) + 1,
+            links: [link1, link2, link1], // includes duplicate link for deduplication testing
+            mainTextWordCount: 150 + (i % 30),
+            normalizedMainTextHash: contentHash,
+            mainTextSimhash: simhash,
+            contentQualityStatus: 'usable',
+          })
+        );
+      }
+      return pages;
+    }
+
+    for (const size of [5, 25, 50, 100]) {
+      it(`evaluates full sitewide engine across ${size} pages within performance budget`, () => {
+        const pages = generateSyntheticFixture(size);
+        const startTime = performance.now();
+
+        const result = StandaloneRulesEngine.evaluateSitewideDetailed(
+          pages,
+          `audit-bench-${size}`
+        );
+
+        const durationMs = performance.now() - startTime;
+
+        // Verify valid outcomes
+        expect(result.ledgerRecords.length).toBeGreaterThanOrEqual(13);
+        const executedIds = new Set(result.ledgerRecords.map((r) => r.canonicalRuleId));
+        for (const sitewideRule of CANONICAL_51_RULES.sitewide) {
+          expect(executedIds.has(sitewideRule)).toBe(true);
+        }
+
+        // Verification of real-time browser responsiveness budgets:
+        // 5 pages < 50ms, 25 pages < 100ms, 50 pages < 250ms, 100 pages < 500ms
+        const budgetMs = size <= 5 ? 50 : size <= 25 ? 100 : size <= 50 ? 250 : 500;
+        expect(durationMs).toBeLessThan(budgetMs);
+      });
+    }
+  });
 });
+

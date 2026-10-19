@@ -23,6 +23,9 @@ import {
   GitFork,
   Link2,
   CornerDownRight,
+  Copy,
+  FileX,
+  AlertOctagon,
 } from 'lucide-react';
 import type {
   StandaloneAuditJob,
@@ -1016,51 +1019,154 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                 </div>
               </div>
 
-              {/* Internal Redirect Links Card */}
+              {/* Duplicate Content Groups (Exact & Near) Card */}
               <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
-                    <CornerDownRight className="w-4 h-4 text-amber-400" />
-                    <span>Internal Links to Redirects</span>
+                    <Copy className="w-4 h-4 text-indigo-400" />
+                    <span>Duplicate Content Analysis</span>
                   </div>
                   <span className="text-[10px] text-slate-500 font-mono">
-                    {activeJob.linkGraph?.redirectLinks?.length || findings.filter(f => f.ruleId === 'SITE_INTERNAL_LINK_TO_REDIRECT' && f.status === 'warning').length} Redirecting Links
+                    {findings.filter((f) => ['SITE_CONTENT_DUPLICATE_EXACT', 'SITE_CONTENT_DUPLICATE_NEAR'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning')).length} Content Groups
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {findings
+                    .filter((f) => ['SITE_CONTENT_DUPLICATE_EXACT', 'SITE_CONTENT_DUPLICATE_NEAR'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning'))
+                    .map((f) => {
+                      const urls = Array.isArray(f.evidence?.all_urls)
+                        ? (f.evidence.all_urls as string[])
+                        : Array.isArray(f.evidence?.sample_urls)
+                        ? (f.evidence.sample_urls as string[])
+                        : [];
+                      const isExact = f.ruleId === 'SITE_CONTENT_DUPLICATE_EXACT';
+                      return (
+                        <div key={f.id} className="p-2.5 rounded bg-slate-950/60 border border-slate-800 text-[11px] space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-slate-200 truncate mr-2">{f.title}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase shrink-0 ${
+                              isExact
+                                ? 'bg-rose-950/60 text-rose-400 border border-rose-800'
+                                : 'bg-amber-950/60 text-amber-400 border border-amber-800'
+                            }`}>
+                              {isExact ? 'Exact Match' : 'Near-Duplicate'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400">{f.description}</p>
+                          {urls.length > 0 && (
+                            <div className="space-y-0.5 pt-1">
+                              <span className="text-slate-500 font-semibold text-[9px] uppercase block">
+                                Affected URLs ({urls.length}):
+                              </span>
+                              {urls.slice(0, 5).map((u, i) => (
+                                <div key={i} className="text-[10px] text-indigo-300 font-mono truncate pl-1 border-l-2 border-indigo-500/40">
+                                  {u}
+                                </div>
+                              ))}
+                              {urls.length > 5 && (
+                                <span className="text-[9px] text-slate-500 italic block pl-1">
+                                  + {urls.length - 5} more duplicate URLs
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {f.recommendation && (
+                            <div className="text-[10px] text-emerald-400/90 bg-emerald-950/20 p-1.5 rounded border border-emerald-900/30">
+                              <span className="font-semibold uppercase text-[9px] block text-emerald-500">Action:</span>
+                              {f.recommendation}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  {findings.filter((f) => ['SITE_CONTENT_DUPLICATE_EXACT', 'SITE_CONTENT_DUPLICATE_NEAR'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
+                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      ✓ Zero exact or near-duplicate content clusters detected.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Broken Internal Links (4xx & 5xx) Card */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <FileX className="w-4 h-4 text-rose-400" />
+                    <span>Broken Internal Hyperlinks</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {findings.filter((f) => ['SITE_INTERNAL_LINK_TO_4XX', 'SITE_INTERNAL_LINK_TO_5XX'].includes(f.ruleId) && f.status === 'fail').length} Broken Targets
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                  {findings
+                    .filter((f) => ['SITE_INTERNAL_LINK_TO_4XX', 'SITE_INTERNAL_LINK_TO_5XX'].includes(f.ruleId) && f.status === 'fail')
+                    .map((f) => {
+                      const is5xx = f.ruleId === 'SITE_INTERNAL_LINK_TO_5XX';
+                      const brokenUrl = String(f.evidence?.broken_url || f.pageUrl || '');
+                      const httpStatus = String(f.evidence?.http_status || (is5xx ? 500 : 404));
+                      const refUrls = Array.isArray(f.evidence?.referencing_urls) ? (f.evidence.referencing_urls as string[]) : [];
+                      return (
+                        <div key={f.id} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[10px] font-mono space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-rose-400 font-semibold truncate mr-2">
+                              Target: {brokenUrl}
+                            </span>
+                            <span className={`px-1 py-0.5 rounded text-[9px] uppercase shrink-0 ${
+                              is5xx ? 'bg-rose-950 text-rose-300 border border-rose-700' : 'bg-amber-950 text-amber-300 border border-amber-700'
+                            }`}>
+                              HTTP {httpStatus}
+                            </span>
+                          </div>
+                          {refUrls.length > 0 && (
+                            <div className="text-slate-400 text-[9px]">
+                              Referenced by {refUrls.length} page(s): {refUrls[0]}
+                            </div>
+                          )}
+                          <p className="text-[10px] text-slate-400 font-sans">{f.recommendation}</p>
+                        </div>
+                      );
+                    })}
+                  {findings.filter((f) => ['SITE_INTERNAL_LINK_TO_4XX', 'SITE_INTERNAL_LINK_TO_5XX'].includes(f.ruleId) && f.status === 'fail').length === 0 && (
+                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      ✓ Zero internal hyperlinks point to confirmed 4xx or 5xx error destinations.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Canonical Consolidation & Conflict Review Card */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <AlertOctagon className="w-4 h-4 text-amber-400" />
+                    <span>Canonical Health & Consolidation</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {findings.filter((f) => ['SITE_DUPLICATE_CANONICAL_REVIEW', 'SITE_CONTENT_CANONICAL_CONFLICT'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning')).length} Canonical Issues
                   </span>
                 </div>
 
                 <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {(activeJob.linkGraph?.redirectLinks && activeJob.linkGraph.redirectLinks.length > 0) ? (
-                    activeJob.linkGraph.redirectLinks.map((edge: StandaloneLinkEdge, i: number) => (
-                      <div key={i} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[10px] font-mono space-y-1">
+                  {findings
+                    .filter((f) => ['SITE_DUPLICATE_CANONICAL_REVIEW', 'SITE_CONTENT_CANONICAL_CONFLICT'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning'))
+                    .map((f) => (
+                      <div key={f.id} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[11px] space-y-1">
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-400 truncate mr-2">From: {edge.sourceUrl}</span>
-                          <span className="px-1 py-0.5 rounded text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800 shrink-0">
-                            3xx Redirect
+                          <span className="font-medium text-slate-200 truncate mr-2">{f.title}</span>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-amber-950/60 text-amber-400 border border-amber-800 shrink-0">
+                            {f.ruleId}
                           </span>
                         </div>
-                        <div className="flex items-center space-x-1 text-slate-300">
-                          <span className="text-rose-400 truncate">Target: {edge.destinationUrl || edge.targetUrl}</span>
-                        </div>
+                        <p className="text-[10px] text-slate-400">{f.description}</p>
+                        <p className="text-[10px] text-emerald-400">{f.recommendation}</p>
                       </div>
-                    ))
-                  ) : findings.filter(f => f.ruleId === 'SITE_INTERNAL_LINK_TO_REDIRECT' && f.status === 'warning').length > 0 ? (
-                    findings.filter(f => f.ruleId === 'SITE_INTERNAL_LINK_TO_REDIRECT' && f.status === 'warning').map((f) => (
-                      <div key={f.id} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[10px] font-mono space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400 truncate mr-2">From: {String(f.evidence?.source_page || f.pageUrl)}</span>
-                          <span className="px-1 py-0.5 rounded text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800 shrink-0">
-                            HTTP {String(f.evidence?.status_code || 301)}
-                          </span>
-                        </div>
-                        <div className="text-rose-300 truncate">Link: {String(f.evidence?.link_target || '')}</div>
-                        {f.evidence?.final_destination && (
-                          <div className="text-emerald-300 truncate">&rarr; Final: {String(f.evidence.final_destination)}</div>
-                        )}
-                      </div>
-                    ))
-                  ) : (
+                    ))}
+                  {findings.filter((f) => ['SITE_DUPLICATE_CANONICAL_REVIEW', 'SITE_CONTENT_CANONICAL_CONFLICT'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
                     <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
-                      ✓ Zero internal links point to 3xx redirecting URLs.
+                      ✓ Clean canonical signals; no competing self-canonicals or broken canonical targets.
                     </div>
                   )}
                 </div>
@@ -1078,20 +1184,39 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   </span>
                 </div>
 
-                <div className="space-y-1 max-h-48 overflow-y-auto">
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
                   {findings
                     .filter((f) => (f.category === 'sitewide' || f.ruleId.startsWith('SITE_')) && (f.status === 'fail' || f.status === 'warning'))
                     .map((f) => (
-                      <div key={f.id} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[11px] space-y-0.5">
+                      <div key={f.id} className="p-2.5 rounded bg-slate-950/60 border border-slate-800 text-[11px] space-y-1">
                         <div className="flex items-center justify-between">
-                          <span className="font-medium text-slate-200">{f.title}</span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase ${
-                            f.status === 'fail' ? 'bg-rose-950/60 text-rose-400 border border-rose-800' : 'bg-amber-950/60 text-amber-400 border border-amber-800'
-                          }`}>
-                            {f.ruleId}
-                          </span>
+                          <span className="font-medium text-slate-200 truncate mr-2">{f.title}</span>
+                          <div className="flex items-center space-x-1 shrink-0">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase ${
+                              f.severity === 'critical'
+                                ? 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                                : f.severity === 'high'
+                                ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
+                                : 'bg-blue-950/80 text-blue-300 border border-blue-800'
+                            }`}>
+                              {f.severity}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-slate-800 text-slate-300 border border-slate-700">
+                              {f.ruleId}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-[10px] text-slate-400">{f.description}</p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">{f.description}</p>
+                        {f.pageUrl && (
+                          <div className="text-[9px] text-slate-500 font-mono truncate">
+                            URL: {f.pageUrl}
+                          </div>
+                        )}
+                        {f.recommendation && (
+                          <div className="text-[10px] text-emerald-400/90 pt-0.5">
+                            &rarr; {f.recommendation}
+                          </div>
+                        )}
                       </div>
                     ))}
                   {findings.filter((f) => (f.category === 'sitewide' || f.ruleId.startsWith('SITE_')) && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
