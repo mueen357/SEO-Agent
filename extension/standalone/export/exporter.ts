@@ -38,6 +38,7 @@ export class StandaloneExporter {
             errors: normSitemap.errors,
           }
         : undefined,
+      linkGraph: job.linkGraph,
       scorecard: job.scorecard,
       scoreCoverage: job.scorecard?.coverage,
       summary: {

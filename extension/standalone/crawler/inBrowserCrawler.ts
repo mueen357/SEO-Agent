@@ -26,6 +26,8 @@ export interface ControlledRedirectResult {
   redirectLimitReached: boolean;
   loopDetected: boolean;
   failureCategory?: string;
+  fetchStatus?: string;
+  errorCode?: string;
 }
 
 export interface CrawlCallbacks {
@@ -251,6 +253,20 @@ export class InBrowserCrawler {
       return true;
     }
     return false;
+  }
+
+  private async checkHostPermission(urlStr: string): Promise<boolean> {
+    if (typeof chrome !== 'undefined' && chrome.permissions?.contains) {
+      try {
+        const originPattern = `${new URL(urlStr).origin}/*`;
+        return await new Promise<boolean>((resolve) => {
+          chrome.permissions.contains({ origins: [originPattern] }, (res) => resolve(Boolean(res)));
+        });
+      } catch {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -848,6 +864,7 @@ export class InBrowserCrawler {
       maxUrlsPerSitemap: 500,
       maxSitemapUrls: 2000,
       fetchTimeoutMs: 5000,
+      isAllowedByRobots: this.config.respectRobots ? (u: string) => this.isAllowedByRobots(u) : undefined,
     });
 
     const parsedEvidence = await parser.discoverAndParse(allowedSitemapUrls, this.origin);
@@ -980,44 +997,39 @@ export class InBrowserCrawler {
       let fetchSuccess = false;
 
       // Pre-flight host permission verification if chrome.permissions API is available
-      if (typeof chrome !== 'undefined' && chrome.permissions?.contains) {
-        const originPattern = `${new URL(item.url).origin}/*`;
-        const hasPerm = await new Promise<boolean>((resolve) => {
-          chrome.permissions.contains({ origins: [originPattern] }, (res) => resolve(Boolean(res)));
-        });
-        if (!hasPerm) {
-          pageRecord = {
-            id: `page-${crawledCount + 1}-${Date.now()}`,
-            auditId: '',
-            url: item.url,
-            requestedUrl: item.url,
-            finalUrl: item.url,
-            redirectChain: [],
-            redirectCount: 0,
-            redirectLoopDetected: false,
-            canonicalHrefs: [],
-            canonicalCount: 0,
-            depth: item.depth,
-            httpStatus: 0,
-            fetchStatus: 'failed',
-            errorCode: 'FETCH_PERMISSION_DENIED',
-            errorMessage: `Host permission denied for origin: ${new URL(item.url).origin}`,
-            title: 'Permission Denied',
-            headings: { h1: [], h2: [], h3: [] },
-            links: [],
-            images: [],
-            headers: {},
-            htmlSize: 0,
-            responseTimeMs: 0,
-            fetchedAt: Date.now(),
-            isInSitemap,
-            contentTypeCategory: 'NETWORK_FAILURE',
-          };
-          await callbacks.onPageCrawled(pageRecord);
-          this.crawledUrls.push(item.url);
-          crawledCount++;
-          continue;
-        }
+      const hasHostPerm = await this.checkHostPermission(item.url);
+      if (!hasHostPerm) {
+        pageRecord = {
+          id: `page-${crawledCount + 1}-${Date.now()}`,
+          auditId: '',
+          url: item.url,
+          requestedUrl: item.url,
+          finalUrl: item.url,
+          redirectChain: [],
+          redirectCount: 0,
+          redirectLoopDetected: false,
+          canonicalHrefs: [],
+          canonicalCount: 0,
+          depth: item.depth,
+          httpStatus: 0,
+          fetchStatus: 'failed',
+          errorCode: 'FETCH_PERMISSION_DENIED',
+          errorMessage: `Host permission denied for origin: ${new URL(item.url).origin}`,
+          title: 'Permission Denied',
+          headings: { h1: [], h2: [], h3: [] },
+          links: [],
+          images: [],
+          headers: {},
+          htmlSize: 0,
+          responseTimeMs: 0,
+          fetchedAt: Date.now(),
+          isInSitemap,
+          contentTypeCategory: 'NETWORK_FAILURE',
+        };
+        await callbacks.onPageCrawled(pageRecord);
+        this.crawledUrls.push(item.url);
+        crawledCount++;
+        continue;
       }
 
       while (attempt <= maxRetries && !fetchSuccess && !callbacks.isCancelled()) {
@@ -1040,6 +1052,7 @@ export class InBrowserCrawler {
           // Check redirect destination safety
           if (redirectResult.disallowedRedirect) {
             const isLoop = redirectResult.loopDetected;
+            const isRobots = redirectResult.failureCategory === 'robots_disallowed';
             pageRecord = {
               id: `page-${crawledCount + 1}-${Date.now()}`,
               auditId: '',
@@ -1053,9 +1066,9 @@ export class InBrowserCrawler {
               canonicalCount: 0,
               depth: item.depth,
               httpStatus: response.status || (isLoop ? 310 : 301),
-              fetchStatus: isLoop ? 'redirect_loop' : 'skipped',
-              errorCode: isLoop ? 'FETCH_REDIRECT_LOOP' : 'FETCH_REDIRECT_BLOCKED',
-              errorMessage: isLoop ? 'Redirect loop detected' : `Redirect blocked: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
+              fetchStatus: isLoop ? 'redirect_loop' : isRobots ? 'robots_blocked' : 'skipped',
+              errorCode: isLoop ? 'FETCH_REDIRECT_LOOP' : isRobots ? 'FETCH_ROBOTS_BLOCKED' : 'FETCH_REDIRECT_BLOCKED',
+              errorMessage: isLoop ? 'Redirect loop detected' : isRobots ? `Redirect destination blocked by robots.txt: ${redirectResult.disallowedDestination}` : `Redirect blocked: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
               headings: { h1: [], h2: [], h3: [] },
               links: [],
               images: [],
@@ -1064,8 +1077,8 @@ export class InBrowserCrawler {
               responseTimeMs: elapsed,
               fetchedAt: Date.now(),
               isInSitemap,
-              contentTypeCategory: 'HTTP_ERROR',
-              title: isLoop ? 'Circular Redirect Loop' : `Disallowed redirect destination: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
+              contentTypeCategory: isRobots ? 'NETWORK_FAILURE' : 'HTTP_ERROR',
+              title: isLoop ? 'Circular Redirect Loop' : isRobots ? 'Redirect Destination Blocked by Robots.txt' : `Disallowed redirect destination: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
             };
             await callbacks.onPageCrawled(pageRecord);
             this.crawledUrls.push(item.url);
@@ -1355,7 +1368,7 @@ export class InBrowserCrawler {
    */
   public async fetchWithControlledRedirect(
     initialUrl: string,
-    signal: AbortSignal
+    signal?: AbortSignal
   ): Promise<ControlledRedirectResult> {
     let currentUrl = initialUrl;
     let redirectCount = 0;
@@ -1365,14 +1378,17 @@ export class InBrowserCrawler {
     visitedUrls.add(this.normalizeUrl(initialUrl));
 
     while (redirectCount <= maxRedirects) {
-      const response = await fetch(currentUrl, {
+      const fetchOptions: RequestInit = {
         method: 'GET',
         headers: {
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
         redirect: 'manual',
-        signal,
-      });
+      };
+      if (signal) {
+        fetchOptions.signal = signal;
+      }
+      const response = await fetch(currentUrl, fetchOptions);
 
       // Handle 3xx manual redirects
       if (response.status >= 300 && response.status < 400) {
@@ -1384,6 +1400,7 @@ export class InBrowserCrawler {
             fromUrl: currentUrl,
             httpStatus: response.status,
             isBlocked: true,
+            safetyBlocked: true,
             blockReason: 'missing_location',
           });
           return {
@@ -1396,6 +1413,8 @@ export class InBrowserCrawler {
             redirectLimitReached: false,
             loopDetected: false,
             failureCategory: 'missing_location',
+            fetchStatus: 'failed',
+            errorCode: 'FETCH_REDIRECT_BLOCKED',
           };
         }
 
@@ -1412,6 +1431,7 @@ export class InBrowserCrawler {
             location: location,
             locationHeader: location,
             isBlocked: true,
+            safetyBlocked: true,
             blockReason: 'invalid_url',
           });
           return {
@@ -1424,6 +1444,8 @@ export class InBrowserCrawler {
             redirectLimitReached: false,
             loopDetected: false,
             failureCategory: 'invalid_url',
+            fetchStatus: 'failed',
+            errorCode: 'FETCH_REDIRECT_BLOCKED',
           };
         }
 
@@ -1440,6 +1462,7 @@ export class InBrowserCrawler {
             location: location,
             locationHeader: location,
             isBlocked: true,
+            safetyBlocked: true,
             blockReason: 'redirect_loop',
           });
           return {
@@ -1452,6 +1475,8 @@ export class InBrowserCrawler {
             redirectLimitReached: false,
             loopDetected: true,
             failureCategory: 'redirect_loop',
+            fetchStatus: 'redirect_loop',
+            errorCode: 'FETCH_REDIRECT_LOOP',
           };
         }
 
@@ -1466,6 +1491,7 @@ export class InBrowserCrawler {
             location: location,
             locationHeader: location,
             isBlocked: true,
+            safetyBlocked: true,
             blockReason: 'disallowed_scope_or_origin',
           });
           return {
@@ -1478,6 +1504,67 @@ export class InBrowserCrawler {
             redirectLimitReached: false,
             loopDetected: false,
             failureCategory: 'disallowed_destination',
+            fetchStatus: 'redirect_blocked',
+            errorCode: 'FETCH_REDIRECT_BLOCKED',
+          };
+        }
+
+        // Host permission verification before requesting next redirect hop
+        const hasHostPerm = await this.checkHostPermission(normTarget);
+        if (!hasHostPerm) {
+          redirectChain.push({
+            url: currentUrl,
+            status: response.status,
+            fromUrl: currentUrl,
+            toUrl: normTarget,
+            httpStatus: response.status,
+            location: location,
+            locationHeader: location,
+            isBlocked: true,
+            safetyBlocked: true,
+            blockReason: 'permission_denied',
+          });
+          return {
+            response,
+            finalUrl: currentUrl,
+            redirectCount: redirectCount + 1,
+            redirectChain,
+            disallowedRedirect: true,
+            disallowedDestination: normTarget,
+            redirectLimitReached: false,
+            loopDetected: false,
+            failureCategory: 'permission_denied',
+            fetchStatus: 'permission_denied',
+            errorCode: 'FETCH_PERMISSION_DENIED',
+          };
+        }
+
+        // Re-check effective robots policy BEFORE requesting next redirect hop!
+        if (this.config.respectRobots && !this.isAllowedByRobots(normTarget)) {
+          redirectChain.push({
+            url: currentUrl,
+            status: response.status,
+            fromUrl: currentUrl,
+            toUrl: normTarget,
+            httpStatus: response.status,
+            location: location,
+            locationHeader: location,
+            isBlocked: true,
+            safetyBlocked: true,
+            blockReason: 'robots_disallowed',
+          });
+          return {
+            response,
+            finalUrl: currentUrl,
+            redirectCount: redirectCount + 1,
+            redirectChain,
+            disallowedRedirect: true,
+            disallowedDestination: normTarget,
+            redirectLimitReached: false,
+            loopDetected: false,
+            failureCategory: 'robots_disallowed',
+            fetchStatus: 'robots_blocked',
+            errorCode: 'FETCH_ROBOTS_BLOCKED',
           };
         }
 
@@ -1492,6 +1579,7 @@ export class InBrowserCrawler {
             location: location,
             locationHeader: location,
             isBlocked: true,
+            safetyBlocked: true,
             blockReason: 'too_many_redirects',
           });
           return {
@@ -1504,6 +1592,8 @@ export class InBrowserCrawler {
             redirectLimitReached: true,
             loopDetected: false,
             failureCategory: 'too_many_redirects',
+            fetchStatus: 'redirect_limit',
+            errorCode: 'FETCH_REDIRECT_LIMIT',
           };
         }
 
@@ -1537,6 +1627,23 @@ export class InBrowserCrawler {
             redirectLimitReached: false,
             loopDetected: false,
             failureCategory: 'disallowed_destination',
+            fetchStatus: 'redirect_blocked',
+            errorCode: 'FETCH_REDIRECT_BLOCKED',
+          };
+        }
+        if (this.config.respectRobots && !this.isAllowedByRobots(normFinal)) {
+          return {
+            response,
+            finalUrl: currentUrl,
+            redirectCount: redirectCount + 1,
+            redirectChain,
+            disallowedRedirect: true,
+            disallowedDestination: normFinal,
+            redirectLimitReached: false,
+            loopDetected: false,
+            failureCategory: 'robots_disallowed',
+            fetchStatus: 'robots_blocked',
+            errorCode: 'FETCH_ROBOTS_BLOCKED',
           };
         }
         currentUrl = normFinal;

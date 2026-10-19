@@ -12,9 +12,12 @@ import type {
   StandaloneContentCategory,
   StandaloneRobotsEvidence,
   StandaloneSitemapEvidence,
+  ObservedUrlStatus,
+  StandaloneLinkGraphSummary,
 } from '../types';
 import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { classifyResponse } from '../crawler/inBrowserCrawler';
+import { StandaloneInternalLinkGraph, normalizeGraphUrl } from './internalLinkGraph';
 
 export function normalizeCanonicalUrl(rawUrl: string, baseOrigin?: string): string {
   try {
@@ -29,10 +32,165 @@ export function normalizeCanonicalUrl(rawUrl: string, baseOrigin?: string): stri
   }
 }
 
+export function buildObservedUrlStatusMap(pages: StandaloneCrawlPage[]): Map<string, ObservedUrlStatus> {
+  const map = new Map<string, ObservedUrlStatus>();
+  for (const page of pages) {
+    // 1. Final destination response record
+    const isDirectRedirect = Boolean(page.httpStatus && page.httpStatus >= 300 && page.httpStatus < 400);
+    const finalNorm = normalizeCanonicalUrl(page.finalUrl || page.url);
+    if (!map.has(finalNorm)) {
+      map.set(finalNorm, {
+        url: page.finalUrl || page.url,
+        normalizedUrl: finalNorm,
+        isObserved: true,
+        isRedirect: isDirectRedirect,
+        redirectStatus: isDirectRedirect ? page.httpStatus : undefined,
+        httpStatus: page.httpStatus,
+        fetchStatus: page.fetchStatus,
+        page,
+        evidenceSource: isDirectRedirect ? 'direct_redirect' : 'final_destination',
+      });
+    }
+
+    const urlNorm = normalizeCanonicalUrl(page.url);
+    if (!map.has(urlNorm)) {
+      map.set(urlNorm, {
+        url: page.url,
+        normalizedUrl: urlNorm,
+        isObserved: true,
+        isRedirect: isDirectRedirect,
+        redirectStatus: isDirectRedirect ? page.httpStatus : undefined,
+        httpStatus: page.httpStatus,
+        fetchStatus: page.fetchStatus,
+        page,
+        evidenceSource: isDirectRedirect ? 'direct_redirect' : 'direct_page',
+      });
+    }
+
+    // 2. Redirect chain hops if any
+    if (page.redirectChain && page.redirectChain.length > 0) {
+      // The initial requested URL that initiated the redirect
+      const reqUrl = page.requestedUrl || page.url;
+      const reqNorm = normalizeCanonicalUrl(reqUrl);
+      const firstHop = page.redirectChain[0];
+      const firstStatus = firstHop?.httpStatus || firstHop?.status || 301;
+      map.set(reqNorm, {
+        url: reqUrl,
+        normalizedUrl: reqNorm,
+        isObserved: true,
+        isRedirect: true,
+        redirectStatus: firstStatus,
+        finalDestinationUrl: page.finalUrl || page.url,
+        finalHttpStatus: page.httpStatus,
+        httpStatus: firstStatus,
+        fetchStatus: 'success',
+        page,
+        evidenceSource: 'requested_url_redirect',
+      });
+
+      // Intermediate hops
+      for (let i = 1; i < page.redirectChain.length; i++) {
+        const hop = page.redirectChain[i];
+        if (!hop) continue;
+        const hopUrl = hop.fromUrl || hop.url;
+        if (hopUrl) {
+          const hopNorm = normalizeCanonicalUrl(hopUrl);
+          if (!map.has(hopNorm)) {
+            map.set(hopNorm, {
+              url: hopUrl,
+              normalizedUrl: hopNorm,
+              isObserved: true,
+              isRedirect: true,
+              redirectStatus: hop.httpStatus || hop.status || 301,
+              finalDestinationUrl: page.finalUrl || page.url,
+              finalHttpStatus: page.httpStatus,
+              httpStatus: hop.httpStatus || hop.status || 301,
+              isBlocked: hop.isBlocked,
+              blockReason: hop.blockReason,
+              page,
+              evidenceSource: 'intermediate_hop',
+            });
+          }
+        }
+      }
+    } else if (page.requestedUrl && normalizeCanonicalUrl(page.requestedUrl) !== finalNorm) {
+      const reqNorm = normalizeCanonicalUrl(page.requestedUrl);
+      if (!map.has(reqNorm)) {
+        map.set(reqNorm, {
+          url: page.requestedUrl,
+          normalizedUrl: reqNorm,
+          isObserved: true,
+          isRedirect: page.httpStatus >= 300 && page.httpStatus < 400,
+          redirectStatus: page.httpStatus >= 300 && page.httpStatus < 400 ? page.httpStatus : undefined,
+          httpStatus: page.httpStatus,
+          fetchStatus: page.fetchStatus,
+          page,
+          evidenceSource: 'direct_page',
+        });
+      }
+    }
+  }
+  return map;
+}
+
+export function resolveObservedUrlStatus(
+  urlStr: string,
+  auditContext?: StandaloneAuditContext
+): ObservedUrlStatus {
+  const norm = normalizeCanonicalUrl(urlStr);
+  if (auditContext?.observedUrlMap?.has(norm)) {
+    return auditContext.observedUrlMap.get(norm)!;
+  }
+  if (auditContext?.allPages) {
+    for (const p of auditContext.allPages) {
+      if (p.redirectChain && p.redirectChain.length > 0) {
+        if (p.requestedUrl && normalizeCanonicalUrl(p.requestedUrl) === norm) {
+          const firstHop = p.redirectChain[0];
+          const rStatus = firstHop?.httpStatus || firstHop?.status || 301;
+          return {
+            url: p.requestedUrl,
+            normalizedUrl: norm,
+            isObserved: true,
+            isRedirect: true,
+            redirectStatus: rStatus,
+            finalDestinationUrl: p.finalUrl || p.url,
+            finalHttpStatus: p.httpStatus,
+            httpStatus: rStatus,
+            fetchStatus: 'success',
+            page: p,
+            evidenceSource: 'requested_url_redirect',
+          };
+        }
+      }
+      if (normalizeCanonicalUrl(p.url) === norm || (p.finalUrl && normalizeCanonicalUrl(p.finalUrl) === norm)) {
+        return {
+          url: p.finalUrl || p.url,
+          normalizedUrl: norm,
+          isObserved: true,
+          isRedirect: p.httpStatus >= 300 && p.httpStatus < 400,
+          redirectStatus: p.httpStatus >= 300 && p.httpStatus < 400 ? p.httpStatus : undefined,
+          httpStatus: p.httpStatus,
+          fetchStatus: p.fetchStatus,
+          page: p,
+          evidenceSource: 'direct_page',
+        };
+      }
+    }
+  }
+  return {
+    url: urlStr,
+    normalizedUrl: norm,
+    isObserved: false,
+    isRedirect: false,
+    evidenceSource: 'uncrawled',
+  };
+}
+
 export interface PageEvaluationResult {
   findings: StandaloneSeoFinding[];
   ledgerRecords: StandaloneRuleExecutionRecord[];
   ledger?: StandaloneExecutionLedger;
+  linkGraph?: StandaloneLinkGraphSummary;
 }
 
 export interface StandaloneAuditContext {
@@ -40,6 +198,8 @@ export interface StandaloneAuditContext {
   sitemapEvidence?: StandaloneSitemapEvidence;
   allPages?: StandaloneCrawlPage[];
   pageByUrl?: Map<string, StandaloneCrawlPage>;
+  observedUrlMap?: Map<string, ObservedUrlStatus>;
+  linkGraph?: StandaloneInternalLinkGraph;
 }
 
 export class StandaloneRulesEngine {
@@ -817,8 +977,10 @@ export class StandaloneRulesEngine {
           );
         }
       } else {
-        const targetPage = lookupPage(resolvedCan) || lookupPage(canonicalRaw);
-        if (!targetPage) {
+        const targetObserved = resolveObservedUrlStatus(resolvedCan, auditContext) ||
+                               resolveObservedUrlStatus(canonicalRaw, auditContext);
+
+        if (!targetObserved.isObserved) {
           recordLedger(
             'TECH_CANONICAL_TARGET_STATUS',
             'unknown',
@@ -826,67 +988,104 @@ export class StandaloneRulesEngine {
             false,
             `Declared canonical target '${canonicalRaw}' was not visited during this crawl; its HTTP status cannot be determined from available evidence.`
           );
+        } else if (targetObserved.isBlocked) {
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'executed_fail',
+            'fail',
+            true,
+            `Canonical points to blocked destination: ${targetObserved.blockReason || 'blocked'}`
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-canonical-target-blocked`,
+            auditId,
+            ruleId: 'TECH_CANONICAL_TARGET_STATUS',
+            category: 'technical',
+            severity: 'high',
+            status: 'fail',
+            title: `Canonical points to blocked destination (${targetObserved.blockReason || 'blocked'})`,
+            description: `The rel='canonical' tag points to destination '${canonicalRaw}' which was blocked during crawl (${targetObserved.blockReason || 'disallowed'}).`,
+            recommendation: 'Update canonical tag to point to an accessible, crawlable 200 OK page.',
+            pageUrl: page.url,
+            evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, blockReason: targetObserved.blockReason },
+          });
+        } else if (
+          targetObserved.isRedirect ||
+          (targetObserved.redirectStatus && targetObserved.redirectStatus >= 300 && targetObserved.redirectStatus < 400) ||
+          (targetObserved.httpStatus && targetObserved.httpStatus >= 300 && targetObserved.httpStatus < 400)
+        ) {
+          const rStatus = targetObserved.redirectStatus || targetObserved.httpStatus || 301;
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'executed_warning',
+            'warning',
+            true,
+            `Canonical points to redirecting page (HTTP ${rStatus})`
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-canonical-target-redirect`,
+            auditId,
+            ruleId: 'TECH_CANONICAL_TARGET_STATUS',
+            category: 'technical',
+            severity: 'medium',
+            status: 'warning',
+            title: `Canonical points to redirecting page (HTTP ${rStatus})`,
+            description: `The rel='canonical' tag points to a redirecting page '${canonicalRaw}' (HTTP ${rStatus}${targetObserved.finalDestinationUrl ? ` -> ${targetObserved.finalDestinationUrl}` : ''}). Canonical tags should point directly to the final destination.`,
+            recommendation: `Update the canonical URL to point directly to '${targetObserved.finalDestinationUrl || 'the destination of the redirect'}'.`,
+            pageUrl: page.url,
+            evidence: {
+              pageUrl: page.url,
+              canonicalUrl: canonicalRaw,
+              targetHttpStatus: rStatus,
+              finalDestinationUrl: targetObserved.finalDestinationUrl,
+            },
+          });
+        } else if (targetObserved.httpStatus && targetObserved.httpStatus >= 400) {
+          const tStatus = targetObserved.httpStatus;
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'executed_fail',
+            'fail',
+            true,
+            `Canonical points to broken page (HTTP ${tStatus})`
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-canonical-target-broken`,
+            auditId,
+            ruleId: 'TECH_CANONICAL_TARGET_STATUS',
+            category: 'technical',
+            severity: 'high',
+            status: 'fail',
+            title: `Canonical points to broken page (HTTP ${tStatus})`,
+            description: `The rel='canonical' tag points to an error page '${canonicalRaw}' returning HTTP ${tStatus}. Search engines cannot consolidate signals to a 4xx/5xx target.`,
+            recommendation: 'Update canonical tag to point to a valid, live page returning HTTP 200.',
+            pageUrl: page.url,
+            evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetHttpStatus: tStatus },
+          });
+        } else if (targetObserved.httpStatus === 200 && targetObserved.fetchStatus === 'success') {
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'executed_pass',
+            'pass',
+            true,
+            'Canonical target responds with HTTP 200 OK'
+          );
+        } else if (targetObserved.fetchStatus === 'failed' || targetObserved.fetchStatus === 'timeout') {
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'unknown',
+            'unknown',
+            false,
+            `Canonical target fetch ${targetObserved.fetchStatus || 'failed'}; HTTP status could not be verified`
+          );
         } else {
-          const tStatus = targetPage.httpStatus;
-          if (tStatus >= 400) {
-            recordLedger(
-              'TECH_CANONICAL_TARGET_STATUS',
-              'executed_fail',
-              'fail',
-              true,
-              `Canonical points to broken page (HTTP ${tStatus})`
-            );
-            findings.push({
-              id: `${auditId}-${page.id}-canonical-target-broken`,
-              auditId,
-              ruleId: 'TECH_CANONICAL_TARGET_STATUS',
-              category: 'technical',
-              severity: 'high',
-              status: 'fail',
-              title: `Canonical points to broken page (HTTP ${tStatus})`,
-              description: `The rel='canonical' tag points to an error page '${canonicalRaw}' returning HTTP ${tStatus}. Search engines cannot consolidate signals to a 4xx/5xx target.`,
-              recommendation: 'Update canonical tag to point to a valid, live page returning HTTP 200.',
-              pageUrl: page.url,
-              evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetHttpStatus: tStatus },
-            });
-          } else if (tStatus >= 300 && tStatus < 400) {
-            recordLedger(
-              'TECH_CANONICAL_TARGET_STATUS',
-              'executed_warning',
-              'warning',
-              true,
-              `Canonical points to redirecting page (HTTP ${tStatus})`
-            );
-            findings.push({
-              id: `${auditId}-${page.id}-canonical-target-redirect`,
-              auditId,
-              ruleId: 'TECH_CANONICAL_TARGET_STATUS',
-              category: 'technical',
-              severity: 'medium',
-              status: 'warning',
-              title: `Canonical points to redirecting page (HTTP ${tStatus})`,
-              description: `The rel='canonical' tag points to a redirecting page '${canonicalRaw}'. Canonical tags should point directly to the final destination.`,
-              recommendation: 'Update the canonical URL to point directly to the destination of the redirect.',
-              pageUrl: page.url,
-              evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetHttpStatus: tStatus },
-            });
-          } else if (tStatus === 200) {
-            recordLedger(
-              'TECH_CANONICAL_TARGET_STATUS',
-              'executed_pass',
-              'pass',
-              true,
-              'Canonical target responds with HTTP 200 OK'
-            );
-          } else {
-            recordLedger(
-              'TECH_CANONICAL_TARGET_STATUS',
-              'unknown',
-              'unknown',
-              false,
-              `Canonical target status unverified (HTTP ${tStatus})`
-            );
-          }
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'unknown',
+            'unknown',
+            false,
+            `Canonical target status unverified (HTTP ${targetObserved.httpStatus ?? 'unknown'})`
+          );
         }
       }
     }
@@ -911,38 +1110,48 @@ export class StandaloneRulesEngine {
       const normCan = normalizeCanonicalUrl(resolvedCan);
 
       if (normPage === normCan) {
-        // Self-referencing: check current page robots directives
-        const metaRobots = (page.metaRobots || page.evidence?.metaRobots || '').toLowerCase();
-        const xRobots = (page.headers?.['x-robots-tag'] || '').toLowerCase();
-        const isNoindex =
-          metaRobots.includes('noindex') ||
-          metaRobots.includes('none') ||
-          xRobots.includes('noindex') ||
-          xRobots.includes('none');
-
-        if (isNoindex) {
+        // Self-referencing: verify current page robots evidence
+        if (page.fetchStatus !== 'success' || page.httpStatus >= 400 || category !== 'HTML_DOCUMENT') {
           recordLedger(
             'TECH_CANONICAL_CONFLICT',
-            'executed_fail',
-            'fail',
-            true,
-            'Canonical points to noindexed target'
+            'unknown',
+            'unknown',
+            false,
+            `Page fetch ${page.fetchStatus || 'failed'}; robots indexing directives unavailable`
           );
-          findings.push({
-            id: `${auditId}-${page.id}-canonical-conflict-self-noindex`,
-            auditId,
-            ruleId: 'TECH_CANONICAL_CONFLICT',
-            category: 'technical',
-            severity: 'high',
-            status: 'fail',
-            title: 'Canonical points to noindexed target',
-            description: `Declared canonical target points to this page which specifies 'noindex'. Search engines cannot consolidate signals to a page excluded from search results.`,
-            recommendation: "Remove 'noindex' or update canonical URL to point to an indexable page.",
-            pageUrl: page.url,
-            evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetRobots: page.metaRobots },
-          });
         } else {
-          recordLedger('TECH_CANONICAL_CONFLICT', 'executed_pass', 'pass', true);
+          const metaRobots = (page.metaRobots || page.evidence?.metaRobots || '').toLowerCase();
+          const xRobots = (page.headers?.['x-robots-tag'] || '').toLowerCase();
+          const isNoindex =
+            metaRobots.includes('noindex') ||
+            metaRobots.includes('none') ||
+            xRobots.includes('noindex') ||
+            xRobots.includes('none');
+
+          if (isNoindex) {
+            recordLedger(
+              'TECH_CANONICAL_CONFLICT',
+              'executed_fail',
+              'fail',
+              true,
+              'Canonical points to noindexed target'
+            );
+            findings.push({
+              id: `${auditId}-${page.id}-canonical-conflict-self-noindex`,
+              auditId,
+              ruleId: 'TECH_CANONICAL_CONFLICT',
+              category: 'technical',
+              severity: 'high',
+              status: 'fail',
+              title: 'Canonical points to noindexed target',
+              description: `Declared canonical target points to this page which specifies 'noindex'. Search engines cannot consolidate signals to a page excluded from search results.`,
+              recommendation: "Remove 'noindex' or update canonical URL to point to an indexable page.",
+              pageUrl: page.url,
+              evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetRobots: page.metaRobots },
+            });
+          } else {
+            recordLedger('TECH_CANONICAL_CONFLICT', 'executed_pass', 'pass', true);
+          }
         }
       } else {
         const targetPage = lookupPage(resolvedCan) || lookupPage(canonicalRaw);
@@ -954,6 +1163,19 @@ export class StandaloneRulesEngine {
             'unknown',
             false,
             'Canonical target was not crawled; target robots indexability directives cannot be verified'
+          );
+        } else if (
+          targetPage.fetchStatus !== 'success' ||
+          targetPage.httpStatus >= 400 ||
+          targetPage.contentTypeCategory === 'NETWORK_FAILURE' ||
+          targetPage.contentTypeCategory === 'PARSE_FAILURE'
+        ) {
+          recordLedger(
+            'TECH_CANONICAL_CONFLICT',
+            'unknown',
+            'unknown',
+            false,
+            `Canonical target fetch ${targetPage.fetchStatus || 'failed'} (HTTP ${targetPage.httpStatus}); indexing directives cannot be verified`
           );
         } else {
           const tRobots = (targetPage.metaRobots || targetPage.evidence?.metaRobots || '').toLowerCase();
@@ -993,13 +1215,29 @@ export class StandaloneRulesEngine {
     }
 
     // 17. TECH_CANONICAL_MULTIPLE
-    if (category !== 'HTML_DOCUMENT' && page.fetchStatus !== 'success') {
+    if (category === 'NON_HTML_RESOURCE') {
       recordLedger(
         'TECH_CANONICAL_MULTIPLE',
         'not_applicable',
         'na',
         false,
-        'Non-HTML or failed page does not contain HTML canonical tags'
+        'Non-HTML resource does not evaluate HTML canonical link tags'
+      );
+    } else if (page.fetchStatus !== 'success' || page.httpStatus >= 400 || page.httpStatus === 0) {
+      recordLedger(
+        'TECH_CANONICAL_MULTIPLE',
+        'unknown',
+        'unknown',
+        false,
+        `Page fetch ${page.fetchStatus || 'failed'} (HTTP ${page.httpStatus}); canonical declarations could not be parsed`
+      );
+    } else if (!page.evidence && page.canonicalCount === undefined && (!page.canonicalHrefs || page.canonicalHrefs.length === 0)) {
+      recordLedger(
+        'TECH_CANONICAL_MULTIPLE',
+        'unknown',
+        'unknown',
+        false,
+        'Absent parsed HTML evidence; canonical declarations could not be verified'
       );
     } else {
       const canonicalHrefs =
@@ -1712,8 +1950,24 @@ export class StandaloneRulesEngine {
       });
     };
 
-    // 1. Duplicate Title Tags (SITE_TITLE_DUPLICATE) & 2. Orphan Pages (SITE_NO_OBSERVED_INTERNAL_INLINKS)
-    // Only evaluate duplicate title and orphan page rules if at least 2 usable HTML pages exist
+    // Initialize Link Graph and Observed Status Resolver
+    const sitemapEvidence = normalizeSitemapEvidence(auditContext?.sitemapEvidence);
+    const sitemapUrlList = sitemapEvidence?.urls || [];
+    const seedNorm = normalizeGraphUrl(seedUrl);
+    const observedUrlMap = auditContext?.observedUrlMap || buildObservedUrlStatusMap(pages);
+    const linkGraph = auditContext?.linkGraph || new StandaloneInternalLinkGraph(pages, sitemapUrlList, seedUrl, observedUrlMap);
+
+    // Normalization helper for duplicate metadata detection
+    const normMetaStr = (val: string): string => {
+      if (!val || typeof val !== 'string') return '';
+      return val
+        .normalize('NFKC')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
+    // Filter usable HTML pages for metadata analysis
     const usablePages = pages.filter(
       (p) =>
         p.fetchStatus === 'success' &&
@@ -1723,6 +1977,7 @@ export class StandaloneRulesEngine {
           (!p.contentTypeCategory && (p.headers?.['content-type']?.includes('text/html') ?? true)))
     );
 
+    // 1. SITE_TITLE_DUPLICATE
     if (usablePages.length <= 1) {
       recordLedger(
         'SITE_TITLE_DUPLICATE',
@@ -1731,99 +1986,443 @@ export class StandaloneRulesEngine {
         false,
         'Requires at least 2 usable pages for sitewide duplicate title analysis'
       );
-      recordLedger(
-        'SITE_NO_OBSERVED_INTERNAL_INLINKS',
-        'not_applicable',
-        'na',
-        false,
-        'Requires at least 2 usable pages for orphan page analysis'
-      );
     } else {
-      // Duplicate Title Tags
-      const titleMap = new Map<string, string[]>();
+      const titleMap = new Map<string, { rawTitle: string; pages: StandaloneCrawlPage[] }>();
+      const seenTitlesForPage = new Set<string>();
+
       for (const p of usablePages) {
-        if (p.title) {
-          const norm = p.title.trim().toLowerCase();
-          const list = titleMap.get(norm) || [];
-          list.push(p.url);
-          titleMap.set(norm, list);
+        if (!p.title) continue;
+        const norm = normMetaStr(p.title);
+        if (norm.length >= 5) {
+          const pageKey = `${p.id || p.url}::${norm}`;
+          if (seenTitlesForPage.has(pageKey)) continue;
+          seenTitlesForPage.add(pageKey);
+
+          const entry = titleMap.get(norm) || { rawTitle: p.title, pages: [] };
+          entry.pages.push(p);
+          titleMap.set(norm, entry);
         }
       }
 
-      let duplicateTitlesFound = false;
-      for (const [title, urls] of titleMap.entries()) {
-        if (urls.length > 1) {
-          duplicateTitlesFound = true;
+      const dupTitleEntries = Array.from(titleMap.entries()).filter(([_, entry]) => entry.pages.length > 1);
+
+      if (dupTitleEntries.length === 0) {
+        recordLedger(
+          'SITE_TITLE_DUPLICATE',
+          'executed_pass',
+          'pass',
+          true,
+          'All crawled pages with titles have distinct title tags'
+        );
+      } else {
+        for (const [normTitle, entry] of dupTitleEntries) {
+          const distinctUrls = Array.from(new Set(entry.pages.map((p) => p.finalUrl || p.requestedUrl || p.url)));
+          const pageIds = entry.pages.map((p) => p.id);
+          recordLedger(
+            'SITE_TITLE_DUPLICATE',
+            'executed_warning',
+            'warning',
+            true,
+            `Duplicate title tag across ${distinctUrls.length} pages`
+          );
           findings.push({
-            id: `${auditId}-sitewide-dup-title-${title.slice(0, 20)}`,
+            id: `${auditId}-sitewide-dup-title-${distinctUrls.length}-${normTitle.slice(0, 16)}`,
             auditId,
             ruleId: 'SITE_TITLE_DUPLICATE',
             category: 'sitewide',
-            severity: 'high',
-            status: 'fail',
-            title: `Duplicate Title Tag Across ${urls.length} Pages`,
-            description: `The title "${title}" is shared across multiple pages.`,
-            recommendation: 'Ensure every indexed page has a distinct title that describes its specific content.',
-            pageUrl: urls[0] ?? '',
-            evidence: { title, duplicateUrls: urls },
-          });
-        }
-      }
-
-      if (duplicateTitlesFound) {
-        recordLedger('SITE_TITLE_DUPLICATE', 'executed_fail', 'fail', true, 'Found duplicate title tags across pages');
-      } else {
-        recordLedger('SITE_TITLE_DUPLICATE', 'executed_pass', 'pass', true);
-      }
-
-      // Orphan Pages
-      const inboundCounts = new Map<string, number>();
-      for (const p of usablePages) {
-        inboundCounts.set(p.url, 0);
-      }
-
-      for (const p of usablePages) {
-        for (const dest of p.links) {
-          if (inboundCounts.has(dest) && dest !== p.url) {
-            inboundCounts.set(dest, (inboundCounts.get(dest) || 0) + 1);
-          }
-        }
-      }
-
-      let orphansFound = false;
-      for (const [url, count] of inboundCounts.entries()) {
-        if (count === 0 && url !== seedUrl) {
-          orphansFound = true;
-          findings.push({
-            id: `${auditId}-sitewide-orphan-${url.slice(-20)}`,
-            auditId,
-            ruleId: 'SITE_NO_OBSERVED_INTERNAL_INLINKS',
-            category: 'sitewide',
             severity: 'medium',
             status: 'warning',
-            title: 'Orphan Page (No Inbound Internal Links)',
-            description: `No crawled pages link to: ${url}.`,
-            recommendation: 'Add internal links from related category or content pages so users and crawlers can find it.',
-            pageUrl: url,
-            evidence: { inboundLinks: 0 },
+            title: `Duplicate title tag across ${distinctUrls.length} pages`,
+            description: `${distinctUrls.length} pages share the identical title: '${entry.rawTitle}'. Google recommends unique, descriptive titles for every page.`,
+            recommendation: 'Provide a unique, topic-specific <title> tag for each page reflecting its primary subject.',
+            pageUrl: distinctUrls[0] ?? seedUrl,
+            evidence: {
+              title: entry.rawTitle,
+              page_count: distinctUrls.length,
+              sample_urls: distinctUrls.slice(0, 10),
+              all_urls: distinctUrls,
+              page_ids: pageIds,
+            },
           });
         }
-      }
-
-      if (orphansFound) {
-        recordLedger(
-          'SITE_NO_OBSERVED_INTERNAL_INLINKS',
-          'executed_warning',
-          'warning',
-          true,
-          'Found orphan pages with zero inbound links'
-        );
-      } else {
-        recordLedger('SITE_NO_OBSERVED_INTERNAL_INLINKS', 'executed_pass', 'pass', true);
       }
     }
 
-    // 3. TECH_ROBOTS_FETCH_STATUS (site-level)
+    // 2. SITE_META_DESCRIPTION_DUPLICATE
+    if (usablePages.length <= 1) {
+      recordLedger(
+        'SITE_META_DESCRIPTION_DUPLICATE',
+        'not_applicable',
+        'na',
+        false,
+        'Requires at least 2 usable pages for sitewide duplicate meta description analysis'
+      );
+    } else {
+      const descMap = new Map<string, { rawDesc: string; pages: StandaloneCrawlPage[] }>();
+      const seenDescsForPage = new Set<string>();
+
+      for (const p of usablePages) {
+        const desc = p.metaDescription || p.evidence?.metaDescription;
+        if (!desc) continue;
+        const norm = normMetaStr(desc);
+        if (norm.length >= 15) {
+          const pageKey = `${p.id || p.url}::${norm}`;
+          if (seenDescsForPage.has(pageKey)) continue;
+          seenDescsForPage.add(pageKey);
+
+          const entry = descMap.get(norm) || { rawDesc: desc, pages: [] };
+          entry.pages.push(p);
+          descMap.set(norm, entry);
+        }
+      }
+
+      const dupDescEntries = Array.from(descMap.entries()).filter(([_, entry]) => entry.pages.length > 1);
+
+      if (dupDescEntries.length === 0) {
+        recordLedger(
+          'SITE_META_DESCRIPTION_DUPLICATE',
+          'executed_pass',
+          'pass',
+          true,
+          'All crawled pages with meta descriptions have distinct descriptions'
+        );
+      } else {
+        for (const [normDesc, entry] of dupDescEntries) {
+          const distinctUrls = Array.from(new Set(entry.pages.map((p) => p.finalUrl || p.requestedUrl || p.url)));
+          const pageIds = entry.pages.map((p) => p.id);
+          recordLedger(
+            'SITE_META_DESCRIPTION_DUPLICATE',
+            'executed_warning',
+            'warning',
+            true,
+            `Duplicate meta description across ${distinctUrls.length} pages`
+          );
+          findings.push({
+            id: `${auditId}-sitewide-dup-desc-${distinctUrls.length}-${normDesc.slice(0, 16)}`,
+            auditId,
+            ruleId: 'SITE_META_DESCRIPTION_DUPLICATE',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'warning',
+            title: `Duplicate meta description across ${distinctUrls.length} pages`,
+            description: `${distinctUrls.length} pages share the identical meta description snippet. Google recommends unique descriptions for each page.`,
+            recommendation: 'Create tailored meta descriptions that summarize the unique content of each page.',
+            pageUrl: distinctUrls[0] ?? seedUrl,
+            evidence: {
+              meta_description: entry.rawDesc.slice(0, 200),
+              page_count: distinctUrls.length,
+              duplicate_count: distinctUrls.length,
+              duplicate_urls: distinctUrls,
+              sample_urls: distinctUrls.slice(0, 10),
+              all_urls: distinctUrls,
+              page_ids: pageIds,
+            },
+          });
+        }
+      }
+    }
+
+    // 3. SITE_H1_DUPLICATE
+    if (usablePages.length <= 1) {
+      recordLedger(
+        'SITE_H1_DUPLICATE',
+        'not_applicable',
+        'na',
+        false,
+        'Requires at least 2 usable pages for sitewide duplicate H1 analysis'
+      );
+    } else {
+      const h1Map = new Map<string, { rawH1: string; pages: StandaloneCrawlPage[] }>();
+      const seenH1ForPage = new Set<string>();
+
+      for (const p of usablePages) {
+        const h1List = p.headings?.h1 || p.evidence?.headings?.h1 || [];
+        const primaryH1 = h1List[0];
+        if (!primaryH1) continue;
+        const norm = normMetaStr(primaryH1);
+        if (norm.length >= 5) {
+          const pageKey = `${p.id || p.url}::${norm}`;
+          if (seenH1ForPage.has(pageKey)) continue;
+          seenH1ForPage.add(pageKey);
+
+          const entry = h1Map.get(norm) || { rawH1: primaryH1, pages: [] };
+          entry.pages.push(p);
+          h1Map.set(norm, entry);
+        }
+      }
+
+      const dupH1Entries = Array.from(h1Map.entries()).filter(([_, entry]) => entry.pages.length > 1);
+
+      if (dupH1Entries.length === 0) {
+        recordLedger(
+          'SITE_H1_DUPLICATE',
+          'executed_pass',
+          'pass',
+          true,
+          'No multiple pages share identical primary H1 headings'
+        );
+      } else {
+        for (const [normH1, entry] of dupH1Entries) {
+          const distinctUrls = Array.from(new Set(entry.pages.map((p) => p.finalUrl || p.requestedUrl || p.url)));
+          const pageIds = entry.pages.map((p) => p.id);
+          recordLedger(
+            'SITE_H1_DUPLICATE',
+            'executed_warning',
+            'warning',
+            true,
+            `Duplicate H1 heading across ${distinctUrls.length} pages`
+          );
+          findings.push({
+            id: `${auditId}-sitewide-dup-h1-${distinctUrls.length}-${normH1.slice(0, 16)}`,
+            auditId,
+            ruleId: 'SITE_H1_DUPLICATE',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'warning',
+            title: `Duplicate H1 heading across ${distinctUrls.length} pages`,
+            description: `${distinctUrls.length} pages share the identical H1 heading: '${entry.rawH1}'. Ensure primary headings clearly identify each page's specific content.`,
+            recommendation: 'Ensure the primary H1 accurately and distinctly identifies the specific subject of each page.',
+            pageUrl: distinctUrls[0] ?? seedUrl,
+            evidence: {
+              h1: entry.rawH1,
+              page_count: distinctUrls.length,
+              duplicate_count: distinctUrls.length,
+              duplicate_urls: distinctUrls,
+              sample_urls: distinctUrls.slice(0, 10),
+              all_urls: distinctUrls,
+              page_ids: pageIds,
+            },
+          });
+        }
+      }
+    }
+
+    // 4. SITE_NO_OBSERVED_INTERNAL_INLINKS (Orphan Pages)
+    const orphanPages = pages.filter((p) => {
+      const norm = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
+      const isSeed = norm === seedNorm || p === pages[0];
+      if (isSeed) return false;
+      const m = linkGraph.getMetrics(p.finalUrl || p.requestedUrl || p.url);
+      return m.inboundUniquePages === 0;
+    });
+
+    if (orphanPages.length === 0) {
+      recordLedger(
+        'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+        'executed_pass',
+        'pass',
+        true,
+        'All crawled pages have observed inbound internal links'
+      );
+    } else {
+      const orphanUrls = Array.from(new Set(orphanPages.map((p) => p.finalUrl || p.requestedUrl || p.url)));
+      recordLedger(
+        'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+        'executed_warning',
+        'warning',
+        true,
+        `Found ${orphanUrls.length} orphan page(s) with zero observed inbound internal links`
+      );
+      findings.push({
+        id: `${auditId}-sitewide-orphans-${orphanUrls.length}`,
+        auditId,
+        ruleId: 'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+        category: 'sitewide',
+        severity: 'medium',
+        status: 'warning',
+        title: `No internal inbound links observed in sampled crawl (${orphanUrls.length} pages)`,
+        description: `${orphanUrls.length} page(s) had zero inbound links from other pages within the observed crawl sample. Note: A sampled crawl cannot prove these pages are completely unlinked on the live site, but indicates potential discovery barriers.`,
+        recommendation: 'Ensure valuable pages are linked from relevant categories, navigation, or parent pages so search engine crawlers and users can discover them naturally.',
+        pageUrl: orphanUrls[0] ?? seedUrl,
+        evidence: {
+          orphan_count: orphanUrls.length,
+          sample_urls: orphanUrls.slice(0, 10),
+          all_urls: orphanUrls,
+          page_ids: orphanPages.map((p) => p.id),
+        },
+      });
+    }
+
+    // 5. SITE_LOW_INTERNAL_INLINKS
+    if (pages.length <= 5) {
+      recordLedger(
+        'SITE_LOW_INTERNAL_INLINKS',
+        'not_applicable',
+        'na',
+        false,
+        'Internal link distribution analysis requires more than 5 crawled pages for statistically meaningful topology metrics'
+      );
+      findings.push({
+        id: `${auditId}-sitewide-low-inlinks-na`,
+        auditId,
+        ruleId: 'SITE_LOW_INTERNAL_INLINKS',
+        category: 'sitewide',
+        severity: 'info',
+        status: 'not_applicable',
+        title: 'Low internal inlinks check not applicable (sample <= 5 pages)',
+        description: 'Internal link distribution analysis requires more than 5 crawled pages for statistically meaningful topology metrics.',
+        recommendation: 'No action needed for small crawls.',
+        pageUrl: seedUrl,
+        evidence: {
+          reason: 'small_sample_size',
+          pages_crawled: pages.length,
+          min_pages_required: 6,
+        },
+      });
+    } else {
+      const lowInlinkPages = pages.filter((p) => {
+        const norm = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
+        const isSeed = (p.depth === 0) || (norm === seedNorm);
+        if (isSeed) return false;
+        const m = linkGraph.getMetrics(p.finalUrl || p.requestedUrl || p.url);
+        return m.inboundUniquePages === 1;
+      });
+
+      if (lowInlinkPages.length === 0) {
+        recordLedger(
+          'SITE_LOW_INTERNAL_INLINKS',
+          'executed_pass',
+          'pass',
+          true,
+          'Good internal link coverage across site; no crawled pages rely on only a single internal inlink'
+        );
+      } else {
+        const lowUrls = Array.from(new Set(lowInlinkPages.map((p) => p.finalUrl || p.requestedUrl || p.url)));
+        recordLedger(
+          'SITE_LOW_INTERNAL_INLINKS',
+          'executed_warning',
+          'warning',
+          true,
+          `Low internal link coverage (${lowUrls.length} pages with only 1 inlink)`
+        );
+        findings.push({
+          id: `${auditId}-sitewide-low-inlinks-${lowUrls.length}`,
+          auditId,
+          ruleId: 'SITE_LOW_INTERNAL_INLINKS',
+          category: 'sitewide',
+          severity: 'medium',
+          status: 'warning',
+          title: `Low internal link coverage (${lowUrls.length} pages with only 1 inlink)`,
+          description: `${lowUrls.length} page(s) have only a single inbound link in the sampled crawl graph. Pages with minimal internal links may receive less crawl priority.`,
+          recommendation: 'Add contextual cross-links from related articles or relevant section pages.',
+          pageUrl: lowUrls[0] ?? seedUrl,
+          evidence: {
+            low_inlink_count: lowUrls.length,
+            sample_urls: lowUrls.slice(0, 10),
+            all_urls: lowUrls,
+            page_ids: lowInlinkPages.map((p) => p.id),
+            min_pages_required: 6,
+            total_pages_sampled: pages.length,
+          },
+        });
+      }
+    }
+
+    // 6. SITE_DEEP_CRAWL_PATH
+    const deepPages = pages.filter((p) => (p.depth ?? 0) >= 4);
+
+    if (deepPages.length === 0) {
+      recordLedger(
+        'SITE_DEEP_CRAWL_PATH',
+        'executed_pass',
+        'pass',
+        true,
+        'Optimal crawl depth (all pages within 3 clicks of seed)'
+      );
+    } else {
+      const deepUrls = Array.from(new Set(deepPages.map((p) => p.finalUrl || p.requestedUrl || p.url)));
+      const maxDepth = deepPages.reduce((m, p) => Math.max(m, p.depth ?? 0), 0);
+      recordLedger(
+        'SITE_DEEP_CRAWL_PATH',
+        'executed_warning',
+        'warning',
+        true,
+        `Deep crawl discovery path (${deepUrls.length} pages at depth >= 4)`
+      );
+      findings.push({
+        id: `${auditId}-sitewide-deep-path-${deepUrls.length}`,
+        auditId,
+        ruleId: 'SITE_DEEP_CRAWL_PATH',
+        category: 'sitewide',
+        severity: 'medium',
+        status: 'warning',
+        title: `Deep crawl discovery path (${deepUrls.length} pages at depth >= 4)`,
+        description: `${deepUrls.length} page(s) were discovered at depth 4 or deeper from the initial seed page. Deep click paths can make pages harder for users and crawlers to access.`,
+        recommendation: 'Flatten site architecture where possible through category listings or breadcrumbs.',
+        pageUrl: deepUrls[0] ?? seedUrl,
+        evidence: {
+          deep_count: deepUrls.length,
+          deep_pages_count: deepUrls.length,
+          max_depth: maxDepth,
+          sample_urls: deepUrls.slice(0, 10),
+          all_urls: deepUrls,
+          page_ids: deepPages.map((p) => p.id),
+        },
+      });
+    }
+
+    // 7. SITE_INTERNAL_LINK_TO_REDIRECT
+    const redirectLinks = linkGraph.redirectLinks;
+
+    if (redirectLinks.length === 0) {
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_REDIRECT',
+        'executed_pass',
+        'pass',
+        true,
+        'No internal links to redirecting URLs'
+      );
+    } else {
+      const byDest = new Map<string, typeof redirectLinks>();
+      for (const item of redirectLinks) {
+        const dest = item.edge.destinationUrl;
+        const list = byDest.get(dest) || [];
+        list.push(item);
+        byDest.set(dest, list);
+      }
+
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_REDIRECT',
+        'executed_warning',
+        'warning',
+        true,
+        `Found internal links pointing to ${byDest.size} redirecting URL(s)`
+      );
+
+      for (const [destUrl, occurrences] of byDest.entries()) {
+        const destPage = occurrences[0]?.destPage;
+        const observedStatus = occurrences[0]?.observedStatus;
+        const srcUrls = Array.from(
+          new Set(occurrences.map((o) => o.sourcePage.finalUrl || o.sourcePage.requestedUrl || o.sourcePage.url))
+        );
+        const rStatus = destPage?.httpStatus || observedStatus?.redirectStatus || 301;
+        const finalDest = destPage?.finalUrl || observedStatus?.finalDestinationUrl;
+
+        findings.push({
+          id: `${auditId}-sitewide-redirect-link-${destUrl.slice(-24).replace(/[^a-zA-Z0-9]/g, '_')}`,
+          auditId,
+          ruleId: 'SITE_INTERNAL_LINK_TO_REDIRECT',
+          category: 'sitewide',
+          severity: 'medium',
+          status: 'warning',
+          title: `Internal links to redirecting URL (HTTP ${rStatus} -> ${destUrl})`,
+          description: `Found ${occurrences.length} internal link(s) pointing to redirecting URL '${destUrl}'. Linking directly to the final destination preserves crawl efficiency.`,
+          recommendation: `Update internal hyperlinks to point directly to '${finalDest || destUrl}'.`,
+          pageUrl: srcUrls[0] ?? seedUrl,
+          evidence: {
+            redirect_url: destUrl,
+            http_status: rStatus,
+            final_destination: finalDest,
+            redirect_links_count: occurrences.length,
+            total_redirect_links: redirectLinks.length,
+            referencing_pages_count: srcUrls.length,
+            referencing_urls: srcUrls.slice(0, 10),
+          },
+        });
+      }
+    }
+
+    // 8. TECH_ROBOTS_FETCH_STATUS (site-level)
     const robotsEvidence = normalizeRobotsEvidence(auditContext?.robotsEvidence);
     const robotsStatus = robotsEvidence?.fetchStatus;
     if (!robotsStatus || robotsStatus === 'not_evaluated') {
@@ -1953,7 +2552,6 @@ export class StandaloneRulesEngine {
     }
 
     // 5. TECH_SITEMAP_AVAILABILITY (site-level)
-    const sitemapEvidence = normalizeSitemapEvidence(auditContext?.sitemapEvidence);
     const sitemaps = sitemapEvidence?.sitemaps || [];
     const validSitemaps = sitemaps.filter((s) => s.status === 'valid' || s.status === 'success');
     const declaredSitemaps = sitemaps.filter(
@@ -2164,10 +2762,19 @@ export class StandaloneRulesEngine {
       if (p.finalUrl) pageByUrl.set(normalizeCanonicalUrl(p.finalUrl), p);
     }
 
+    const sitemapEvidence = normalizeSitemapEvidence(auditContext?.sitemapEvidence);
+    const sitemapUrlList = sitemapEvidence?.urls || [];
+    const seedUrl = pages[0]?.url || auditContext?.robotsEvidence?.url || '';
+
+    const observedUrlMap = auditContext?.observedUrlMap || buildObservedUrlStatusMap(pages);
+    const linkGraph = auditContext?.linkGraph || new StandaloneInternalLinkGraph(pages, sitemapUrlList, seedUrl, observedUrlMap);
+
     const enrichedContext: StandaloneAuditContext = {
       ...(auditContext || {}),
       allPages: pages,
       pageByUrl,
+      observedUrlMap,
+      linkGraph,
     };
 
     // Page evaluations
@@ -2177,9 +2784,9 @@ export class StandaloneRulesEngine {
       allLedger.push(...ledgerRecords);
     }
 
-    // Sitewide evaluations
+    // Sitewide evaluations: evaluate full graph across all crawled pages (usablePages filtered internally for metadata rules)
     const { findings: siteFindings, ledgerRecords: siteLedger } = this.evaluateSitewideDetailed(
-      usablePages,
+      pages,
       auditId,
       enrichedContext
     );
@@ -2187,7 +2794,7 @@ export class StandaloneRulesEngine {
     allLedger.push(...siteLedger);
 
     const ledger = this.buildExecutionLedger(auditId, allLedger);
-    return { findings: allFindings, ledgerRecords: allLedger, ledger };
+    return { findings: allFindings, ledgerRecords: allLedger, ledger, linkGraph: linkGraph.getSummary(auditId) };
   }
 
   /**

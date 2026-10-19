@@ -20,6 +20,8 @@ export interface SitemapParserConfig {
   timeoutMs?: number;
   maxByteSize?: number;
   maxRedirects?: number;
+  isAllowedByRobots?: (url: string) => boolean;
+  checkHostPermission?: (url: string) => Promise<boolean>;
 }
 
 /**
@@ -114,6 +116,8 @@ export class StandaloneSitemapParser {
   private fetchTimeoutMs: number;
   private maxByteSize: number;
   private maxRedirects: number;
+  private isAllowedByRobots?: (url: string) => boolean;
+  private checkHostPermission?: (url: string) => Promise<boolean>;
 
   constructor(targetUrlOrConfig?: string | SitemapParserConfig, maybeConfig?: SitemapParserConfig) {
     let targetUrl = '';
@@ -151,6 +155,8 @@ export class StandaloneSitemapParser {
     this.fetchTimeoutMs = config.fetchTimeoutMs ?? (config as any).timeoutMs ?? 5000;
     this.maxByteSize = config.maxByteSize ?? 2 * 1024 * 1024; // 2MB cap
     this.maxRedirects = config.maxRedirects ?? 3;
+    this.isAllowedByRobots = config.isAllowedByRobots;
+    this.checkHostPermission = config.checkHostPermission;
   }
 
   /**
@@ -165,6 +171,42 @@ export class StandaloneSitemapParser {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Fetches and parses a single sitemap URL with full authorization, scope, SSRF, and robots policy verification.
+   */
+  public async fetchAndParseSitemap(
+    sitemapUrl: string,
+    isDeclared = false
+  ): Promise<StandaloneSitemapEntry> {
+    if (!this.authorizedOrigin) {
+      try {
+        const u = new URL(sitemapUrl);
+        this.authorizedOrigin = u.origin;
+        this.origin = u.origin;
+        this.hostname = u.hostname.toLowerCase();
+      } catch {}
+    }
+    const records: StandaloneSitemapEntry[] = [];
+    const allUrls = new Set<string>();
+    const errors: string[] = [];
+    const visited = new Set<string>();
+    await this.crawlSitemapRecursive(sitemapUrl, 0, visited, records, allUrls, errors, isDeclared);
+    return (
+      records[0] ||
+      normalizeSitemapEntry({
+        sitemapUrl,
+        url: sitemapUrl,
+        status: 'fetch_error',
+        fetchStatus: 'not_fetched',
+        parseStatus: 'not_parsed',
+        urlsCount: 0,
+        urls: [],
+        isIndex: false,
+        isDeclared,
+      })
+    );
   }
 
   /**
@@ -297,7 +339,7 @@ export class StandaloneSitemapParser {
           sitemapUrl,
           url: sitemapUrl,
           status: 'unauthorized',
-          fetchStatus: 'fetch_error',
+          fetchStatus: 'not_fetched',
           parseStatus: 'not_parsed',
           errorMessage: `Sitemap URL '${sitemapUrl}' rejected as potential SSRF / private destination`,
           urlsCount: 0,
@@ -308,6 +350,49 @@ export class StandaloneSitemapParser {
       );
       errors.push(`Sitemap request to disallowed destination blocked: ${sitemapUrl}`);
       return;
+    }
+
+    // Robots policy gate check: enforce zero unauthorized network fetches per RFC 9309
+    if (this.isAllowedByRobots && !this.isAllowedByRobots(sitemapUrl)) {
+      records.push(
+        normalizeSitemapEntry({
+          sitemapUrl,
+          url: sitemapUrl,
+          status: 'unauthorized',
+          fetchStatus: 'not_fetched',
+          parseStatus: 'not_parsed',
+          errorMessage: `Sitemap URL '${sitemapUrl}' is disallowed by robots.txt policy`,
+          urlsCount: 0,
+          urls: [],
+          isIndex: false,
+          isDeclared,
+        })
+      );
+      errors.push(`Discovered sitemap '${sitemapUrl}' disallowed by robots.txt policy (fetch skipped)`);
+      return;
+    }
+
+    // Host permission pre-flight check
+    if (this.checkHostPermission) {
+      const hasPerm = await this.checkHostPermission(sitemapUrl);
+      if (!hasPerm) {
+        records.push(
+          normalizeSitemapEntry({
+            sitemapUrl,
+            url: sitemapUrl,
+            status: 'unauthorized',
+            fetchStatus: 'not_fetched',
+            parseStatus: 'not_parsed',
+            errorMessage: `Host permission denied for sitemap URL '${sitemapUrl}'`,
+            urlsCount: 0,
+            urls: [],
+            isIndex: false,
+            isDeclared,
+          })
+        );
+        errors.push(`Host permission denied for sitemap URL '${sitemapUrl}' (fetch skipped)`);
+        return;
+      }
     }
 
     let response: Response;
@@ -345,6 +430,12 @@ export class StandaloneSitemapParser {
       rawText = await this.readBoundedResponseBody(response, controller.signal);
     } catch (err: any) {
       const isTimeout = err.name === 'AbortError' || err.message?.includes('timeout') || err.message?.includes('aborted');
+      const isRobots = err.message?.includes('disallowed by robots.txt');
+      const isScope = err.message?.includes('outside authorized origin scope') || err.message?.includes('out-of-scope');
+      const isSsrf = err.message?.includes('disallowed destination') || err.message?.includes('unsafe private/metadata');
+
+      const status = (isRobots || isSsrf) ? 'unauthorized' : isScope ? 'out_of_scope' : 'fetch_error';
+      const fetchStatus = (isRobots || isScope || isSsrf) ? 'not_fetched' : 'fetch_error';
       const errorMsg = isTimeout
         ? `Fetch timeout (${Math.round(this.fetchTimeoutMs / 1000)}s)`
         : err.message || 'Fetch failed';
@@ -353,8 +444,8 @@ export class StandaloneSitemapParser {
         normalizeSitemapEntry({
           sitemapUrl,
           url: sitemapUrl,
-          status: 'fetch_error',
-          fetchStatus: 'fetch_error',
+          status,
+          fetchStatus,
           parseStatus: 'not_parsed',
           errorMessage: errorMsg,
           urlsCount: 0,
@@ -488,6 +579,9 @@ export class StandaloneSitemapParser {
       if (isSsrfTarget(currentUrl, this.authorizedOrigin)) {
         throw new Error(`Sitemap request to disallowed destination blocked: ${currentUrl}`);
       }
+      if (this.isAllowedByRobots && !this.isAllowedByRobots(currentUrl)) {
+        throw new Error(`Sitemap URL '${currentUrl}' is disallowed by robots.txt policy`);
+      }
 
       const res = await fetch(currentUrl, {
         method: 'GET',
@@ -518,6 +612,9 @@ export class StandaloneSitemapParser {
         }
         if (isSsrfTarget(nextUrl, this.authorizedOrigin)) {
           throw new Error(`Redirect to unsafe private/metadata destination blocked: ${nextUrl}`);
+        }
+        if (this.isAllowedByRobots && !this.isAllowedByRobots(nextUrl)) {
+          throw new Error(`Redirect to robots-disallowed sitemap blocked: ${nextUrl}`);
         }
 
         currentUrl = nextUrl;

@@ -73,8 +73,8 @@ describe('Phase 2C: Canonical Technical SEO Rules & Crawl Policy Hardening', () 
   // 1. RULE IMPLEMENTATION INVENTORY
   // =========================================================================
   describe('1. Rule Implementation Totals', () => {
-    it('implements exactly 40 canonical rules (16 On-Page, 22 Technical, 2 Sitewide)', () => {
-      expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(40);
+    it('implements at least 40 canonical rules including all 22 Technical rules (Phase 2D-A: 45 total)', () => {
+      expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(45);
 
       const onPage = [
         'ONPAGE_TITLE_PRESENT',
@@ -124,12 +124,17 @@ describe('Phase 2C: Canonical Technical SEO Rules & Crawl Policy Hardening', () 
       const sitewide = [
         'SITE_TITLE_DUPLICATE',
         'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+        'SITE_META_DESCRIPTION_DUPLICATE',
+        'SITE_H1_DUPLICATE',
+        'SITE_LOW_INTERNAL_INLINKS',
+        'SITE_DEEP_CRAWL_PATH',
+        'SITE_INTERNAL_LINK_TO_REDIRECT',
       ];
 
       expect(onPage.length).toBe(16);
       expect(technical.length).toBe(22);
-      expect(sitewide.length).toBe(2);
-      expect(onPage.length + technical.length + sitewide.length).toBe(40);
+      expect(sitewide.length).toBe(7);
+      expect(onPage.length + technical.length + sitewide.length).toBe(45);
 
       for (const r of onPage) {
         expect(CANONICAL_IMPLEMENTED_RULES.has(r)).toBe(true);

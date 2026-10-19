@@ -19,12 +19,17 @@ import {
   StopCircle,
   ChevronDown,
   ChevronRight,
+  Network,
+  GitFork,
+  Link2,
+  CornerDownRight,
 } from 'lucide-react';
 import type {
   StandaloneAuditJob,
   StandaloneCrawlPage,
   StandaloneSeoFinding,
   StandaloneTechFinding,
+  StandaloneLinkEdge,
 } from '../types';
 import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { StandaloneAuditStorage } from '../persistence/indexedDb';
@@ -49,7 +54,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
   const [crawledPages, setCrawledPages] = useState<StandaloneCrawlPage[]>([]);
   const [findings, setFindings] = useState<StandaloneSeoFinding[]>([]);
   const [technologies, setTechnologies] = useState<StandaloneTechFinding[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'technical' | 'tech' | 'issues' | 'coverage'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'pages' | 'technical' | 'sitewide' | 'tech' | 'issues' | 'coverage'>('overview');
   const [issuesViewFilter, setIssuesViewFilter] = useState<'issues' | 'passed' | 'all'>('issues');
   const [expandedFindingId, setExpandedFindingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -524,6 +529,16 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
               Technical SEO
             </button>
             <button
+              onClick={() => setActiveTab('sitewide')}
+              className={`px-3 py-1.5 rounded-t font-medium transition-colors ${
+                activeTab === 'sitewide'
+                  ? 'text-indigo-400 border-b-2 border-indigo-500 bg-slate-900/40'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Site-Wide & Graph
+            </button>
+            <button
               onClick={() => setActiveTab('tech')}
               className={`px-3 py-1.5 rounded-t font-medium transition-colors ${
                 activeTab === 'tech'
@@ -882,6 +897,206 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   {findings.filter((f) => f.category === 'technical' && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
                     <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
                       ✓ Zero technical SEO errors or warnings detected.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab: Site-Wide SEO & Internal Link Graph */}
+          {activeTab === 'sitewide' && (
+            <div className="space-y-3 text-xs">
+              {/* Internal Link Graph Architecture Card */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <Network className="w-4 h-4 text-indigo-400" />
+                    <span>Internal Link Graph Architecture</span>
+                  </div>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded uppercase bg-indigo-950/60 text-indigo-400 border border-indigo-800">
+                    {activeJob.linkGraph ? `${activeJob.linkGraph.totalNodes} Nodes / ${activeJob.linkGraph.totalInternalEdges} Edges` : `${crawledPages.length} Pages`}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-mono">
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Internal Pages</span>
+                    <span className="text-slate-200 font-semibold">
+                      {activeJob.linkGraph?.totalNodes ?? crawledPages.length}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Internal Links</span>
+                    <span className="text-indigo-300 font-semibold">
+                      {activeJob.linkGraph?.totalInternalEdges ?? 0}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Max Crawl Depth</span>
+                    <span className={`font-semibold ${(activeJob.linkGraph?.maxCrawlDepth ?? 0) >= 4 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {activeJob.linkGraph?.maxCrawlDepth ?? 0}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Redirect Links</span>
+                    <span className={`font-semibold ${(activeJob.linkGraph?.redirectDestinations ?? 0) > 0 ? 'text-amber-400' : 'text-slate-200'}`}>
+                      {activeJob.linkGraph?.redirectDestinations ?? activeJob.linkGraph?.redirectLinks?.length ?? 0}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Orphan Pages (0 In)</span>
+                    <span className={`font-semibold ${(activeJob.linkGraph?.orphanCount ?? 0) > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                      {activeJob.linkGraph?.orphanCount ?? activeJob.linkGraph?.orphanPages?.length ?? 0}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
+                    <span className="text-slate-500 block uppercase">Low Inlink (1 In)</span>
+                    <span className={`font-semibold ${(activeJob.linkGraph?.lowInlinkCount ?? 0) > 0 ? 'text-amber-400' : 'text-slate-200'}`}>
+                      {activeJob.linkGraph?.lowInlinkCount ?? activeJob.linkGraph?.lowInlinkPages?.length ?? 0}
+                    </span>
+                  </div>
+                  <div className="bg-slate-950/60 p-2 rounded border border-slate-800 col-span-2">
+                    <span className="text-slate-500 block uppercase">Deep Crawl Paths (&ge;4)</span>
+                    <span className={`font-semibold ${(activeJob.linkGraph?.deepCrawlPages?.length ?? 0) > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {activeJob.linkGraph?.deepCrawlPages?.length ?? 0} pages at depth 4+
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Duplicate Metadata Clusters Card */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <Layers className="w-4 h-4 text-indigo-400" />
+                    <span>Duplicate Metadata Groups</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {findings.filter((f) => ['SITE_TITLE_DUPLICATE', 'SITE_META_DESCRIPTION_DUPLICATE', 'SITE_H1_DUPLICATE'].includes(f.ruleId) && f.status === 'warning').length} Duplicate Clusters
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {findings
+                    .filter((f) => ['SITE_TITLE_DUPLICATE', 'SITE_META_DESCRIPTION_DUPLICATE', 'SITE_H1_DUPLICATE'].includes(f.ruleId) && f.status === 'warning')
+                    .map((f) => {
+                      const urls = Array.isArray(f.evidence?.duplicate_urls) ? (f.evidence.duplicate_urls as string[]) : [];
+                      return (
+                        <div key={f.id} className="p-2.5 rounded bg-slate-950/60 border border-slate-800 text-[11px] space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-slate-200 truncate mr-2">{f.title}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-amber-950/60 text-amber-400 border border-amber-800 shrink-0">
+                              {f.ruleId}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-300 font-mono bg-slate-900/80 p-1.5 rounded border border-slate-800/80 break-words">
+                            "{String(f.evidence?.normalized_description || f.evidence?.normalized_h1 || f.evidence?.normalized_title || f.description)}"
+                          </div>
+                          {urls.length > 0 && (
+                            <div className="space-y-0.5 pt-1">
+                              <span className="text-slate-500 font-semibold text-[9px] uppercase block">
+                                Shared across {urls.length} pages:
+                              </span>
+                              {urls.map((u, i) => (
+                                <div key={i} className="text-[10px] text-indigo-300 font-mono truncate pl-1 border-l-2 border-indigo-500/40">
+                                  {u}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  {findings.filter((f) => ['SITE_TITLE_DUPLICATE', 'SITE_META_DESCRIPTION_DUPLICATE', 'SITE_H1_DUPLICATE'].includes(f.ruleId) && f.status === 'warning').length === 0 && (
+                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      ✓ Zero duplicate titles, meta descriptions, or H1 headings detected.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Internal Redirect Links Card */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <CornerDownRight className="w-4 h-4 text-amber-400" />
+                    <span>Internal Links to Redirects</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {activeJob.linkGraph?.redirectLinks?.length || findings.filter(f => f.ruleId === 'SITE_INTERNAL_LINK_TO_REDIRECT' && f.status === 'warning').length} Redirecting Links
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {(activeJob.linkGraph?.redirectLinks && activeJob.linkGraph.redirectLinks.length > 0) ? (
+                    activeJob.linkGraph.redirectLinks.map((edge: StandaloneLinkEdge, i: number) => (
+                      <div key={i} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[10px] font-mono space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 truncate mr-2">From: {edge.sourceUrl}</span>
+                          <span className="px-1 py-0.5 rounded text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800 shrink-0">
+                            3xx Redirect
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-1 text-slate-300">
+                          <span className="text-rose-400 truncate">Target: {edge.destinationUrl || edge.targetUrl}</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : findings.filter(f => f.ruleId === 'SITE_INTERNAL_LINK_TO_REDIRECT' && f.status === 'warning').length > 0 ? (
+                    findings.filter(f => f.ruleId === 'SITE_INTERNAL_LINK_TO_REDIRECT' && f.status === 'warning').map((f) => (
+                      <div key={f.id} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[10px] font-mono space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-400 truncate mr-2">From: {String(f.evidence?.source_page || f.pageUrl)}</span>
+                          <span className="px-1 py-0.5 rounded text-[9px] bg-amber-950/60 text-amber-400 border border-amber-800 shrink-0">
+                            HTTP {String(f.evidence?.status_code || 301)}
+                          </span>
+                        </div>
+                        <div className="text-rose-300 truncate">Link: {String(f.evidence?.link_target || '')}</div>
+                        {f.evidence?.final_destination && (
+                          <div className="text-emerald-300 truncate">&rarr; Final: {String(f.evidence.final_destination)}</div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      ✓ Zero internal links point to 3xx redirecting URLs.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Site-Wide Findings Summary */}
+              <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5 font-semibold text-slate-200">
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                    <span>Site-Wide Architecture Findings</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {findings.filter((f) => (f.category === 'sitewide' || f.ruleId.startsWith('SITE_')) && (f.status === 'fail' || f.status === 'warning')).length} Issues
+                  </span>
+                </div>
+
+                <div className="space-y-1 max-h-48 overflow-y-auto">
+                  {findings
+                    .filter((f) => (f.category === 'sitewide' || f.ruleId.startsWith('SITE_')) && (f.status === 'fail' || f.status === 'warning'))
+                    .map((f) => (
+                      <div key={f.id} className="p-2 rounded bg-slate-950/60 border border-slate-800 text-[11px] space-y-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-200">{f.title}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase ${
+                            f.status === 'fail' ? 'bg-rose-950/60 text-rose-400 border border-rose-800' : 'bg-amber-950/60 text-amber-400 border border-amber-800'
+                          }`}>
+                            {f.ruleId}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400">{f.description}</p>
+                      </div>
+                    ))}
+                  {findings.filter((f) => (f.category === 'sitewide' || f.ruleId.startsWith('SITE_')) && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
+                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      ✓ Zero site-wide architecture errors or warnings detected.
                     </div>
                   )}
                 </div>
@@ -1258,7 +1473,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 mb-2">
-                  Authoritative 51-rule backend parity tracking (Target Phase 2B Checkpoint 1: 33/51 implemented):
+                  Authoritative 51-rule backend parity tracking (Phase 2D-A Checkpoint: 45/51 implemented):
                 </p>
 
                 {/* Family Breakdown */}
@@ -1270,15 +1485,15 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-medium text-slate-300">Technical SEO (15/22 implemented)</span>
-                    <span className="font-mono text-amber-400">
-                      {scorecard?.coverage?.familyCoverage?.technical?.executed ?? 0} / 22 executed (68.2% Implemented)
+                    <span className="font-medium text-slate-300">Technical SEO (22/22 implemented)</span>
+                    <span className="font-mono text-emerald-400">
+                      {scorecard?.coverage?.familyCoverage?.technical?.executed ?? 0} / 22 executed (100% Implemented)
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-medium text-slate-300">Site-Wide SEO (2/13 implemented)</span>
+                    <span className="font-medium text-slate-300">Site-Wide SEO (7/13 implemented)</span>
                     <span className="font-mono text-blue-400">
-                      {scorecard?.coverage?.familyCoverage?.sitewide?.executed ?? 0} / 13 executed (15.4% Implemented)
+                      {scorecard?.coverage?.familyCoverage?.sitewide?.executed ?? 0} / 13 executed (53.8% Implemented)
                     </span>
                   </div>
                 </div>
@@ -1306,7 +1521,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                     })}
                   </div>
                   <div className="mt-2 text-slate-500 font-sans text-[11px]">
-                    18 Canonical Rules (Hreflang, Schema.org JSON-LD, OpenGraph, Link Graph Depth, TTFB, Redirect Chains, etc.) scheduled for subsequent checkpoints.
+                    6 Canonical Rules (SITE_MIXED_CONTENT, SITE_CANONICAL_CHAIN, SITE_ROBOTS_TXT_CONFLICT, SITE_UNLINKED_SITEMAP_URLS, SITE_BROKEN_OUTBOUND_LINKS, SITE_UNSECURE_MEDIA) scheduled for subsequent Phase 2D-B checkpoint.
                   </div>
                 </div>
               </div>

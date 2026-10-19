@@ -424,12 +424,15 @@ export class StandaloneAuditCoordinator {
         job.stageCheckpoints.seoStarted = true;
         this.notify(job, 'AUDIT_PROGRESS');
 
-        const { findings: allFindings, ledgerRecords: allLedger } =
+        const { findings: allFindings, ledgerRecords: allLedger, linkGraph: graphSummary } =
           StandaloneRulesEngine.evaluateAudit(crawledPages, auditId, {
             robotsEvidence: normalizeRobotsEvidence(job.robotsEvidence),
             sitemapEvidence: normalizeSitemapEvidence(job.sitemapEvidence),
           });
 
+        if (graphSummary) {
+          job.linkGraph = graphSummary;
+        }
         job.stageCheckpoints.seoFinished = true;
         await StandaloneAuditStorage.publishSeoStageResults(auditId, allFindings, allLedger, job);
       }

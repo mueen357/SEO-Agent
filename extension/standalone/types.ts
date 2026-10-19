@@ -31,6 +31,66 @@ export interface RedirectHop {
   blockReason?: string;
 }
 
+export interface ObservedUrlStatus {
+  url: string;
+  normalizedUrl: string;
+  isObserved: boolean;
+  isRedirect: boolean;
+  redirectStatus?: number;
+  finalDestinationUrl?: string;
+  finalHttpStatus?: number;
+  httpStatus?: number;
+  isBlocked?: boolean;
+  safetyBlocked?: boolean;
+  blockReason?: string;
+  fetchStatus?: StandaloneCrawlPage['fetchStatus'];
+  page?: StandaloneCrawlPage;
+  evidenceSource: 'requested_url_redirect' | 'intermediate_hop' | 'final_destination' | 'direct_page' | 'direct_redirect' | 'uncrawled';
+}
+
+export interface StandaloneLinkEdge {
+  sourceUrl: string;
+  destinationUrl: string;
+  targetUrl?: string;
+  linkText?: string;
+  sourcePageId?: string;
+}
+
+export interface StandalonePageNodeMetrics {
+  url: string;
+  pageId: string;
+  depth: number;
+  httpStatus?: number;
+  inboundUniquePages: number;
+  outboundUniquePages: number;
+  totalInboundLinks: number;
+  isSitemapOnly: boolean;
+  isSeed: boolean;
+  brokenOutlinksCount: number;
+  redirectOutlinksCount: number;
+}
+
+export interface StandaloneLinkGraphSummary {
+  auditId: string;
+  totalNodes: number;
+  totalInternalEdges: number;
+  uniqueDestinations: number;
+  orphanCount: number;
+  lowInlinkCount: number;
+  brokenLinkDestinations: number;
+  redirectDestinations: number;
+  maxCrawlDepth: number;
+  sitemapOnlyCount: number;
+  crawlCompletenessCaveat: string;
+  nodes: StandalonePageNodeMetrics[];
+  totalInternalPages?: number;
+  totalInternalLinks?: number;
+  orphanPages?: string[];
+  lowInlinkPages?: string[];
+  deepCrawlPages?: string[];
+  redirectLinks?: StandaloneLinkEdge[];
+}
+
 export type StandaloneFetchErrorCode =
   | 'FETCH_NETWORK_ERROR'
   | 'FETCH_TIMEOUT'
@@ -462,6 +522,7 @@ export interface StandaloneAuditJob {
   pendingQueue: Array<{ url: string; depth: number }>;
   crawledUrls: string[];
   failedUrls: string[];
+  linkGraph?: StandaloneLinkGraphSummary;
   scorecard?: StandaloneAuditScorecard;
   errorMessage?: string;
   startedAt: number;

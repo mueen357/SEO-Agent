@@ -53,11 +53,11 @@ export const ALL_CANONICAL_RULE_IDS = new Set<string>(
 export const ALL_CANONICAL_51_RULES: readonly string[] = CANONICAL_RULES_MANIFEST.map((r) => r.rule_id);
 
 /**
- * 40 Canonical Rules verified and actively implemented in Standalone client rules engine:
+ * 45 Canonical Rules verified and actively implemented in Standalone client rules engine:
  * - 16 On-Page (16/16 - 100% complete coverage)
  * - 22 Technical (22/22 - 100% complete coverage)
- * - 2 Sitewide (2/13 coverage)
- * Total: 40/51 Canonical Rules Implemented
+ * - 7 Sitewide (7/13 coverage)
+ * Total: 45/51 Canonical Rules Implemented
  */
 export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
   // On-Page (16/16 - 100% coverage)
@@ -93,7 +93,6 @@ export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
   'TECH_SITEMAP_URL_STATUS',
   'TECH_SITEMAP_NOINDEX_CONFLICT',
   'TECH_SITEMAP_CANONICAL_CONFLICT',
-  // Phase 2C Newly Implemented Technical Rules:
   'TECH_REDIRECT_CHAIN',
   'TECH_REDIRECT_LOOP',
   'TECH_REDIRECT_FAILURE',
@@ -101,9 +100,14 @@ export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
   'TECH_CANONICAL_CONFLICT',
   'TECH_CANONICAL_MULTIPLE',
   'TECH_HTTPS_DOWNGRADE',
-  // Sitewide (2/13)
+  // Sitewide (7/13 - Phase 2D-A)
   'SITE_TITLE_DUPLICATE',
+  'SITE_META_DESCRIPTION_DUPLICATE',
+  'SITE_H1_DUPLICATE',
   'SITE_NO_OBSERVED_INTERNAL_INLINKS',
+  'SITE_LOW_INTERNAL_INLINKS',
+  'SITE_DEEP_CRAWL_PATH',
+  'SITE_INTERNAL_LINK_TO_REDIRECT',
 ]);
 
 /**
