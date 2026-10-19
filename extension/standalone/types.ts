@@ -250,48 +250,165 @@ export interface StandaloneStageCheckpoints {
   scoringFinished: boolean;
 }
 
-export interface StandaloneRobotsEvidence {
-  robotsUrl?: string;
-  url?: string;
+export interface StandaloneCanonicalRobotsEvidence {
+  robotsUrl: string;
+  url: string;
   httpStatus: number;
-  fetchStatus?: 'found' | 'not_found' | 'forbidden' | 'error' | string;
-  status?: 'found' | 'not_found' | 'forbidden' | 'error' | string;
+  fetchStatus: 'found' | 'not_found' | 'forbidden' | 'error' | 'not_evaluated' | string;
+  status: 'found' | 'not_found' | 'forbidden' | 'error' | 'not_evaluated' | string;
   parserStatus?: 'valid' | 'empty' | 'not_present' | string;
   rawContent?: string;
-  selectedUserAgent?: string;
+  selectedUserAgent: string;
   selectedUserAgentGroup?: string;
-  allowDirectives?: string[];
-  disallowDirectives?: string[];
-  sitemapDeclarations?: string[];
-  sitemapsDeclared?: string[];
-  hasDirectives?: boolean;
-  policyOutcome?: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | string;
+  allowDirectives: string[];
+  disallowDirectives: string[];
+  sitemapDeclarations: string[];
+  sitemapsDeclared: string[];
+  hasDirectives: boolean;
+  policyOutcome: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | string;
 }
 
-export interface StandaloneSitemapEntry {
-  sitemapUrl?: string;
-  url?: string;
-  status: 'valid' | 'fetch_error' | 'parse_error' | string;
+export type StandaloneRobotsEvidence = Partial<StandaloneCanonicalRobotsEvidence>;
+
+export function normalizeRobotsEvidence(
+  raw?: StandaloneRobotsEvidence | Record<string, any>
+): StandaloneCanonicalRobotsEvidence | undefined {
+  if (!raw) return undefined;
+  const robotsUrl = raw.robotsUrl || raw.url || '';
+  const fetchStatus = raw.fetchStatus || raw.status || 'not_evaluated';
+  const sitemapDeclarations = Array.isArray(raw.sitemapDeclarations)
+    ? [...raw.sitemapDeclarations]
+    : Array.isArray(raw.sitemapsDeclared)
+    ? [...raw.sitemapsDeclared]
+    : [];
+
+  return {
+    robotsUrl,
+    url: robotsUrl,
+    httpStatus: typeof raw.httpStatus === 'number' ? raw.httpStatus : 0,
+    fetchStatus,
+    status: fetchStatus,
+    parserStatus: raw.parserStatus || (raw.rawContent ? 'valid' : 'not_present'),
+    rawContent: raw.rawContent,
+    selectedUserAgent: raw.selectedUserAgent || '*',
+    selectedUserAgentGroup: raw.selectedUserAgentGroup,
+    allowDirectives: Array.isArray(raw.allowDirectives) ? [...raw.allowDirectives] : [],
+    disallowDirectives: Array.isArray(raw.disallowDirectives) ? [...raw.disallowDirectives] : [],
+    sitemapDeclarations,
+    sitemapsDeclared: sitemapDeclarations,
+    hasDirectives: typeof raw.hasDirectives === 'boolean'
+      ? raw.hasDirectives
+      : Boolean((raw.allowDirectives?.length || 0) + (raw.disallowDirectives?.length || 0) > 0),
+    policyOutcome:
+      raw.policyOutcome ||
+      (fetchStatus === 'found'
+        ? 'enforced'
+        : fetchStatus === 'not_found'
+        ? 'not_present_permissive'
+        : 'fetch_failed_unverified'),
+  };
+}
+
+export interface StandaloneCanonicalSitemapEntry {
+  sitemapUrl: string;
+  url: string;
+  status: 'valid' | 'fetch_error' | 'parse_error' | 'unauthorized' | 'out_of_scope' | string;
+  fetchStatus: 'fetched' | 'fetch_error' | 'not_fetched' | 'out_of_scope' | string;
+  parseStatus: 'parsed' | 'parse_error' | 'not_parsed' | string;
   httpStatus?: number;
   errorMessage?: string;
   error?: string;
-  urlsCount?: number;
-  urlCount?: number;
-  urls?: string[];
-  isIndex?: boolean;
-  childSitemaps?: string[];
+  urlsCount: number;
+  urlCount: number;
+  urls: string[];
+  isIndex: boolean;
+  childSitemaps: string[];
   lastModified?: string;
 }
 
+export type StandaloneSitemapEntry = Partial<StandaloneCanonicalSitemapEntry>;
+
+export function normalizeSitemapEntry(raw: StandaloneSitemapEntry | Record<string, any>): StandaloneCanonicalSitemapEntry {
+  const sitemapUrl = raw.sitemapUrl || raw.url || '';
+  const errorMessage = raw.errorMessage || raw.error || undefined;
+  const urls = Array.isArray(raw.urls) ? [...raw.urls] : [];
+  const urlsCount = typeof raw.urlsCount === 'number'
+    ? raw.urlsCount
+    : typeof raw.urlCount === 'number'
+    ? raw.urlCount
+    : urls.length;
+  const status = raw.status || (errorMessage ? 'fetch_error' : 'valid');
+  const fetchStatus = raw.fetchStatus || (status === 'valid' ? 'fetched' : status === 'out_of_scope' ? 'out_of_scope' : 'fetch_error');
+  const parseStatus = raw.parseStatus || (status === 'valid' ? 'parsed' : status === 'parse_error' ? 'parse_error' : 'not_parsed');
+
+  return {
+    sitemapUrl,
+    url: sitemapUrl,
+    status,
+    fetchStatus,
+    parseStatus,
+    httpStatus: typeof raw.httpStatus === 'number' ? raw.httpStatus : undefined,
+    errorMessage,
+    error: errorMessage,
+    urlsCount,
+    urlCount: urlsCount,
+    urls,
+    isIndex: Boolean(raw.isIndex),
+    childSitemaps: Array.isArray(raw.childSitemaps) ? [...raw.childSitemaps] : [],
+    lastModified: raw.lastModified,
+  };
+}
+
+export interface StandaloneCanonicalSitemapEvidence {
+  sitemaps: StandaloneCanonicalSitemapEntry[];
+  sitemapsDiscovered: StandaloneCanonicalSitemapEntry[];
+  urls: string[];
+  allSitemapUrls: string[];
+  totalDiscoveredUrlsCount: number;
+  indexCount: number;
+  hasErrors: boolean;
+  errors: string[];
+}
+
 export interface StandaloneSitemapEvidence {
+  sitemaps?: StandaloneSitemapEntry[];
   sitemapsDiscovered?: StandaloneSitemapEntry[];
-  sitemaps?: StandaloneSitemapEntry[] | any[];
-  allSitemapUrls?: string[];
   urls?: string[];
+  allSitemapUrls?: string[];
   totalDiscoveredUrlsCount?: number;
   indexCount?: number;
   hasErrors?: boolean;
-  errors: string[];
+  errors?: string[];
+}
+
+export function normalizeSitemapEvidence(
+  raw?: StandaloneSitemapEvidence | Record<string, any>
+): StandaloneCanonicalSitemapEvidence | undefined {
+  if (!raw) return undefined;
+  const rawList = Array.isArray(raw.sitemaps)
+    ? raw.sitemaps
+    : Array.isArray(raw.sitemapsDiscovered)
+    ? raw.sitemapsDiscovered
+    : [];
+  const sitemaps = rawList.map(normalizeSitemapEntry);
+  const urls = Array.isArray(raw.urls)
+    ? [...raw.urls]
+    : Array.isArray(raw.allSitemapUrls)
+    ? [...raw.allSitemapUrls]
+    : [];
+  const errors = Array.isArray(raw.errors) ? [...raw.errors] : [];
+  const indexCount = typeof raw.indexCount === 'number' ? raw.indexCount : sitemaps.filter((s) => s.isIndex).length;
+
+  return {
+    sitemaps,
+    sitemapsDiscovered: sitemaps,
+    urls,
+    allSitemapUrls: urls,
+    totalDiscoveredUrlsCount: typeof raw.totalDiscoveredUrlsCount === 'number' ? raw.totalDiscoveredUrlsCount : urls.length,
+    indexCount,
+    hasErrors: Boolean(raw.hasErrors || errors.length > 0 || sitemaps.some((s) => s.status !== 'valid')),
+    errors,
+  };
 }
 
 export interface StandaloneAuditJob {
@@ -305,7 +422,7 @@ export interface StandaloneAuditJob {
   sequence?: number;
   stageCheckpoints?: StandaloneStageCheckpoints;
   authoritativeRunId?: string;
-  robotsPolicyStatus?: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified';
+  robotsPolicyStatus?: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | 'server_error_disallow';
   robotsEvidence?: StandaloneRobotsEvidence;
   sitemapEvidence?: StandaloneSitemapEvidence;
   config: StandaloneAuditConfig;

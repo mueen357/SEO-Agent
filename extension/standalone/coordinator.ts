@@ -13,6 +13,7 @@ import type {
   StandaloneTechFinding,
   StandaloneStageCheckpoints,
 } from './types';
+import { normalizeRobotsEvidence, normalizeSitemapEvidence } from './types';
 import { StandaloneAuditStorage } from './persistence/indexedDb';
 import { InBrowserCrawler } from './crawler/inBrowserCrawler';
 import { StandaloneRulesEngine } from './audit/clientRules';
@@ -378,8 +379,8 @@ export class StandaloneAuditCoordinator {
 
         job.stageCheckpoints.crawlingFinished = true;
         job.robotsPolicyStatus = crawler.getRobotsPolicyStatus();
-        job.robotsEvidence = crawler.getRobotsEvidence();
-        job.sitemapEvidence = crawler.getSitemapEvidence();
+        job.robotsEvidence = normalizeRobotsEvidence(crawler.getRobotsEvidence());
+        job.sitemapEvidence = normalizeSitemapEvidence(crawler.getSitemapEvidence());
         await StandaloneAuditStorage.saveJob(job);
       }
 
@@ -425,8 +426,8 @@ export class StandaloneAuditCoordinator {
 
         const { findings: allFindings, ledgerRecords: allLedger } =
           StandaloneRulesEngine.evaluateAudit(crawledPages, auditId, {
-            robotsEvidence: job.robotsEvidence,
-            sitemapEvidence: job.sitemapEvidence,
+            robotsEvidence: normalizeRobotsEvidence(job.robotsEvidence),
+            sitemapEvidence: normalizeSitemapEvidence(job.sitemapEvidence),
           });
 
         job.stageCheckpoints.seoFinished = true;

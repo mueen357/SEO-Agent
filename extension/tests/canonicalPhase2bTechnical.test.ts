@@ -22,7 +22,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { StandaloneAuditStorage } from '../standalone/persistence/indexedDb';
 import { StandaloneRulesEngine, type StandaloneAuditContext } from '../standalone/audit/clientRules';
 import { InBrowserCrawler, classifyResponse } from '../standalone/crawler/inBrowserCrawler';
-import { StandaloneSitemapParser, hasUnsafeXmlEntities } from '../standalone/crawler/sitemapParser';
+import { StandaloneSitemapParser, hasUnsafeXmlEntities, isSsrfTarget, readBoundedResponseBody } from '../standalone/crawler/sitemapParser';
 import { StandaloneScoringCalculator } from '../standalone/audit/scoring';
 import { StandaloneExporter } from '../standalone/export/exporter';
 import { CANONICAL_IMPLEMENTED_RULES } from '../standalone/audit/ruleMapping';
@@ -35,6 +35,7 @@ import type {
   StandaloneSeoFinding,
   StandaloneSitemapEvidence,
 } from '../standalone/types';
+import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../standalone/types';
 
 function createMockPage(
   id: string,
@@ -338,6 +339,9 @@ Sitemap: https://example.com/sitemap2.xml
     const resNotFound = StandaloneRulesEngine.evaluateSitewideDetailed([], 'audit-r2', ctxNotFound);
     const recNotFound = resNotFound.ledgerRecords.find((r) => r.canonicalRuleId === 'TECH_ROBOTS_FETCH_STATUS');
     expect(recNotFound?.executionStatus).toBe('executed_pass');
+    const recSmNotFound = resNotFound.ledgerRecords.find((r) => r.canonicalRuleId === 'TECH_ROBOTS_SITEMAP_DECLARATION');
+    expect(recSmNotFound?.executionStatus).toBe('not_applicable');
+    expect(recSmNotFound?.result).toBe('na');
 
     // HTTP 403 Forbidden is a warning
     const ctx403: StandaloneAuditContext = {
@@ -455,11 +459,14 @@ describe('Phase 2B.4: Safe XML Sitemap Discovery & Parsing (XXE Defense & Budget
   });
 
   it('evaluates TECH_SITEMAP_AVAILABILITY and TECH_SITEMAP_PARSE_ERROR', () => {
-    // 1. No sitemaps -> Warning
+    // 1. No sitemaps -> Warning for AVAILABILITY, not_applicable (na) for PARSE_ERROR (no false pass or error)
     const ctxNone: StandaloneAuditContext = { sitemapEvidence: { sitemaps: [], urls: [], errors: [] } };
     const resNone = StandaloneRulesEngine.evaluateSitewideDetailed([], 'audit-sm-none', ctxNone);
     const recAvailNone = resNone.ledgerRecords.find((r) => r.canonicalRuleId === 'TECH_SITEMAP_AVAILABILITY');
     expect(recAvailNone?.executionStatus).toBe('executed_warning');
+    const recParseNone = resNone.ledgerRecords.find((r) => r.canonicalRuleId === 'TECH_SITEMAP_PARSE_ERROR');
+    expect(recParseNone?.executionStatus).toBe('not_applicable');
+    expect(recParseNone?.result).toBe('na');
 
     // 2. Valid sitemaps -> Pass
     const ctxValid: StandaloneAuditContext = {
@@ -514,11 +521,12 @@ describe('Phase 2B.5: Page-Level Sitemap Conflict Rules', () => {
     expect(rec2?.executionStatus).toBe('executed_fail');
     expect(r2.findings.some((f) => f.ruleId === 'TECH_SITEMAP_URL_STATUS')).toBe(true);
 
-    // 3. Not in sitemap -> pass
+    // 3. Not in sitemap -> not_applicable (no false pass)
     const p3 = createMockPage('p3', 'https://example.com/not-in-sitemap', { httpStatus: 200 });
     const r3 = StandaloneRulesEngine.evaluatePageDetailed(p3, 'audit-sm-stat', auditContext);
     const rec3 = r3.ledgerRecords.find((r) => r.canonicalRuleId === 'TECH_SITEMAP_URL_STATUS');
-    expect(rec3?.executionStatus).toBe('executed_pass');
+    expect(rec3?.executionStatus).toBe('not_applicable');
+    expect(rec3?.result).toBe('na');
   });
 
   it('evaluates TECH_SITEMAP_NOINDEX_CONFLICT: fails when sitemap URL specifies noindex', () => {
@@ -615,4 +623,94 @@ describe('Phase 2B.6: Technical SEO Export Fidelity in JSON and CSV', () => {
     expect(csvStr).toContain('SITEMAP_INDEX');
     expect(csvStr).toContain('https://example.com/robots.txt');
   });
+
+  describe('Phase 2B Security & Evidence Contract Robustness', () => {
+    it('enforces exact authorized origin and port scope in StandaloneSitemapParser', () => {
+      const parser = new StandaloneSitemapParser({ authorizedOrigin: 'https://example.com' });
+
+      // Valid same origin & default port
+      expect(parser.isInScope('https://example.com/sitemap.xml')).toBe(true);
+      expect(parser.isInScope('https://example.com/posts/sitemap.xml')).toBe(true);
+
+      // Cross-origin: subdomain
+      expect(parser.isInScope('https://sub.example.com/sitemap.xml')).toBe(false);
+
+      // Cross-origin: different port
+      expect(parser.isInScope('https://example.com:8443/sitemap.xml')).toBe(false);
+
+      // Cross-origin: different protocol (http vs https)
+      expect(parser.isInScope('http://example.com/sitemap.xml')).toBe(false);
+
+      // Cross-origin: completely external
+      expect(parser.isInScope('https://attacker.com/sitemap.xml')).toBe(false);
+    });
+
+    it('blocks SSRF targets, loopback, private networks, and cloud metadata', () => {
+      // Cloud metadata
+      expect(isSsrfTarget('http://169.254.169.254/latest/meta-data')).toBe(true);
+      expect(isSsrfTarget('http://metadata.google.internal/computeMetadata/v1')).toBe(true);
+      expect(isSsrfTarget('http://instance-data/latest')).toBe(true);
+
+      // Loopback & private IP ranges
+      expect(isSsrfTarget('http://localhost:8080/sitemap.xml')).toBe(true);
+      expect(isSsrfTarget('http://127.0.0.1/sitemap.xml')).toBe(true);
+      expect(isSsrfTarget('http://10.0.0.1/sitemap.xml')).toBe(true);
+      expect(isSsrfTarget('http://192.168.1.1/sitemap.xml')).toBe(true);
+      expect(isSsrfTarget('http://172.20.0.1/sitemap.xml')).toBe(true);
+
+      // Embedded credentials
+      expect(isSsrfTarget('https://admin:secret@example.com/sitemap.xml')).toBe(true);
+
+      // Authorized public origin
+      expect(isSsrfTarget('https://example.com/sitemap.xml', 'https://example.com')).toBe(false);
+    });
+
+    it('readBoundedResponseBody enforces strict byte limits and aborts unbounded responses', async () => {
+      const encoder = new TextEncoder();
+
+      // 1. Within budget
+      const smallData = encoder.encode('<urlset></urlset>');
+      const smallResponse = new Response(smallData);
+      const content = await readBoundedResponseBody(smallResponse, 1024);
+      expect(content).toBe('<urlset></urlset>');
+
+      // 2. Exceeding byte budget (simulating streaming chunk over limit)
+      const largeChunk = new Uint8Array(2048).fill(65); // 2KB of 'A'
+      const largeResponse = new Response(largeChunk);
+      await expect(readBoundedResponseBody(largeResponse, 512)).rejects.toThrow(/exceeds maximum allowed size/i);
+    });
+
+    it('preserves canonical evidence properties and backward compatibility aliases', () => {
+      // Robots normalization
+      const normRobots = normalizeRobotsEvidence({
+        url: 'https://example.com/robots.txt',
+        status: 'found',
+        sitemapsDeclared: ['https://example.com/sitemap.xml'],
+      });
+      expect(normRobots).toBeDefined();
+      expect(normRobots?.robotsUrl).toBe('https://example.com/robots.txt');
+      expect(normRobots?.url).toBe('https://example.com/robots.txt');
+      expect(normRobots?.fetchStatus).toBe('found');
+      expect(normRobots?.status).toBe('found');
+      expect(normRobots?.sitemapDeclarations).toEqual(['https://example.com/sitemap.xml']);
+      expect(normRobots?.sitemapsDeclared).toEqual(['https://example.com/sitemap.xml']);
+      expect(normRobots?.policyOutcome).toBe('enforced');
+
+      // Sitemap normalization
+      const normSitemap = normalizeSitemapEvidence({
+        sitemaps: [{ url: 'https://example.com/sitemap.xml', status: 'valid', urlCount: 3 }],
+        urls: ['https://example.com/p1', 'https://example.com/p2'],
+      });
+      expect(normSitemap).toBeDefined();
+      expect(normSitemap?.sitemaps.length).toBe(1);
+      expect(normSitemap?.sitemaps[0]?.sitemapUrl).toBe('https://example.com/sitemap.xml');
+      expect(normSitemap?.sitemaps[0]?.url).toBe('https://example.com/sitemap.xml');
+      expect(normSitemap?.sitemaps[0]?.urlsCount).toBe(3);
+      expect(normSitemap?.sitemaps[0]?.urlCount).toBe(3);
+      expect(normSitemap?.totalDiscoveredUrlsCount).toBe(2);
+      expect(normSitemap?.urls.length).toBe(2);
+      expect(normSitemap?.allSitemapUrls?.length).toBe(2);
+    });
+  });
 });
+

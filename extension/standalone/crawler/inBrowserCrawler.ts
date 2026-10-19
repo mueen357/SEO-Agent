@@ -11,6 +11,7 @@ import type {
   StandaloneRobotsEvidence,
   StandaloneSitemapEvidence,
 } from '../types';
+import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { StandaloneDomParser } from '../audit/domParserEngine';
 import { StandaloneSitemapParser } from './sitemapParser';
 
@@ -77,11 +78,11 @@ export class InBrowserCrawler {
   private rules: RobotsRule[] = [];
   private selectedUserAgent: string = '*';
   private robotsFetched = false;
-  private robotsPolicyStatus: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' = 'not_present_permissive';
+  private robotsPolicyStatus: 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | 'server_error_disallow' = 'not_present_permissive';
   private robotsEvidence?: StandaloneRobotsEvidence;
   private sitemapEvidence?: StandaloneSitemapEvidence;
 
-  public getRobotsPolicyStatus(): 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' {
+  public getRobotsPolicyStatus(): 'enforced' | 'not_present_permissive' | 'fetch_failed_unverified' | 'forbidden' | 'server_error_disallow' {
     return this.robotsPolicyStatus;
   }
 
@@ -217,7 +218,7 @@ export class InBrowserCrawler {
         const text = await res.text();
         this.parseRobotsTxt(text);
         this.robotsPolicyStatus = 'enforced';
-        this.robotsEvidence = {
+        this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: 200,
           fetchStatus: 'found',
@@ -228,10 +229,10 @@ export class InBrowserCrawler {
           sitemapDeclarations: [...this.sitemapDeclarations],
           rawContent: text,
           policyOutcome: 'enforced',
-        };
+        })!;
       } else if (status === 404 || status === 410) {
         this.robotsPolicyStatus = 'not_present_permissive';
-        this.robotsEvidence = {
+        this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: status,
           fetchStatus: 'not_found',
@@ -241,10 +242,10 @@ export class InBrowserCrawler {
           disallowDirectives: [],
           sitemapDeclarations: [],
           policyOutcome: 'not_present_permissive',
-        };
+        })!;
       } else if (status === 403 || status === 401) {
-        this.robotsPolicyStatus = 'fetch_failed_unverified';
-        this.robotsEvidence = {
+        this.robotsPolicyStatus = 'forbidden';
+        this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: status,
           fetchStatus: 'forbidden',
@@ -253,11 +254,11 @@ export class InBrowserCrawler {
           allowDirectives: [],
           disallowDirectives: [],
           sitemapDeclarations: [],
-          policyOutcome: 'fetch_failed_unverified',
-        };
+          policyOutcome: 'forbidden',
+        })!;
       } else {
         this.robotsPolicyStatus = 'fetch_failed_unverified';
-        this.robotsEvidence = {
+        this.robotsEvidence = normalizeRobotsEvidence({
           robotsUrl,
           httpStatus: status,
           fetchStatus: 'error',
@@ -267,11 +268,11 @@ export class InBrowserCrawler {
           disallowDirectives: [],
           sitemapDeclarations: [],
           policyOutcome: 'fetch_failed_unverified',
-        };
+        })!;
       }
     } catch {
       this.robotsPolicyStatus = 'fetch_failed_unverified';
-      this.robotsEvidence = {
+      this.robotsEvidence = normalizeRobotsEvidence({
         robotsUrl,
         httpStatus: 0,
         fetchStatus: 'error',
@@ -281,7 +282,7 @@ export class InBrowserCrawler {
         disallowDirectives: [],
         sitemapDeclarations: [],
         policyOutcome: 'fetch_failed_unverified',
-      };
+      })!;
     }
 
     return this.robotsEvidence!;
@@ -350,6 +351,25 @@ export class InBrowserCrawler {
    * RFC 9309 compliant path matching with longest-match precedence and wildcard support.
    */
   public isAllowedByRobots(urlOrPath: string): boolean {
+    // RFC 9309 §2.3.1.3: 401/403 on robots.txt MUST assume full disallow
+    if (
+      this.robotsPolicyStatus === 'forbidden' ||
+      this.robotsEvidence?.fetchStatus === 'forbidden' ||
+      this.robotsEvidence?.httpStatus === 401 ||
+      this.robotsEvidence?.httpStatus === 403
+    ) {
+      return false;
+    }
+
+    // RFC 9309 §2.3.1.4: 5xx on robots.txt MUST assume full disallow
+    if (
+      this.robotsEvidence?.httpStatus &&
+      this.robotsEvidence.httpStatus >= 500 &&
+      this.robotsEvidence.httpStatus < 600
+    ) {
+      return false;
+    }
+
     if (this.rules.length === 0) {
       return true;
     }
@@ -411,7 +431,7 @@ export class InBrowserCrawler {
     // Standard sitemap fallback location
     seedSitemapUrls.push(`${this.origin}/sitemap.xml`);
 
-    const parser = new StandaloneSitemapParser({
+    const parser = new StandaloneSitemapParser(this.origin, {
       maxSitemaps: 10,
       maxDepth: 3,
       maxUrlsPerSitemap: 500,
@@ -420,10 +440,10 @@ export class InBrowserCrawler {
     });
 
     const evidence = await parser.discoverAndParse(seedSitemapUrls, this.origin);
-    this.sitemapEvidence = evidence;
+    this.sitemapEvidence = normalizeSitemapEvidence(evidence)!;
 
     // Enqueue discovered in-scope sitemap URLs up to maxPages budget
-    const discoveredUrls = evidence.urls || evidence.allSitemapUrls || [];
+    const discoveredUrls = this.sitemapEvidence.urls || [];
     for (const sitemapUrl of discoveredUrls) {
       const norm = this.normalizeUrl(sitemapUrl);
       if (this.isInScope(norm) && !this.seenUrls.has(norm)) {
@@ -435,7 +455,7 @@ export class InBrowserCrawler {
       }
     }
 
-    return evidence;
+    return this.sitemapEvidence;
   }
 
   public async run(callbacks: CrawlCallbacks): Promise<void> {

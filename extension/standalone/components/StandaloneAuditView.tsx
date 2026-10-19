@@ -26,6 +26,7 @@ import type {
   StandaloneSeoFinding,
   StandaloneTechFinding,
 } from '../types';
+import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { StandaloneAuditStorage } from '../persistence/indexedDb';
 import { standaloneCoordinator } from '../coordinator';
 import { StandaloneExporter } from '../export/exporter';
@@ -327,6 +328,8 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
 
   const scorecard = activeJob?.scorecard;
   const findingsSummary = StandaloneFindingsClassifier.classify(findings);
+  const robotsEvidence = normalizeRobotsEvidence(activeJob?.robotsEvidence);
+  const sitemapEvidence = normalizeSitemapEvidence(activeJob?.sitemapEvidence);
 
   return (
     <div className="flex flex-col h-full bg-slate-950 text-slate-100 p-4 space-y-4 overflow-y-auto font-sans">
@@ -727,14 +730,14 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   </div>
                   <span
                     className={`px-2 py-0.5 text-[10px] font-mono rounded uppercase ${
-                      activeJob.robotsEvidence?.status === 'found'
+                      robotsEvidence?.fetchStatus === 'found'
                         ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800'
-                        : activeJob.robotsEvidence?.status === 'not_found'
+                        : robotsEvidence?.fetchStatus === 'not_found'
                         ? 'bg-blue-950/60 text-blue-400 border border-blue-800'
                         : 'bg-amber-950/60 text-amber-400 border border-amber-800'
                     }`}
                   >
-                    {activeJob.robotsEvidence?.status || activeJob.robotsPolicyStatus || 'Unknown'}
+                    {robotsEvidence?.fetchStatus || activeJob.robotsPolicyStatus || 'Unknown'}
                   </span>
                 </div>
 
@@ -742,32 +745,32 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
                     <span className="text-slate-500 block uppercase">Fetch Status</span>
                     <span className="text-slate-200 font-semibold">
-                      {activeJob.robotsEvidence?.httpStatus ? `HTTP ${activeJob.robotsEvidence.httpStatus}` : (activeJob.robotsEvidence?.status || 'N/A')}
+                      {robotsEvidence?.httpStatus ? `HTTP ${robotsEvidence.httpStatus}` : (robotsEvidence?.fetchStatus || 'N/A')}
                     </span>
                   </div>
                   <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
                     <span className="text-slate-500 block uppercase">Policy Enforced</span>
-                    <span className="text-indigo-300 font-semibold">{activeJob.robotsPolicyStatus || 'not_present_permissive'}</span>
+                    <span className="text-indigo-300 font-semibold">{robotsEvidence?.policyOutcome || activeJob.robotsPolicyStatus || 'not_present_permissive'}</span>
                   </div>
                   <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
                     <span className="text-slate-500 block uppercase">Directives</span>
                     <span className="text-slate-200 font-semibold">
-                      +{activeJob.robotsEvidence?.allowDirectives?.length || 0} / -{activeJob.robotsEvidence?.disallowDirectives?.length || 0}
+                      +{robotsEvidence?.allowDirectives?.length || 0} / -{robotsEvidence?.disallowDirectives?.length || 0}
                     </span>
                   </div>
                   <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
                     <span className="text-slate-500 block uppercase">Sitemaps Declared</span>
                     <span className="text-emerald-400 font-semibold">
-                      {activeJob.robotsEvidence?.sitemapsDeclared?.length || 0}
+                      {robotsEvidence?.sitemapDeclarations?.length || 0}
                     </span>
                   </div>
                 </div>
 
-                {activeJob.robotsEvidence?.sitemapsDeclared && activeJob.robotsEvidence.sitemapsDeclared.length > 0 && (
+                {robotsEvidence?.sitemapDeclarations && robotsEvidence.sitemapDeclarations.length > 0 && (
                   <div className="text-[11px] space-y-1">
                     <span className="text-slate-400 font-medium">Declared Sitemaps:</span>
                     <div className="space-y-0.5">
-                      {activeJob.robotsEvidence.sitemapsDeclared.map((sm, i) => (
+                      {robotsEvidence.sitemapDeclarations.map((sm, i) => (
                         <div key={i} className="text-indigo-300 font-mono text-[10px] truncate bg-slate-950/40 px-2 py-1 rounded border border-slate-800/60">
                           {sm}
                         </div>
@@ -786,49 +789,51 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   </div>
                   <span
                     className={`px-2 py-0.5 text-[10px] font-mono rounded uppercase ${
-                      activeJob.sitemapEvidence?.sitemaps?.some((s) => s.status === 'valid' || s.status === 'success')
+                      sitemapEvidence?.sitemaps?.some((s) => s.status === 'valid' || s.status === 'success')
                         ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800'
-                        : activeJob.sitemapEvidence?.sitemaps && activeJob.sitemapEvidence.sitemaps.length > 0
+                        : sitemapEvidence?.sitemaps && sitemapEvidence.sitemaps.length > 0
                         ? 'bg-rose-950/60 text-rose-400 border border-rose-800'
                         : 'bg-slate-800 text-slate-400'
                     }`}
                   >
-                    {activeJob.sitemapEvidence?.sitemaps?.length ? `${activeJob.sitemapEvidence.sitemaps.length} Discovered` : 'None Discovered'}
+                    {sitemapEvidence?.sitemaps?.length ? `${sitemapEvidence.sitemaps.length} Discovered` : 'None Discovered'}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
                   <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
                     <span className="text-slate-500 block uppercase">Discovered Files</span>
-                    <span className="text-slate-200 font-semibold">{activeJob.sitemapEvidence?.sitemaps?.length || 0}</span>
+                    <span className="text-slate-200 font-semibold">{sitemapEvidence?.sitemaps?.length || 0}</span>
                   </div>
                   <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
                     <span className="text-slate-500 block uppercase">Total URLs Parsed</span>
-                    <span className="text-emerald-400 font-semibold">{activeJob.sitemapEvidence?.urls?.length || 0}</span>
+                    <span className="text-emerald-400 font-semibold">{sitemapEvidence?.urls?.length || 0}</span>
                   </div>
                   <div className="bg-slate-950/60 p-2 rounded border border-slate-800">
                     <span className="text-slate-500 block uppercase">Parse Errors</span>
-                    <span className={`font-semibold ${(activeJob.sitemapEvidence?.errors?.length || 0) > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
-                      {activeJob.sitemapEvidence?.errors?.length || 0}
+                    <span className={`font-semibold ${(sitemapEvidence?.errors?.length || 0) > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                      {sitemapEvidence?.errors?.length || 0}
                     </span>
                   </div>
                 </div>
 
-                {activeJob.sitemapEvidence?.sitemaps && activeJob.sitemapEvidence.sitemaps.length > 0 ? (
+                {sitemapEvidence?.sitemaps && sitemapEvidence.sitemaps.length > 0 ? (
                   <div className="space-y-1">
                     <span className="text-slate-400 font-medium text-[11px]">Sitemaps Processed:</span>
                     <div className="space-y-1 max-h-40 overflow-y-auto">
-                      {activeJob.sitemapEvidence.sitemaps.map((sm, i) => (
+                      {sitemapEvidence.sitemaps.map((sm, i) => (
                         <div key={i} className="flex items-center justify-between p-1.5 rounded bg-slate-950/60 border border-slate-800 text-[10px] font-mono">
-                          <span className="truncate flex-1 mr-2 text-slate-300">{sm.url || sm.sitemapUrl}</span>
+                          <span className="truncate flex-1 mr-2 text-slate-300">{sm.sitemapUrl || sm.url}</span>
                           <div className="flex items-center space-x-1.5 shrink-0">
-                            {(sm.urlCount !== undefined || sm.urlsCount !== undefined) && (
-                              <span className="text-slate-400">{sm.urlCount ?? sm.urlsCount} URLs</span>
+                            {(sm.urlsCount !== undefined || sm.urlCount !== undefined) && (
+                              <span className="text-slate-400">{sm.urlsCount ?? sm.urlCount} URLs</span>
                             )}
                             <span
                               className={`px-1.5 py-0.5 rounded text-[9px] uppercase ${
                                 sm.status === 'valid' || sm.status === 'success'
                                   ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800'
+                                  : sm.status === 'out_of_scope'
+                                  ? 'bg-blue-950/60 text-blue-400 border border-blue-800'
                                   : 'bg-rose-950/60 text-rose-400 border border-rose-800'
                               }`}
                             >

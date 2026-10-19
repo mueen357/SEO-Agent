@@ -13,7 +13,21 @@ import type {
   StandaloneRobotsEvidence,
   StandaloneSitemapEvidence,
 } from '../types';
+import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { classifyResponse } from '../crawler/inBrowserCrawler';
+
+export function normalizeCanonicalUrl(rawUrl: string, baseOrigin?: string): string {
+  try {
+    const u = baseOrigin ? new URL(rawUrl, baseOrigin) : new URL(rawUrl);
+    let path = u.pathname;
+    if (path.length > 1 && path.endsWith('/')) {
+      path = path.slice(0, -1);
+    }
+    return `${u.protocol}//${u.host.toLowerCase()}${path}${u.search}`;
+  } catch {
+    return rawUrl.trim().replace(/\/+$/, '').toLowerCase();
+  }
+}
 
 export interface PageEvaluationResult {
   findings: StandaloneSeoFinding[];
@@ -57,17 +71,12 @@ export class StandaloneRulesEngine {
       page.contentTypeCategory ||
       classifyResponse(page.httpStatus, page.fetchStatus, page.headers, page.errorCode, page.htmlSize);
 
-    const sitemapUrlList =
-      auditContext?.sitemapEvidence?.allSitemapUrls ||
-      auditContext?.sitemapEvidence?.urls ||
-      [];
+    const sitemapEvidence = normalizeSitemapEvidence(auditContext?.sitemapEvidence);
+    const sitemapUrlList = sitemapEvidence?.urls || [];
+    const normPageUrl = normalizeCanonicalUrl(page.url);
     const isInSitemap =
       page.isInSitemap ??
-      Boolean(
-        sitemapUrlList.some(
-          (u) => u.replace(/\/$/, '') === page.url.replace(/\/$/, '')
-        )
-      );
+      Boolean(sitemapUrlList.some((u) => normalizeCanonicalUrl(u) === normPageUrl));
 
     // Helper to push a ledger record
     const recordLedger = (
@@ -330,7 +339,13 @@ export class StandaloneRulesEngine {
 
     // 8. TECH_SITEMAP_URL_STATUS
     if (!isInSitemap) {
-      recordLedger('TECH_SITEMAP_URL_STATUS', 'executed_pass', 'pass', true, 'URL not listed in XML sitemap');
+      recordLedger(
+        'TECH_SITEMAP_URL_STATUS',
+        'not_applicable',
+        'na',
+        false,
+        'URL not listed in XML sitemap'
+      );
     } else {
       if (page.httpStatus === 200) {
         recordLedger('TECH_SITEMAP_URL_STATUS', 'executed_pass', 'pass', true, 'Sitemap URL returns HTTP 200 OK');
@@ -366,6 +381,14 @@ export class StandaloneRulesEngine {
         'na',
         false,
         'URL is not in an XML sitemap'
+      );
+    } else if (page.fetchStatus !== 'success' || (page.httpStatus < 200 || page.httpStatus >= 400)) {
+      recordLedger(
+        'TECH_SITEMAP_NOINDEX_CONFLICT',
+        'not_evaluated',
+        'unknown',
+        false,
+        'Page indexing evidence unavailable for sitemap URL'
       );
     } else {
       const metaRobots = (page.metaRobots || page.evidence?.metaRobots || '').toLowerCase();
@@ -428,8 +451,8 @@ export class StandaloneRulesEngine {
           'Sitemap URL has no canonical declaration'
         );
       } else {
-        const normPage = page.url.replace(/\/$/, '');
-        const normCan = canonical.replace(/\/$/, '');
+        const normPage = normalizeCanonicalUrl(page.url);
+        const normCan = normalizeCanonicalUrl(canonical, page.url);
         if (normPage !== normCan) {
           recordLedger(
             'TECH_SITEMAP_CANONICAL_CONFLICT',
@@ -1061,8 +1084,12 @@ export class StandaloneRulesEngine {
   ): PageEvaluationResult {
     const findings: StandaloneSeoFinding[] = [];
     const ledgerRecords: StandaloneRuleExecutionRecord[] = [];
+    const seedUrl =
+      pages[0]?.url ||
+      auditContext?.robotsEvidence?.robotsUrl ||
+      auditContext?.robotsEvidence?.url ||
+      '';
     const now = Date.now();
-    const seedUrl = pages[0]?.url || auditContext?.robotsEvidence?.url || '';
 
     const recordLedger = (
       canonicalRuleId: string,
@@ -1199,14 +1226,15 @@ export class StandaloneRulesEngine {
     }
 
     // 3. TECH_ROBOTS_FETCH_STATUS (site-level)
-    const robotsStatus = auditContext?.robotsEvidence?.status;
-    if (!robotsStatus) {
+    const robotsEvidence = normalizeRobotsEvidence(auditContext?.robotsEvidence);
+    const robotsStatus = robotsEvidence?.fetchStatus;
+    if (!robotsStatus || robotsStatus === 'not_evaluated') {
       recordLedger(
         'TECH_ROBOTS_FETCH_STATUS',
-        'unknown',
+        'not_evaluated',
         'unknown',
         false,
-        'Robots.txt status unknown or not recorded'
+        'Robots.txt status unknown or not evaluated'
       );
     } else if (robotsStatus === 'found') {
       recordLedger(
@@ -1269,40 +1297,59 @@ export class StandaloneRulesEngine {
     }
 
     // 4. TECH_ROBOTS_SITEMAP_DECLARATION (site-level)
-    const declaredSitemaps = auditContext?.robotsEvidence?.sitemapsDeclared || [];
-    if (declaredSitemaps.length > 0) {
+    if (!robotsStatus || robotsStatus === 'not_evaluated' || robotsStatus === 'error' || robotsStatus === 'forbidden') {
       recordLedger(
         'TECH_ROBOTS_SITEMAP_DECLARATION',
-        'executed_pass',
-        'pass',
-        true,
-        `robots.txt declares ${declaredSitemaps.length} XML sitemap URL(s)`
+        'not_evaluated',
+        'unknown',
+        false,
+        `Robots.txt sitemap declaration cannot be verified (robots status: ${robotsStatus || 'unknown'})`
+      );
+    } else if (robotsStatus === 'not_found') {
+      recordLedger(
+        'TECH_ROBOTS_SITEMAP_DECLARATION',
+        'not_applicable',
+        'na',
+        false,
+        'robots.txt absent (HTTP 404); no sitemap declarations possible via robots.txt'
       );
     } else {
-      recordLedger(
-        'TECH_ROBOTS_SITEMAP_DECLARATION',
-        'executed_warning',
-        'warning',
-        true,
-        'No sitemap declaration in robots.txt'
-      );
-      findings.push({
-        id: `${auditId}-sitewide-robots-no-sitemap`,
-        auditId,
-        ruleId: 'TECH_ROBOTS_SITEMAP_DECLARATION',
-        category: 'technical',
-        severity: 'low',
-        status: 'warning',
-        title: 'No sitemap declaration in robots.txt',
-        description: "robots.txt does not declare any 'Sitemap:' directives. While optional, declaring sitemaps in robots.txt accelerates search engine discovery.",
-        recommendation: "Add 'Sitemap: https://yourdomain.com/sitemap.xml' to the end of robots.txt.",
-        pageUrl: seedUrl,
-        evidence: { robotsTxtPresent: Boolean(auditContext?.robotsEvidence?.rawContent) },
-      });
+      const declaredSitemaps = robotsEvidence?.sitemapDeclarations || [];
+      if (declaredSitemaps.length > 0) {
+        recordLedger(
+          'TECH_ROBOTS_SITEMAP_DECLARATION',
+          'executed_pass',
+          'pass',
+          true,
+          `robots.txt declares ${declaredSitemaps.length} XML sitemap URL(s)`
+        );
+      } else {
+        recordLedger(
+          'TECH_ROBOTS_SITEMAP_DECLARATION',
+          'executed_warning',
+          'warning',
+          true,
+          'No sitemap declaration in robots.txt'
+        );
+        findings.push({
+          id: `${auditId}-sitewide-robots-no-sitemap`,
+          auditId,
+          ruleId: 'TECH_ROBOTS_SITEMAP_DECLARATION',
+          category: 'technical',
+          severity: 'low',
+          status: 'warning',
+          title: 'No sitemap declaration in robots.txt',
+          description: "robots.txt does not declare any 'Sitemap:' directives. While optional, declaring sitemaps in robots.txt accelerates search engine discovery.",
+          recommendation: "Add 'Sitemap: https://yourdomain.com/sitemap.xml' to the end of robots.txt.",
+          pageUrl: seedUrl,
+          evidence: { robotsTxtPresent: Boolean(robotsEvidence?.rawContent) },
+        });
+      }
     }
 
     // 5. TECH_SITEMAP_AVAILABILITY (site-level)
-    const sitemaps = auditContext?.sitemapEvidence?.sitemaps || [];
+    const sitemapEvidence = normalizeSitemapEvidence(auditContext?.sitemapEvidence);
+    const sitemaps = sitemapEvidence?.sitemaps || [];
     if (sitemaps.length === 0) {
       recordLedger(
         'TECH_SITEMAP_AVAILABILITY',
@@ -1359,16 +1406,26 @@ export class StandaloneRulesEngine {
     }
 
     // 6. TECH_SITEMAP_PARSE_ERROR (site-level)
-    const erroredSitemaps = sitemaps.filter(
-      (s) => s.status === 'parse_error' || s.status === 'fetch_error'
+    const fetchedSitemaps = sitemaps.filter(
+      (s) => s.fetchStatus === 'fetched' || s.status === 'valid' || s.status === 'parse_error'
     );
-    if (erroredSitemaps.length > 0) {
+    const parseErrorSitemaps = sitemaps.filter((s) => s.status === 'parse_error');
+
+    if (fetchedSitemaps.length === 0) {
+      recordLedger(
+        'TECH_SITEMAP_PARSE_ERROR',
+        'not_applicable',
+        'na',
+        false,
+        'No XML sitemaps were successfully retrieved to parse'
+      );
+    } else if (parseErrorSitemaps.length > 0) {
       recordLedger(
         'TECH_SITEMAP_PARSE_ERROR',
         'executed_fail',
         'fail',
         true,
-        `Encountered errors processing ${erroredSitemaps.length} sitemap(s)`
+        `Encountered XML parse errors in ${parseErrorSitemaps.length} sitemap(s)`
       );
       findings.push({
         id: `${auditId}-sitewide-sitemap-parse-errors`,
@@ -1377,17 +1434,17 @@ export class StandaloneRulesEngine {
         category: 'technical',
         severity: 'high',
         status: 'fail',
-        title: 'XML sitemap parse or fetch errors',
-        description: `Encountered errors processing ${erroredSitemaps.length} sitemap(s). Invalid XML prevents search engines from parsing submitted URLs.`,
+        title: 'XML sitemap parse errors',
+        description: `Encountered parse errors in ${parseErrorSitemaps.length} sitemap(s). Invalid XML prevents search engines from parsing submitted URLs.`,
         recommendation: 'Validate XML syntax and ensure sitemap endpoints return valid, uncorrupted XML documents.',
         pageUrl: seedUrl,
         evidence: {
-          erroredSitemaps: erroredSitemaps.map((e) => ({
-            url: e.url,
-            error: e.error,
+          erroredSitemaps: parseErrorSitemaps.map((e) => ({
+            url: e.sitemapUrl || e.url,
+            error: e.errorMessage || e.error,
             status: e.status,
           })),
-          errorCount: erroredSitemaps.length,
+          errorCount: parseErrorSitemaps.length,
         },
       });
     } else {
@@ -1396,7 +1453,7 @@ export class StandaloneRulesEngine {
         'executed_pass',
         'pass',
         true,
-        sitemaps.length > 0 ? 'All processed sitemaps parsed cleanly' : 'No sitemaps discovered; no parse errors'
+        `All ${fetchedSitemaps.length} retrieved XML sitemap(s) parsed cleanly`
       );
     }
 

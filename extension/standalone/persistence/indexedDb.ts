@@ -28,6 +28,7 @@ export class StandaloneAuditStorage {
     this.inMemoryFindings.clear();
     this.inMemoryTechnologies.clear();
     this.inMemoryExecutionLedger.clear();
+    this.dbPromise = null;
   }
 
   public static async getDb(): Promise<IDBDatabase> {

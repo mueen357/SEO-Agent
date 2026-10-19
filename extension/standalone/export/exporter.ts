@@ -11,6 +11,7 @@ import type {
   StandaloneSeoFinding,
   StandaloneTechFinding,
 } from '../types';
+import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { StandaloneFindingsClassifier } from '../audit/findingsClassifier';
 
 export class StandaloneExporter {
@@ -22,17 +23,19 @@ export class StandaloneExporter {
     executionLedger?: StandaloneRuleExecutionRecord[]
   ): string {
     const findingsSummary = StandaloneFindingsClassifier.classify(findings);
+    const normRobots = normalizeRobotsEvidence(job.robotsEvidence);
+    const normSitemap = normalizeSitemapEvidence(job.sitemapEvidence);
 
     const data = {
       exportVersion: '2.0.0',
       exportedAt: new Date().toISOString(),
       audit: job,
-      robotsEvidence: job.robotsEvidence,
-      sitemapEvidence: job.sitemapEvidence
+      robotsEvidence: normRobots,
+      sitemapEvidence: normSitemap
         ? {
-            sitemaps: job.sitemapEvidence.sitemaps,
-            totalUrls: job.sitemapEvidence.urls?.length || 0,
-            errors: job.sitemapEvidence.errors,
+            sitemaps: normSitemap.sitemaps,
+            totalUrls: normSitemap.urls.length,
+            errors: normSitemap.errors,
           }
         : undefined,
       scorecard: job.scorecard,
@@ -107,26 +110,28 @@ export class StandaloneExporter {
     }
 
     // Robots.txt & Sitemap summary rows
-    if (job.robotsEvidence) {
+    const normRobots = normalizeRobotsEvidence(job.robotsEvidence);
+    if (normRobots) {
       rows.push(
         [
           'ROBOTS_TXT',
-          this.escapeCsv(job.robotsEvidence.url || job.robotsEvidence.robotsUrl || ''),
-          this.escapeCsv(job.robotsEvidence.status || job.robotsEvidence.fetchStatus || ''),
-          this.escapeCsv(String(job.robotsEvidence.httpStatus || '')),
-          this.escapeCsv(`Policy: ${job.robotsPolicyStatus || 'unspecified'}`),
-          this.escapeCsv(`Sitemaps Declared: ${job.robotsEvidence.sitemapsDeclared?.length || 0}`),
+          this.escapeCsv(normRobots.robotsUrl),
+          this.escapeCsv(normRobots.fetchStatus),
+          this.escapeCsv(String(normRobots.httpStatus || '')),
+          this.escapeCsv(`Policy: ${normRobots.policyOutcome || job.robotsPolicyStatus || 'unspecified'}`),
+          this.escapeCsv(`Sitemaps Declared: ${normRobots.sitemapDeclarations.length}`),
         ].join(',')
       );
     }
-    if (job.sitemapEvidence) {
+    const normSitemap = normalizeSitemapEvidence(job.sitemapEvidence);
+    if (normSitemap) {
       rows.push(
         [
           'SITEMAP_INDEX',
           this.escapeCsv(job.targetUrl),
-          this.escapeCsv(`Discovered: ${job.sitemapEvidence.sitemaps?.length || 0}`),
-          this.escapeCsv(`URLs: ${job.sitemapEvidence.urls?.length || 0}`),
-          this.escapeCsv(`Errors: ${job.sitemapEvidence.errors?.length || 0}`),
+          this.escapeCsv(`Discovered: ${normSitemap.sitemaps.length}`),
+          this.escapeCsv(`URLs: ${normSitemap.urls.length}`),
+          this.escapeCsv(`Errors: ${normSitemap.errors.length}`),
           this.escapeCsv('XML Sitemap Analysis Summary'),
         ].join(',')
       );
@@ -210,7 +215,7 @@ export class StandaloneExporter {
     this.triggerDownload(blob, `audit-${job.hostname}-${Date.now()}.csv`);
   }
 
-  private static escapeCsv(field: string): string {
+  private static escapeCsv(field?: string | null): string {
     if (!field) return '""';
     const clean = field.replace(/"/g, '""');
     return `"${clean}"`;
