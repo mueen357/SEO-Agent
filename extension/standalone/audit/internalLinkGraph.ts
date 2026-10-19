@@ -47,11 +47,17 @@ export class StandaloneInternalLinkGraph {
   // Index pages by normalized URL
   public readonly urlToPage = new Map<string, StandaloneCrawlPage>();
 
-  // Graph adjacency
+  // Graph adjacency - Unique source-destination edges (for topology)
   public readonly inboundSources = new Map<string, Set<string>>();
   public readonly outboundDestinations = new Map<string, Set<string>>();
   public readonly inboundEdges = new Map<string, StandaloneLinkEdge[]>();
   public readonly outboundEdges = new Map<string, StandaloneLinkEdge[]>();
+
+  // Raw link occurrences (for frequency and anchor text counting)
+  public readonly rawInboundEdges = new Map<string, StandaloneLinkEdge[]>();
+  public readonly rawOutboundEdges = new Map<string, StandaloneLinkEdge[]>();
+  public totalRawLinkOccurrences = 0;
+  public totalUniqueEdges = 0;
 
   // Broken / redirect tracking
   public readonly broken4xxLinks: Array<{ sourcePage: StandaloneCrawlPage; edge: StandaloneLinkEdge; destPage?: StandaloneCrawlPage; observedStatus?: ObservedUrlStatus }> = [];
@@ -97,6 +103,8 @@ export class StandaloneInternalLinkGraph {
       if (!this.outboundDestinations.has(norm)) this.outboundDestinations.set(norm, new Set());
       if (!this.inboundEdges.has(norm)) this.inboundEdges.set(norm, []);
       if (!this.outboundEdges.has(norm)) this.outboundEdges.set(norm, []);
+      if (!this.rawInboundEdges.has(norm)) this.rawInboundEdges.set(norm, []);
+      if (!this.rawOutboundEdges.has(norm)) this.rawOutboundEdges.set(norm, []);
     }
 
     // 2. Process observed outbound hyperlinks from each crawled page
@@ -150,24 +158,32 @@ export class StandaloneInternalLinkGraph {
           sourcePageId: srcPage.id,
         };
 
-        // Record adjacency
-        if (!this.outboundDestinations.has(srcNorm)) this.outboundDestinations.set(srcNorm, new Set());
-        this.outboundDestinations.get(srcNorm)!.add(destNorm);
+        // Always record raw link occurrence
+        this.totalRawLinkOccurrences++;
+        if (!this.rawOutboundEdges.has(srcNorm)) this.rawOutboundEdges.set(srcNorm, []);
+        this.rawOutboundEdges.get(srcNorm)!.push(edge);
 
-        if (!this.outboundEdges.has(srcNorm)) this.outboundEdges.set(srcNorm, []);
-        this.outboundEdges.get(srcNorm)!.push(edge);
+        if (!this.rawInboundEdges.has(destNorm)) this.rawInboundEdges.set(destNorm, []);
+        this.rawInboundEdges.get(destNorm)!.push(edge);
 
-        if (!this.inboundSources.has(destNorm)) this.inboundSources.set(destNorm, new Set());
-        this.inboundSources.get(destNorm)!.add(srcNorm);
-
-        if (!this.inboundEdges.has(destNorm)) this.inboundEdges.set(destNorm, []);
-        this.inboundEdges.get(destNorm)!.push(edge);
-
-        // Check destination status if visited or observed during crawl
-        // Avoid duplicate anomaly records if this page repeats the same link
+        // Deduplicate by unique source + destination identity for topology
         if (!seenOnThisPage.has(destNorm)) {
           seenOnThisPage.add(destNorm);
+          this.totalUniqueEdges++;
 
+          if (!this.outboundDestinations.has(srcNorm)) this.outboundDestinations.set(srcNorm, new Set());
+          this.outboundDestinations.get(srcNorm)!.add(destNorm);
+
+          if (!this.outboundEdges.has(srcNorm)) this.outboundEdges.set(srcNorm, []);
+          this.outboundEdges.get(srcNorm)!.push(edge);
+
+          if (!this.inboundSources.has(destNorm)) this.inboundSources.set(destNorm, new Set());
+          this.inboundSources.get(destNorm)!.add(srcNorm);
+
+          if (!this.inboundEdges.has(destNorm)) this.inboundEdges.set(destNorm, []);
+          this.inboundEdges.get(destNorm)!.push(edge);
+
+          // Check destination status if visited or observed during crawl
           const destPage = this.urlToPage.get(destNorm);
           const observedStatus = observedUrlMap?.get(destNorm);
 
@@ -219,7 +235,7 @@ export class StandaloneInternalLinkGraph {
 
     const inboundSrcs = this.inboundSources.get(norm) || new Set<string>();
     const outboundDests = this.outboundDestinations.get(norm) || new Set<string>();
-    const totalIn = (this.inboundEdges.get(norm) || []).length;
+    const rawIn = (this.rawInboundEdges.get(norm) || []).length;
 
     const isSeed = (norm === this.seedUrl) || (norm === normalizeGraphUrl(this.seedUrl)) || (page && page === this.pages[0]);
     const isSitemapOnly = this.sitemapUrls.has(norm) && inboundSrcs.size === 0 && !isSeed;
@@ -243,7 +259,8 @@ export class StandaloneInternalLinkGraph {
       httpStatus,
       inboundUniquePages: inboundSrcs.size,
       outboundUniquePages: outboundDests.size,
-      totalInboundLinks: totalIn,
+      totalInboundLinks: rawIn,
+      totalRawInboundLinks: rawIn,
       isSitemapOnly,
       isSeed: Boolean(isSeed),
       brokenOutlinksCount: brokenOut,
@@ -253,12 +270,18 @@ export class StandaloneInternalLinkGraph {
 
   public getSummary(auditId: string = ''): StandaloneLinkGraphSummary {
     const totalNodes = this.pages.length;
-    let totalInternalEdges = 0;
-    for (const edges of this.outboundEdges.values()) {
-      totalInternalEdges += edges.length;
-    }
-
+    const totalUniqueEdges = this.totalUniqueEdges;
+    const totalRawLinkOccurrences = this.totalRawLinkOccurrences;
     const uniqueDestinations = this.inboundSources.size;
+
+    const uniqueBrokenDestinations = new Set([
+      ...this.broken4xxLinks.map((b) => b.edge.destinationUrl),
+      ...this.broken5xxLinks.map((b) => b.edge.destinationUrl),
+    ]).size;
+
+    const uniqueRedirectDestinations = new Set(
+      this.redirectLinks.map((r) => r.edge.destinationUrl)
+    ).size;
 
     const orphanCandidates = this.pages.filter((p) => {
       const norm = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
@@ -286,14 +309,16 @@ export class StandaloneInternalLinkGraph {
     return {
       auditId,
       totalNodes,
-      totalInternalEdges,
+      totalInternalEdges: totalUniqueEdges,
+      totalUniqueEdges,
+      totalRawLinkOccurrences,
       totalInternalPages: totalNodes,
-      totalInternalLinks: totalInternalEdges,
+      totalInternalLinks: totalRawLinkOccurrences,
       uniqueDestinations,
       orphanCount: orphanCandidates.length,
       lowInlinkCount: lowInlinkCandidates.length,
-      brokenLinkDestinations: this.broken4xxLinks.length + this.broken5xxLinks.length,
-      redirectDestinations: this.redirectLinks.length,
+      brokenLinkDestinations: uniqueBrokenDestinations,
+      redirectDestinations: uniqueRedirectDestinations,
       maxCrawlDepth,
       sitemapOnlyCount,
       crawlCompletenessCaveat: 'Observed crawl graph is sampled; pages not discovered during crawl may have links not captured here.',

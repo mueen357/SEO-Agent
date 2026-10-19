@@ -73,8 +73,8 @@ describe('Phase 2D-A: Site-Wide SEO & Internal Link Graph', () => {
   // 1. RULE IMPLEMENTATION INVENTORY
   // =========================================================================
   describe('1. Rule Implementation Totals', () => {
-    it('implements exactly 45 canonical rules (16 On-Page, 22 Technical, 7 Site-Wide)', () => {
-      expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(45);
+    it('implements all 51 canonical rules (16 On-Page, 22 Technical, 13 Site-Wide)', () => {
+      expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(51);
 
       const onPage = CANONICAL_51_RULES.on_page.filter((r) => CANONICAL_IMPLEMENTED_RULES.has(r));
       const technical = CANONICAL_51_RULES.technical.filter((r) => CANONICAL_IMPLEMENTED_RULES.has(r));
@@ -82,8 +82,8 @@ describe('Phase 2D-A: Site-Wide SEO & Internal Link Graph', () => {
 
       expect(onPage.length).toBe(16);
       expect(technical.length).toBe(22);
-      expect(sitewide.length).toBe(7);
-      expect(onPage.length + technical.length + sitewide.length).toBe(45);
+      expect(sitewide.length).toBe(13);
+      expect(onPage.length + technical.length + sitewide.length).toBe(51);
     });
 
     it('verifies the 5 newly implemented Phase 2D-A Site-Wide rules are in CANONICAL_IMPLEMENTED_RULES', () => {

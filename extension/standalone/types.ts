@@ -64,6 +64,7 @@ export interface StandalonePageNodeMetrics {
   inboundUniquePages: number;
   outboundUniquePages: number;
   totalInboundLinks: number;
+  totalRawInboundLinks?: number;
   isSitemapOnly: boolean;
   isSeed: boolean;
   brokenOutlinksCount: number;
@@ -85,6 +86,8 @@ export interface StandaloneLinkGraphSummary {
   nodes: StandalonePageNodeMetrics[];
   totalInternalPages?: number;
   totalInternalLinks?: number;
+  totalRawLinkOccurrences?: number;
+  totalUniqueEdges?: number;
   orphanPages?: string[];
   lowInlinkPages?: string[];
   deepCrawlPages?: string[];
@@ -175,6 +178,12 @@ export interface StandaloneCrawlPage {
   htmlSize: number;
   responseTimeMs: number;
   fetchedAt: number;
+  normalizedMainTextHash?: string;
+  mainTextWordCount?: number;
+  mainTextSimhash?: string;
+  contentQualityStatus?: 'empty' | 'thin' | 'usable' | 'sufficient' | 'non_html';
+  extractionSource?: string;
+  mainTextExcerpt?: string;
   evidence?: import('./audit/domParserEngine').ParsedHtmlEvidence;
 }
 

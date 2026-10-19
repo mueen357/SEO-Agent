@@ -1283,6 +1283,12 @@ export class InBrowserCrawler {
             fetchedAt: Date.now(),
             isInSitemap,
             contentTypeCategory: 'HTML_DOCUMENT',
+            normalizedMainTextHash: parsedEvidence.normalizedMainTextHash,
+            mainTextWordCount: parsedEvidence.mainTextWordCount,
+            mainTextSimhash: parsedEvidence.mainTextSimhash,
+            contentQualityStatus: parsedEvidence.contentQualityStatus,
+            extractionSource: parsedEvidence.extractionSource,
+            mainTextExcerpt: parsedEvidence.mainTextExcerpt,
             evidence: parsedEvidence, // Retain original full evidence
           };
 

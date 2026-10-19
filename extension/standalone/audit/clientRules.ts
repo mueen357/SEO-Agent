@@ -18,6 +18,14 @@ import type {
 import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
 import { classifyResponse } from '../crawler/inBrowserCrawler';
 import { StandaloneInternalLinkGraph, normalizeGraphUrl } from './internalLinkGraph';
+import {
+  computeContentSha256,
+  computeSimHash64,
+  simhashHammingDistance,
+  simhashSimilarity,
+  lengthSimilarity,
+  extractMainContent,
+} from './contentFingerprint';
 
 export function normalizeCanonicalUrl(rawUrl: string, baseOrigin?: string): string {
   try {
@@ -1908,8 +1916,268 @@ export class StandaloneRulesEngine {
   }
 
   /**
-   * Evaluates sitewide canonical rules and records execution outcomes in the ledger.
+   * Helper to retrieve or calculate content fingerprints for a page.
    */
+  public static getPageContentFingerprints(p: StandaloneCrawlPage): {
+    normalizedMainTextHash: string;
+    mainTextWordCount: number;
+    mainTextSimhash: string;
+    contentQualityStatus: string;
+  } {
+    if (p.normalizedMainTextHash && p.mainTextSimhash) {
+      return {
+        normalizedMainTextHash: p.normalizedMainTextHash,
+        mainTextWordCount: p.mainTextWordCount ?? 0,
+        mainTextSimhash: p.mainTextSimhash,
+        contentQualityStatus: p.contentQualityStatus ?? 'usable',
+      };
+    }
+    if (p.evidence?.normalizedMainTextHash && p.evidence?.mainTextSimhash) {
+      return {
+        normalizedMainTextHash: p.evidence.normalizedMainTextHash,
+        mainTextWordCount: p.evidence.mainTextWordCount ?? 0,
+        mainTextSimhash: p.evidence.mainTextSimhash,
+        contentQualityStatus: p.evidence.contentQualityStatus ?? 'usable',
+      };
+    }
+    const rawHtml = (p as any).rawHtml || (p as any).html;
+    if (rawHtml) {
+      const res = extractMainContent(rawHtml, p.url);
+      return {
+        normalizedMainTextHash: res.normalizedMainTextHash,
+        mainTextWordCount: res.wordCount,
+        mainTextSimhash: res.mainTextSimhash,
+        contentQualityStatus: res.contentQualityStatus,
+      };
+    }
+    return {
+      normalizedMainTextHash: p.normalizedMainTextHash || '',
+      mainTextWordCount: p.mainTextWordCount ?? 0,
+      mainTextSimhash: p.mainTextSimhash || '0'.repeat(16),
+      contentQualityStatus: p.contentQualityStatus || 'empty',
+    };
+  }
+
+  /**
+   * Performs pairwise SimHash-64 comparison and Bron-Kerbosch maximal clique clustering.
+   * Matches backend duplicate_content.py semantics and prevents transitive A-B-C similarity bridging.
+   */
+  public static detectNearDuplicateClusters(eligiblePages: StandaloneCrawlPage[]): {
+    clusters: StandaloneCrawlPage[][];
+    incompleteAnalysis: boolean;
+    safetyLimitHit: boolean;
+  } {
+    // Exclude exact duplicates from near-duplicate grouping
+    const hashToPages = new Map<string, StandaloneCrawlPage[]>();
+    for (const p of eligiblePages) {
+      const { normalizedMainTextHash } = this.getPageContentFingerprints(p);
+      if (!hashToPages.has(normalizedMainTextHash)) hashToPages.set(normalizedMainTextHash, []);
+      hashToPages.get(normalizedMainTextHash)!.push(p);
+    }
+    const exactHashes = new Set<string>();
+    for (const [h, pList] of hashToPages.entries()) {
+      const distinct = new Set(pList.map((p) => normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url)));
+      if (distinct.size > 1) {
+        exactHashes.add(h);
+      }
+    }
+
+    // Keep one representative per exact hash for near-duplicate search
+    const repPages: StandaloneCrawlPage[] = [];
+    const seenExact = new Set<string>();
+    for (const p of eligiblePages) {
+      const { normalizedMainTextHash } = this.getPageContentFingerprints(p);
+      if (exactHashes.has(normalizedMainTextHash)) {
+        if (!seenExact.has(normalizedMainTextHash)) {
+          repPages.push(p);
+          seenExact.add(normalizedMainTextHash);
+        }
+      } else {
+        repPages.push(p);
+      }
+    }
+
+    // Disjoint Set Union (DSU)
+    const parent = new Map<string, string>();
+    for (const p of repPages) {
+      parent.set(p.id, p.id);
+    }
+
+    function find(i: string): string {
+      const root = parent.get(i) || i;
+      if (root === i) return i;
+      const res = find(root);
+      parent.set(i, res);
+      return res;
+    }
+
+    function union(i: string, j: string): void {
+      const rootI = find(i);
+      const rootJ = find(j);
+      if (rootI !== rootJ) {
+        parent.set(rootI, rootJ);
+      }
+    }
+
+    const nearPairSet = new Set<string>();
+    const makePairKey = (id1: string, id2: string) => (id1 < id2 ? `${id1}::${id2}` : `${id2}::${id1}`);
+
+    const n = repPages.length;
+    for (let i = 0; i < n; i++) {
+      const p1 = repPages[i];
+      if (!p1) continue;
+      const fp1 = this.getPageContentFingerprints(p1);
+      const w1 = fp1.mainTextWordCount || 1;
+      const sh1 = fp1.mainTextSimhash;
+
+      for (let j = i + 1; j < n; j++) {
+        const p2 = repPages[j];
+        if (!p2) continue;
+        const fp2 = this.getPageContentFingerprints(p2);
+        const w2 = fp2.mainTextWordCount || 1;
+        const sh2 = fp2.mainTextSimhash;
+
+        // Check length similarity threshold (>= 0.8)
+        if (lengthSimilarity(w1, w2) < 0.8) {
+          continue;
+        }
+
+        // Check SimHash Hamming distance threshold (<= 3 bits difference -> >= 95.3% similarity)
+        const dist = simhashHammingDistance(sh1, sh2);
+        if (dist <= 3) {
+          union(p1.id, p2.id);
+          nearPairSet.add(makePairKey(p1.id, p2.id));
+        }
+      }
+    }
+
+    const pageById = new Map<string, StandaloneCrawlPage>();
+    for (const p of repPages) {
+      pageById.set(p.id, p);
+    }
+
+    // Group connected components by root
+    const groupsByRoot = new Map<string, StandaloneCrawlPage[]>();
+    for (const p of repPages) {
+      const root = find(p.id);
+      if (!groupsByRoot.has(root)) groupsByRoot.set(root, []);
+      groupsByRoot.get(root)!.push(p);
+    }
+
+    const clusters: StandaloneCrawlPage[][] = [];
+    let incompleteAnalysis = false;
+    let safetyLimitHit = false;
+    const MAX_BRON_KERBOSCH_STEPS = 10_000;
+
+    // Sort connected components deterministically: larger size first, then sorted IDs
+    const sortedComponents = Array.from(groupsByRoot.values())
+      .filter((comp) => comp.length >= 2)
+      .sort((a, b) => {
+        if (b.length !== a.length) return b.length - a.length;
+        const idA = a.map((p) => p.id).sort().join(',');
+        const idB = b.map((p) => p.id).sort().join(',');
+        return idA.localeCompare(idB);
+      });
+
+    for (const comp of sortedComponents) {
+      const compIds = comp.map((p) => p.id);
+      let isFullClique = true;
+      for (let i = 0; i < compIds.length; i++) {
+        for (let j = i + 1; j < compIds.length; j++) {
+          const id1 = compIds[i];
+          const id2 = compIds[j];
+          if (!id1 || !id2 || !nearPairSet.has(makePairKey(id1, id2))) {
+            isFullClique = false;
+            break;
+          }
+        }
+        if (!isFullClique) break;
+      }
+
+      if (isFullClique) {
+        clusters.push(comp);
+      } else {
+        // Decompose into maximal consistent cliques
+        const adj = new Map<string, Set<string>>();
+        for (const pid of compIds) {
+          adj.set(pid, new Set());
+        }
+        for (const pid1 of compIds) {
+          for (const pid2 of compIds) {
+            if (pid1 !== pid2 && nearPairSet.has(makePairKey(pid1, pid2))) {
+              adj.get(pid1)!.add(pid2);
+            }
+          }
+        }
+
+        const cliques: string[][] = [];
+        let steps = 0;
+        let stepLimitExceeded = false;
+
+        function bronKerbosch(R: Set<string>, P: Set<string>, X: Set<string>) {
+          steps++;
+          if (steps > MAX_BRON_KERBOSCH_STEPS) {
+            stepLimitExceeded = true;
+            return;
+          }
+          if (P.size === 0 && X.size === 0) {
+            if (R.size >= 2) {
+              cliques.push(Array.from(R).sort());
+            }
+            return;
+          }
+          const unionPX = Array.from(new Set([...P, ...X])).sort();
+          const pivot = unionPX[0];
+          if (!pivot) return;
+          const pivotAdj = adj.get(pivot) || new Set();
+          const pMinusAdj = Array.from(P).filter((v) => !pivotAdj.has(v)).sort();
+
+          for (const v of pMinusAdj) {
+            if (stepLimitExceeded) break;
+            const vAdj = adj.get(v) || new Set();
+            const newR = new Set([...R, v]);
+            const newP = new Set(Array.from(P).filter((u) => vAdj.has(u)));
+            const newX = new Set(Array.from(X).filter((u) => vAdj.has(u)));
+            bronKerbosch(newR, newP, newX);
+            P.delete(v);
+            X.add(v);
+          }
+        }
+
+        bronKerbosch(new Set(), new Set(compIds), new Set());
+        if (stepLimitExceeded) {
+          safetyLimitHit = true;
+          incompleteAnalysis = true;
+        }
+
+        // Sort cliques deterministically: largest size first, then sorted member IDs
+        cliques.sort((a, b) => {
+          if (b.length !== a.length) return b.length - a.length;
+          return a.join(',').localeCompare(b.join(','));
+        });
+
+        // Greedy disjoint selection
+        const assignedInComp = new Set<string>();
+        for (const c of cliques) {
+          const unassignedMembers = c.filter((pid) => !assignedInComp.has(pid));
+          if (unassignedMembers.length >= 2) {
+            const clusterPages = unassignedMembers
+              .map((pid) => pageById.get(pid))
+              .filter((p): p is StandaloneCrawlPage => p !== undefined);
+            if (clusterPages.length >= 2) {
+              clusters.push(clusterPages);
+            }
+            for (const pid of unassignedMembers) {
+              assignedInComp.add(pid);
+            }
+          }
+        }
+      }
+    }
+
+    return { clusters, incompleteAnalysis, safetyLimitHit };
+  }
+
   /**
    * Evaluates sitewide canonical rules and records execution outcomes in the ledger.
    */
@@ -1967,15 +2235,24 @@ export class StandaloneRulesEngine {
         .trim();
     };
 
-    // Filter usable HTML pages for metadata analysis
-    const usablePages = pages.filter(
-      (p) =>
+    // Filter usable HTML pages for metadata analysis, deduplicated by normalized effective URL
+    // to prevent retries, resume, or redirects from generating false duplicate warnings.
+    const urlToUsablePage = new Map<string, StandaloneCrawlPage>();
+    for (const p of pages) {
+      if (
         p.fetchStatus === 'success' &&
         p.httpStatus >= 200 &&
         p.httpStatus < 400 &&
         (p.contentTypeCategory === 'HTML_DOCUMENT' ||
           (!p.contentTypeCategory && (p.headers?.['content-type']?.includes('text/html') ?? true)))
-    );
+      ) {
+        const normUrl = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
+        if (normUrl) {
+          urlToUsablePage.set(normUrl, p);
+        }
+      }
+    }
+    const usablePages = Array.from(urlToUsablePage.values());
 
     // 1. SITE_TITLE_DUPLICATE
     if (usablePages.length <= 1) {
@@ -1994,7 +2271,8 @@ export class StandaloneRulesEngine {
         if (!p.title) continue;
         const norm = normMetaStr(p.title);
         if (norm.length >= 5) {
-          const pageKey = `${p.id || p.url}::${norm}`;
+          const pageNormUrl = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
+          const pageKey = `${pageNormUrl}::${norm}`;
           if (seenTitlesForPage.has(pageKey)) continue;
           seenTitlesForPage.add(pageKey);
 
@@ -2004,7 +2282,10 @@ export class StandaloneRulesEngine {
         }
       }
 
-      const dupTitleEntries = Array.from(titleMap.entries()).filter(([_, entry]) => entry.pages.length > 1);
+      const dupTitleEntries = Array.from(titleMap.entries()).filter(([_, entry]) => {
+        const distinct = new Set(entry.pages.map((p) => normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url)));
+        return distinct.size > 1;
+      });
 
       if (dupTitleEntries.length === 0) {
         recordLedger(
@@ -2066,7 +2347,8 @@ export class StandaloneRulesEngine {
         if (!desc) continue;
         const norm = normMetaStr(desc);
         if (norm.length >= 15) {
-          const pageKey = `${p.id || p.url}::${norm}`;
+          const pageNormUrl = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
+          const pageKey = `${pageNormUrl}::${norm}`;
           if (seenDescsForPage.has(pageKey)) continue;
           seenDescsForPage.add(pageKey);
 
@@ -2076,7 +2358,10 @@ export class StandaloneRulesEngine {
         }
       }
 
-      const dupDescEntries = Array.from(descMap.entries()).filter(([_, entry]) => entry.pages.length > 1);
+      const dupDescEntries = Array.from(descMap.entries()).filter(([_, entry]) => {
+        const distinct = new Set(entry.pages.map((p) => normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url)));
+        return distinct.size > 1;
+      });
 
       if (dupDescEntries.length === 0) {
         recordLedger(
@@ -2141,7 +2426,8 @@ export class StandaloneRulesEngine {
         if (!primaryH1) continue;
         const norm = normMetaStr(primaryH1);
         if (norm.length >= 5) {
-          const pageKey = `${p.id || p.url}::${norm}`;
+          const pageNormUrl = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
+          const pageKey = `${pageNormUrl}::${norm}`;
           if (seenH1ForPage.has(pageKey)) continue;
           seenH1ForPage.add(pageKey);
 
@@ -2151,7 +2437,10 @@ export class StandaloneRulesEngine {
         }
       }
 
-      const dupH1Entries = Array.from(h1Map.entries()).filter(([_, entry]) => entry.pages.length > 1);
+      const dupH1Entries = Array.from(h1Map.entries()).filter(([_, entry]) => {
+        const distinct = new Set(entry.pages.map((p) => normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url)));
+        return distinct.size > 1;
+      });
 
       if (dupH1Entries.length === 0) {
         recordLedger(
@@ -2422,7 +2711,488 @@ export class StandaloneRulesEngine {
       }
     }
 
-    // 8. TECH_ROBOTS_FETCH_STATUS (site-level)
+    // ========================================================================
+    // 8. SITE_INTERNAL_LINK_TO_4XX
+    // ========================================================================
+    if (pages.length === 0) {
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_4XX',
+        'not_applicable',
+        'na',
+        false,
+        'No crawled pages to evaluate internal links'
+      );
+    } else if (linkGraph.broken4xxLinks.length === 0) {
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_4XX',
+        'executed_pass',
+        'pass',
+        true,
+        'No internal links to confirmed 4xx broken pages'
+      );
+    } else {
+      const byDest = new Map<string, typeof linkGraph.broken4xxLinks>();
+      for (const item of linkGraph.broken4xxLinks) {
+        const dest = item.edge.destinationUrl;
+        const list = byDest.get(dest) || [];
+        list.push(item);
+        byDest.set(dest, list);
+      }
+
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_4XX',
+        'executed_fail',
+        'fail',
+        true,
+        `Found internal links pointing to ${byDest.size} confirmed 4xx broken destination(s)`
+      );
+
+      for (const [destUrl, occurrences] of byDest.entries()) {
+        const destPage = occurrences[0]?.destPage;
+        const observedStatus = occurrences[0]?.observedStatus;
+        const httpStatus = destPage?.httpStatus || observedStatus?.httpStatus || 404;
+        const srcUrls = Array.from(
+          new Set(occurrences.map((o) => o.sourcePage.finalUrl || o.sourcePage.requestedUrl || o.sourcePage.url))
+        );
+        const linkTexts = Array.from(
+          new Set(occurrences.map((o) => o.edge.linkText).filter(Boolean))
+        );
+
+        findings.push({
+          id: `${auditId}-sitewide-broken-4xx-${destUrl.slice(-24).replace(/[^a-zA-Z0-9]/g, '_')}`,
+          auditId,
+          ruleId: 'SITE_INTERNAL_LINK_TO_4XX',
+          category: 'sitewide',
+          severity: 'high',
+          status: 'fail',
+          title: `Internal link to confirmed HTTP ${httpStatus} page (${destUrl})`,
+          description: `Found ${occurrences.length} internal link(s) across ${srcUrls.length} page(s) pointing to '${destUrl}', which returned HTTP ${httpStatus}.`,
+          recommendation: 'Update or remove internal links pointing to this broken destination, or restore the page.',
+          pageUrl: srcUrls[0] ?? seedUrl,
+          evidence: {
+            broken_url: destUrl,
+            http_status: httpStatus,
+            referencing_pages_count: srcUrls.length,
+            referencing_urls: srcUrls.slice(0, 10),
+            link_texts: linkTexts.slice(0, 5),
+          },
+        });
+      }
+    }
+
+    // ========================================================================
+    // 9. SITE_INTERNAL_LINK_TO_5XX
+    // ========================================================================
+    if (pages.length === 0) {
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_5XX',
+        'not_applicable',
+        'na',
+        false,
+        'No crawled pages to evaluate internal links'
+      );
+    } else if (linkGraph.broken5xxLinks.length === 0) {
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_5XX',
+        'executed_pass',
+        'pass',
+        true,
+        'No internal links to 5xx server error pages'
+      );
+    } else {
+      const byDest = new Map<string, typeof linkGraph.broken5xxLinks>();
+      for (const item of linkGraph.broken5xxLinks) {
+        const dest = item.edge.destinationUrl;
+        const list = byDest.get(dest) || [];
+        list.push(item);
+        byDest.set(dest, list);
+      }
+
+      recordLedger(
+        'SITE_INTERNAL_LINK_TO_5XX',
+        'executed_fail',
+        'fail',
+        true,
+        `Found internal links pointing to ${byDest.size} confirmed 5xx server error destination(s)`
+      );
+
+      for (const [destUrl, occurrences] of byDest.entries()) {
+        const destPage = occurrences[0]?.destPage;
+        const observedStatus = occurrences[0]?.observedStatus;
+        const httpStatus = destPage?.httpStatus || observedStatus?.httpStatus || 500;
+        const srcUrls = Array.from(
+          new Set(occurrences.map((o) => o.sourcePage.finalUrl || o.sourcePage.requestedUrl || o.sourcePage.url))
+        );
+
+        findings.push({
+          id: `${auditId}-sitewide-broken-5xx-${destUrl.slice(-24).replace(/[^a-zA-Z0-9]/g, '_')}`,
+          auditId,
+          ruleId: 'SITE_INTERNAL_LINK_TO_5XX',
+          category: 'sitewide',
+          severity: 'critical',
+          status: 'fail',
+          title: `Internal link to confirmed HTTP ${httpStatus} server error page (${destUrl})`,
+          description: `Found ${occurrences.length} internal link(s) pointing to '${destUrl}', which returned HTTP ${httpStatus} server error.`,
+          recommendation: 'Investigate server-side failure at destination URL and correct internal links.',
+          pageUrl: srcUrls[0] ?? seedUrl,
+          evidence: {
+            broken_url: destUrl,
+            http_status: httpStatus,
+            referencing_pages_count: srcUrls.length,
+            referencing_urls: srcUrls.slice(0, 10),
+          },
+        });
+      }
+    }
+
+    // ========================================================================
+    // 10. SITE_CONTENT_DUPLICATE_EXACT
+    // ========================================================================
+    const exactHashToPages = new Map<string, StandaloneCrawlPage[]>();
+    for (const p of usablePages) {
+      if (p.httpStatus !== 200) continue;
+      const fp = this.getPageContentFingerprints(p);
+      if (
+        fp.normalizedMainTextHash &&
+        (fp.contentQualityStatus === 'usable' || fp.contentQualityStatus === 'sufficient')
+      ) {
+        const list = exactHashToPages.get(fp.normalizedMainTextHash) || [];
+        list.push(p);
+        exactHashToPages.set(fp.normalizedMainTextHash, list);
+      }
+    }
+
+    const exactDuplicateGroups = new Map<string, StandaloneCrawlPage[]>();
+    for (const [h, pList] of exactHashToPages.entries()) {
+      const distinct = new Set(pList.map((p) => normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url)));
+      if (distinct.size > 1) {
+        exactDuplicateGroups.set(h, pList);
+      }
+    }
+
+    if (usablePages.length <= 1) {
+      recordLedger(
+        'SITE_CONTENT_DUPLICATE_EXACT',
+        'not_applicable',
+        'na',
+        false,
+        'Requires at least 2 usable pages for sitewide duplicate content analysis'
+      );
+    } else if (exactDuplicateGroups.size === 0) {
+      recordLedger(
+        'SITE_CONTENT_DUPLICATE_EXACT',
+        'executed_pass',
+        'pass',
+        true,
+        'No multiple pages share identical normalized main content across the crawled pages'
+      );
+    } else {
+      for (const [h, pList] of exactDuplicateGroups.entries()) {
+        const distinctUrls = Array.from(
+          new Set(pList.map((p) => p.finalUrl || p.requestedUrl || p.url))
+        );
+        const pageIds = pList.map((p) => p.id);
+        const groupId = `exact_${h.slice(0, 16)}`;
+
+        recordLedger(
+          'SITE_CONTENT_DUPLICATE_EXACT',
+          'executed_fail',
+          'fail',
+          true,
+          `Exact duplicate main content (${distinctUrls.length} pages)`
+        );
+
+        findings.push({
+          id: `${auditId}-sitewide-dup-exact-${distinctUrls.length}-${h.slice(0, 16)}`,
+          auditId,
+          ruleId: 'SITE_CONTENT_DUPLICATE_EXACT',
+          category: 'sitewide',
+          severity: 'high',
+          status: 'fail',
+          title: `Exact duplicate main content (${distinctUrls.length} pages)`,
+          description: `${distinctUrls.length} pages share identical normalized main-body text (SHA-256: ${h.slice(0, 12)}...). When multiple pages have identical content, search engines must select one canonical version.`,
+          recommendation: "Consolidate duplicate pages using 301 redirects to the preferred version, or specify a clear rel='canonical' target.",
+          pageUrl: distinctUrls[0] ?? seedUrl,
+          evidence: {
+            group_id: groupId,
+            content_hash: h,
+            page_count: distinctUrls.length,
+            sample_urls: distinctUrls.slice(0, 10),
+            all_urls: distinctUrls,
+            page_ids: pageIds,
+          },
+        });
+      }
+    }
+
+    // ========================================================================
+    // 11. SITE_CONTENT_DUPLICATE_NEAR
+    // ========================================================================
+    const nearEligiblePages = usablePages.filter((p) => {
+      if (p.httpStatus !== 200) return false;
+      const fp = this.getPageContentFingerprints(p);
+      return (
+        (fp.contentQualityStatus === 'usable' || fp.contentQualityStatus === 'sufficient') &&
+        fp.mainTextWordCount >= 60 &&
+        fp.mainTextSimhash &&
+        fp.mainTextSimhash.length === 16 &&
+        fp.mainTextSimhash !== '0'.repeat(16)
+      );
+    });
+
+    if (usablePages.length <= 1) {
+      recordLedger(
+        'SITE_CONTENT_DUPLICATE_NEAR',
+        'not_applicable',
+        'na',
+        false,
+        'Requires at least 2 usable pages for near-duplicate content analysis'
+      );
+    } else {
+      const { clusters: nearClusters, incompleteAnalysis, safetyLimitHit } =
+        this.detectNearDuplicateClusters(nearEligiblePages);
+
+      if (nearClusters.length === 0) {
+        if (incompleteAnalysis) {
+          recordLedger(
+            'SITE_CONTENT_DUPLICATE_NEAR',
+            'not_evaluated',
+            'unknown',
+            false,
+            'Near-duplicate analysis incomplete (safety iteration limit exceeded)'
+          );
+          findings.push({
+            id: `${auditId}-sitewide-dup-near-incomplete`,
+            auditId,
+            ruleId: 'SITE_CONTENT_DUPLICATE_NEAR',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'unknown',
+            title: 'Near-duplicate analysis incomplete (safety limit exceeded)',
+            description: 'Candidate similarity graph complexity exceeded safety iteration bounds before consistent cliques could be fully resolved. Marked inconclusive to avoid false negative clean pass.',
+            recommendation: 'Review pages with high template or link density manually for near-duplicate content.',
+            pageUrl: seedUrl,
+            evidence: {
+              pages_evaluated: nearEligiblePages.length,
+              safety_limit_hit: true,
+              incomplete_analysis: true,
+              reason: 'graph_complexity_limit_exceeded',
+            },
+          });
+        } else {
+          recordLedger(
+            'SITE_CONTENT_DUPLICATE_NEAR',
+            'executed_pass',
+            'pass',
+            true,
+            'No pages exhibit substantial textual similarity within the SimHash Hamming threshold (<= 3 bits)'
+          );
+        }
+      } else {
+        for (const cluster of nearClusters) {
+          const urls = Array.from(
+            new Set(cluster.map((p) => p.finalUrl || p.requestedUrl || p.url))
+          );
+          const sortedUrls = [...urls].sort();
+          const rootUrl = sortedUrls[0] || seedUrl;
+          const groupHash = computeContentSha256(rootUrl).slice(0, 16);
+          const groupId = `near_${groupHash}`;
+          const descSuffix = safetyLimitHit
+            ? ' (Candidate analysis reached safety iteration bound; additional clusters may be unresolved).'
+            : '';
+
+          recordLedger(
+            'SITE_CONTENT_DUPLICATE_NEAR',
+            'executed_warning',
+            'warning',
+            true,
+            `Near-duplicate main content candidate group (${cluster.length} pages)`
+          );
+
+          findings.push({
+            id: `${auditId}-sitewide-dup-near-${cluster.length}-${groupHash}`,
+            auditId,
+            ruleId: 'SITE_CONTENT_DUPLICATE_NEAR',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'warning',
+            title: `Near-duplicate main content candidate group (${cluster.length} pages)`,
+            description: `${cluster.length} pages share very high textual similarity based on SimHash-64 fingerprinting (Hamming distance <= 3, >= 95.3% feature similarity). Review whether these pages should be differentiated or consolidated.${descSuffix}`,
+            recommendation: 'Inspect near-duplicate pages for unique value. If pages serve the same intent, consolidate them or provide distinct, valuable content.',
+            pageUrl: rootUrl,
+            evidence: {
+              group_id: groupId,
+              page_count: cluster.length,
+              sample_urls: urls.slice(0, 10),
+              all_urls: urls,
+              page_ids: cluster.map((p) => p.id),
+              method: 'SimHash-64 Hamming Distance <= 3 (token 1-grams & 2-grams)',
+              incomplete_analysis: incompleteAnalysis,
+              safety_limit_hit: safetyLimitHit,
+            },
+          });
+        }
+      }
+    }
+
+    // ========================================================================
+    // 12. SITE_DUPLICATE_CANONICAL_REVIEW
+    // ========================================================================
+    if (exactDuplicateGroups.size === 0) {
+      recordLedger(
+        'SITE_DUPLICATE_CANONICAL_REVIEW',
+        'not_applicable',
+        'na',
+        false,
+        'Duplicate canonical consolidation not applicable (no duplicate content groups detected)'
+      );
+    } else {
+      let hasCompetingSelfCanonicals = false;
+      for (const [h, groupPages] of exactDuplicateGroups.entries()) {
+        const canonicals = new Set<string>();
+        let selfReferencingCount = 0;
+        const distinctUrls = Array.from(
+          new Set(groupPages.map((p) => normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url)))
+        );
+
+        for (const p of groupPages) {
+          const urlNorm = normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url);
+          const canNorm = p.canonicalUrl ? normalizeGraphUrl(p.canonicalUrl, p.url) : '';
+          if (canNorm) {
+            canonicals.add(canNorm);
+            if (canNorm === urlNorm) {
+              selfReferencingCount++;
+            }
+          }
+        }
+
+        if (canonicals.size === 1 && groupPages.length > 1) {
+          const preferredCan = Array.from(canonicals)[0];
+          findings.push({
+            id: `${auditId}-sitewide-dup-can-consolidated-${h.slice(0, 16)}`,
+            auditId,
+            ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
+            category: 'sitewide',
+            severity: 'info',
+            status: 'pass',
+            title: `Duplicate content pages consolidated to single canonical (${distinctUrls.length} pages)`,
+            description: `${distinctUrls.length} pages with identical main content all declare canonical preference to '${preferredCan}'.`,
+            recommendation: 'Canonical signals are consolidated cleanly.',
+            pageUrl: distinctUrls[0] ?? seedUrl,
+            evidence: {
+              group_hash: h,
+              page_count: distinctUrls.length,
+              urls: distinctUrls.slice(0, 10),
+              preferred_canonical: preferredCan,
+            },
+          });
+        } else if (selfReferencingCount >= 2 && canonicals.size >= 2) {
+          hasCompetingSelfCanonicals = true;
+          findings.push({
+            id: `${auditId}-sitewide-dup-can-competing-${h.slice(0, 16)}`,
+            auditId,
+            ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'warning',
+            title: `Duplicate content pages with competing self-referencing canonicals (${distinctUrls.length} pages)`,
+            description: `${distinctUrls.length} pages have identical main content but each declares a self-referencing rel='canonical' tag. This sends conflicting signals to search engines about which page should be indexed.`,
+            recommendation: "Choose a single authoritative URL as the preferred version and point the rel='canonical' tags on all duplicate pages to that single preferred URL.",
+            pageUrl: distinctUrls[0] ?? seedUrl,
+            evidence: {
+              group_hash: h,
+              page_count: distinctUrls.length,
+              urls: distinctUrls.slice(0, 10),
+              declared_canonicals: Array.from(canonicals).slice(0, 10),
+            },
+          });
+        }
+      }
+
+      if (hasCompetingSelfCanonicals) {
+        recordLedger(
+          'SITE_DUPLICATE_CANONICAL_REVIEW',
+          'executed_warning',
+          'warning',
+          true,
+          'Duplicate content pages detected with competing self-referencing canonicals'
+        );
+      } else {
+        recordLedger(
+          'SITE_DUPLICATE_CANONICAL_REVIEW',
+          'executed_pass',
+          'pass',
+          true,
+          `Evaluated ${exactDuplicateGroups.size} duplicate group(s); no competing self-referencing canonicals detected`
+        );
+      }
+    }
+
+    // ========================================================================
+    // 13. SITE_CONTENT_CANONICAL_CONFLICT
+    // ========================================================================
+    if (exactDuplicateGroups.size === 0) {
+      recordLedger(
+        'SITE_CONTENT_CANONICAL_CONFLICT',
+        'not_applicable',
+        'na',
+        false,
+        'Content canonical conflict not applicable (no duplicate content groups detected)'
+      );
+    } else {
+      let hasConflict = false;
+      for (const [h, groupPages] of exactDuplicateGroups.entries()) {
+        for (const p of groupPages) {
+          if (!p.canonicalUrl) continue;
+          const canNorm = normalizeGraphUrl(p.canonicalUrl, p.url);
+          const targetPage = linkGraph.urlToPage.get(canNorm);
+          const observedStatus = observedUrlMap?.get(canNorm);
+          const targetStatus = targetPage?.httpStatus ?? observedStatus?.httpStatus;
+
+          if (targetStatus && targetStatus >= 400) {
+            hasConflict = true;
+            findings.push({
+              id: `${auditId}-sitewide-can-conflict-${p.id || canNorm.slice(-16)}`,
+              auditId,
+              ruleId: 'SITE_CONTENT_CANONICAL_CONFLICT',
+              category: 'sitewide',
+              severity: 'high',
+              status: 'fail',
+              title: `Duplicate page points canonical to error page (HTTP ${targetStatus})`,
+              description: `Page '${p.finalUrl || p.requestedUrl || p.url}' has duplicate content and specifies a canonical URL '${p.canonicalUrl}' that returns HTTP ${targetStatus}.`,
+              recommendation: 'Update the canonical URL to point to a live, indexable HTTP 200 page.',
+              pageUrl: p.finalUrl || p.requestedUrl || p.url,
+              evidence: {
+                page_url: p.finalUrl || p.requestedUrl || p.url,
+                canonical_url: p.canonicalUrl,
+                target_http_status: targetStatus,
+              },
+            });
+          }
+        }
+      }
+
+      if (hasConflict) {
+        recordLedger(
+          'SITE_CONTENT_CANONICAL_CONFLICT',
+          'executed_fail',
+          'fail',
+          true,
+          'Duplicate pages point canonical targets to error pages (HTTP 4xx/5xx)'
+        );
+      } else {
+        recordLedger(
+          'SITE_CONTENT_CANONICAL_CONFLICT',
+          'executed_pass',
+          'pass',
+          true,
+          'Duplicate pages with canonical tags point to accessible pages (no HTTP 4xx or 5xx targets)'
+        );
+      }
+    }
+
+    // Technical Sitewide Rules
+    // TECH_ROBOTS_FETCH_STATUS (site-level)
     const robotsEvidence = normalizeRobotsEvidence(auditContext?.robotsEvidence);
     const robotsStatus = robotsEvidence?.fetchStatus;
     if (!robotsStatus || robotsStatus === 'not_evaluated') {

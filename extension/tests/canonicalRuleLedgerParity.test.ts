@@ -73,8 +73,8 @@ describe('Canonical SEO Rule Identity & Legacy Mapping Parity', () => {
     expect(CANONICAL_RULE_TOTALS.total).toBe(51);
   });
 
-  it('verifies implemented canonical rule count is exactly 45 in Phase 2D-A (16 on-page, 22 technical, 7 sitewide)', () => {
-    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(45);
+  it('verifies implemented canonical rule count is exactly 51 in Phase 2D-B (16 on-page, 22 technical, 13 sitewide)', () => {
+    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(51);
     for (const ruleId of CANONICAL_IMPLEMENTED_RULES) {
       expect(isCanonicalRuleId(ruleId)).toBe(true);
     }

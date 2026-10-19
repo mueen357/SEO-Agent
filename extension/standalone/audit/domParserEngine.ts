@@ -1,7 +1,4 @@
-/**
- * In-Browser HTML Parser using native DOMParser.
- * Blazingly fast V8 C++ execution; extracts SEO nodes and technology markers.
- */
+import { extractMainContent } from './contentFingerprint';
 
 export interface ParsedHtmlEvidence {
   title?: string;
@@ -42,6 +39,14 @@ export interface ParsedHtmlEvidence {
   linkRels?: Array<{ rel: string; href: string }>;
   htmlComments?: string[];
   cookieNames?: string[];
+  normalizedMainTextHash?: string;
+  mainTextWordCount?: number;
+  mainTextSimhash?: string;
+  contentQualityStatus?: 'empty' | 'thin' | 'usable' | 'sufficient' | 'non_html';
+  extractionSource?: string;
+  extractionVersion?: string;
+  mainTextExcerpt?: string;
+  isContentTruncated?: boolean;
 }
 
 let creatingOffscreenPromise: Promise<void> | null = null;
@@ -344,6 +349,7 @@ export class StandaloneDomParser {
       }
     });
     const assetUrls = Array.from(assetUrlSet);
+    const contentResult = extractMainContent(html, pageUrl);
 
     return {
       title,
@@ -376,6 +382,14 @@ export class StandaloneDomParser {
       htmlAttributes,
       linkRels,
       htmlComments,
+      normalizedMainTextHash: contentResult.normalizedMainTextHash,
+      mainTextWordCount: contentResult.wordCount,
+      mainTextSimhash: contentResult.mainTextSimhash,
+      contentQualityStatus: contentResult.contentQualityStatus,
+      extractionSource: contentResult.extractionSource,
+      extractionVersion: contentResult.extractionVersion,
+      mainTextExcerpt: contentResult.mainTextExcerpt,
+      isContentTruncated: contentResult.isTruncated,
     };
   }
 
@@ -613,6 +627,7 @@ export class StandaloneDomParser {
     stylesheetHrefs.forEach((s) => assetUrlSet.add(s));
     linkRels.forEach((l) => assetUrlSet.add(l.href));
     const assetUrls = Array.from(assetUrlSet);
+    const contentResult = extractMainContent(html, pageUrl);
 
     return {
       title: titleMatch && titleMatch[1] ? titleMatch[1].trim() : undefined,
@@ -645,6 +660,14 @@ export class StandaloneDomParser {
       htmlAttributes,
       linkRels,
       htmlComments,
+      normalizedMainTextHash: contentResult.normalizedMainTextHash,
+      mainTextWordCount: contentResult.wordCount,
+      mainTextSimhash: contentResult.mainTextSimhash,
+      contentQualityStatus: contentResult.contentQualityStatus,
+      extractionSource: contentResult.extractionSource,
+      extractionVersion: contentResult.extractionVersion,
+      mainTextExcerpt: contentResult.mainTextExcerpt,
+      isContentTruncated: contentResult.isTruncated,
     };
   }
 }
