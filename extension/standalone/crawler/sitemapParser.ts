@@ -861,7 +861,7 @@ export function validateXmlWellFormedness(xml: string): XmlWellFormednessCheck {
     i = declEnd + 2;
   }
 
-  const tagStack: Array<{ tag: string; original: string }> = [];
+  const tagStack: Array<{ qName: string }> = [];
   let rootTag: string | undefined = undefined;
   let rootClosed = false;
 
@@ -927,15 +927,15 @@ export function validateXmlWellFormedness(xml: string): XmlWellFormednessCheck {
       if (!/^[a-zA-Z_:][a-zA-Z0-9._:-]*$/.test(rawTagName)) {
         return { wellFormed: false, error: `Invalid closing tag name: </${rawTagName}>` };
       }
-      const localName = rawTagName.split(':').pop()!.toLowerCase();
+      // W3C XML 1.0 & Namespaces: Qualified tag names are strictly case-sensitive and prefix-sensitive
       if (tagStack.length === 0) {
         return { wellFormed: false, error: `Unexpected closing tag </${rawTagName}> with empty tag stack` };
       }
       const top = tagStack.pop()!;
-      if (top.tag !== localName) {
+      if (top.qName !== rawTagName) {
         return {
           wellFormed: false,
-          error: `Mismatched closing tag </${rawTagName}>; expected </${top.original}>`,
+          error: `Mismatched closing tag </${rawTagName}>; expected </${top.qName}>`,
         };
       }
       if (tagStack.length === 0) {
@@ -967,7 +967,6 @@ export function validateXmlWellFormedness(xml: string): XmlWellFormednessCheck {
         return { wellFormed: false, error: `Malformed tag name in <${tagContent}>` };
       }
       const rawTagName: string = nameMatch[1];
-      const localName = rawTagName.split(':').pop()!.toLowerCase();
 
       // Validate attributes syntax
       const attrString = cleanContent.slice(rawTagName.length).trim();
@@ -1000,11 +999,11 @@ export function validateXmlWellFormedness(xml: string): XmlWellFormednessCheck {
         if (rootTag !== undefined) {
           return { wellFormed: false, error: 'Multiple root elements found in XML document' };
         }
-        rootTag = localName;
+        rootTag = rawTagName;
       }
 
       if (!isSelfClosing) {
-        tagStack.push({ tag: localName, original: rawTagName });
+        tagStack.push({ qName: rawTagName });
       } else if (tagStack.length === 0) {
         rootClosed = true;
       }
@@ -1050,7 +1049,7 @@ export function validateXmlWellFormedness(xml: string): XmlWellFormednessCheck {
 
   if (tagStack.length > 0) {
     const unclosed = tagStack[tagStack.length - 1];
-    return { wellFormed: false, error: `Unclosed tag <${unclosed ? unclosed.original : 'unknown'}> at end of document` };
+    return { wellFormed: false, error: `Unclosed tag <${unclosed ? unclosed.qName : 'unknown'}> at end of document` };
   }
 
   if (!rootTag) {

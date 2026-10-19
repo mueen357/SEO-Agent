@@ -38,6 +38,8 @@ export interface PageEvaluationResult {
 export interface StandaloneAuditContext {
   robotsEvidence?: StandaloneRobotsEvidence;
   sitemapEvidence?: StandaloneSitemapEvidence;
+  allPages?: StandaloneCrawlPage[];
+  pageByUrl?: Map<string, StandaloneCrawlPage>;
 }
 
 export class StandaloneRulesEngine {
@@ -477,6 +479,602 @@ export class StandaloneRulesEngine {
           });
         } else {
           recordLedger('TECH_SITEMAP_CANONICAL_CONFLICT', 'executed_pass', 'pass', true);
+        }
+      }
+    }
+
+    // ==========================================
+    // Phase 2C Canonical Technical Rules
+    // ==========================================
+
+    const redirectChain = page.redirectChain || [];
+    const reqUrl = page.requestedUrl || page.url;
+    const finalUrl = page.finalUrl || page.url;
+
+    // 11. TECH_REDIRECT_CHAIN
+    if (page.httpStatus === 0 && page.fetchStatus === 'failed' && redirectChain.length === 0) {
+      recordLedger(
+        'TECH_REDIRECT_CHAIN',
+        'unknown',
+        'unknown',
+        false,
+        'Page fetch failed without redirect chain evidence'
+      );
+    } else if (redirectChain.length > 1) {
+      recordLedger(
+        'TECH_REDIRECT_CHAIN',
+        'executed_warning',
+        'warning',
+        true,
+        `Redirect chain detected (${redirectChain.length} hops)`
+      );
+      findings.push({
+        id: `${auditId}-${page.id}-redirect-chain`,
+        auditId,
+        ruleId: 'TECH_REDIRECT_CHAIN',
+        category: 'technical',
+        severity: 'medium',
+        status: 'warning',
+        title: `Redirect chain detected (${redirectChain.length} hops)`,
+        description: `Request encountered a multi-hop redirect chain (${redirectChain.length} hops). Redirect chains waste crawl budget, introduce page latency, and dilute PageRank.`,
+        recommendation: `Update links and redirects to point directly to the final destination: '${finalUrl}'.`,
+        pageUrl: page.url,
+        evidence: {
+          requestedUrl: reqUrl,
+          finalUrl,
+          hopCount: redirectChain.length,
+          chain: redirectChain,
+        },
+      });
+    } else {
+      recordLedger('TECH_REDIRECT_CHAIN', 'executed_pass', 'pass', true);
+    }
+
+    // 12. TECH_REDIRECT_LOOP
+    const hasLoop =
+      page.redirectLoopDetected ||
+      page.fetchStatus === 'redirect_loop' ||
+      (() => {
+        if (redirectChain.length <= 1) return false;
+        const lastHop = redirectChain[redirectChain.length - 1];
+        const urls = redirectChain.map((h) => normalizeCanonicalUrl(h.fromUrl || h.url || ''));
+        if (lastHop) {
+          const dest = lastHop.toUrl || lastHop.location || lastHop.url;
+          if (dest) {
+            urls.push(normalizeCanonicalUrl(dest));
+          }
+        }
+        return urls.length !== new Set(urls).size;
+      })();
+
+    if (hasLoop) {
+      recordLedger(
+        'TECH_REDIRECT_LOOP',
+        'executed_fail',
+        'fail',
+        true,
+        'Circular redirect loop detected'
+      );
+      findings.push({
+        id: `${auditId}-${page.id}-redirect-loop`,
+        auditId,
+        ruleId: 'TECH_REDIRECT_LOOP',
+        category: 'technical',
+        severity: 'critical',
+        status: 'fail',
+        title: 'Circular redirect loop detected',
+        description:
+          'Request encountered a circular redirect loop. The page cannot be loaded by users or search engines.',
+        recommendation: 'Fix web server redirect configuration to break the circular redirect loop.',
+        pageUrl: page.url,
+        evidence: {
+          requestedUrl: reqUrl,
+          finalUrl,
+          chain: redirectChain,
+          fetchStatus: page.fetchStatus,
+        },
+      });
+    } else if (page.httpStatus === 0 && page.fetchStatus === 'failed' && redirectChain.length === 0) {
+      recordLedger(
+        'TECH_REDIRECT_LOOP',
+        'unknown',
+        'unknown',
+        false,
+        'Page fetch failed without redirect evidence'
+      );
+    } else {
+      recordLedger('TECH_REDIRECT_LOOP', 'executed_pass', 'pass', true);
+    }
+
+    // 13. TECH_REDIRECT_FAILURE
+    if (redirectChain.length === 0) {
+      recordLedger(
+        'TECH_REDIRECT_FAILURE',
+        'not_applicable',
+        'na',
+        false,
+        'Page had no redirects'
+      );
+    } else {
+      const isDestinationBlocked =
+        page.errorCode === 'FETCH_REDIRECT_BLOCKED' ||
+        page.fetchStatus === 'redirect_loop' ||
+        page.fetchStatus === 'policy_blocked' ||
+        redirectChain.some((h) => h.isBlocked || h.safetyBlocked);
+
+      const status = page.httpStatus;
+      if (isDestinationBlocked) {
+        recordLedger(
+          'TECH_REDIRECT_FAILURE',
+          'executed_fail',
+          'fail',
+          true,
+          'Redirect chain destination blocked or failed to resolve'
+        );
+        findings.push({
+          id: `${auditId}-${page.id}-redirect-failure-blocked`,
+          auditId,
+          ruleId: 'TECH_REDIRECT_FAILURE',
+          category: 'technical',
+          severity: 'high',
+          status: 'fail',
+          title: 'Redirect chain destination blocked or failed',
+          description:
+            'Redirect chain destination could not be resolved cleanly (blocked by policy, loop, or safety limit).',
+          recommendation: 'Update redirect rule to point to an active, valid destination within scope.',
+          pageUrl: page.url,
+          evidence: {
+            requestedUrl: reqUrl,
+            finalUrl,
+            chain: redirectChain,
+            errorCode: page.errorCode,
+          },
+        });
+      } else if (status >= 400) {
+        recordLedger(
+          'TECH_REDIRECT_FAILURE',
+          'executed_fail',
+          'fail',
+          true,
+          `Redirect chain destination failed (HTTP ${status})`
+        );
+        findings.push({
+          id: `${auditId}-${page.id}-redirect-failure-status`,
+          auditId,
+          ruleId: 'TECH_REDIRECT_FAILURE',
+          category: 'technical',
+          severity: 'high',
+          status: 'fail',
+          title: `Redirect chain destination failed (HTTP ${status})`,
+          description: `Redirect chain ends at an inaccessible destination returning HTTP ${status}.`,
+          recommendation: 'Update redirect rule to point to an active, valid destination page.',
+          pageUrl: page.url,
+          evidence: {
+            requestedUrl: reqUrl,
+            finalUrl,
+            finalStatus: status,
+            chain: redirectChain,
+          },
+        });
+      } else if (status >= 200 && status < 400) {
+        recordLedger(
+          'TECH_REDIRECT_FAILURE',
+          'executed_pass',
+          'pass',
+          true,
+          'Redirect destination resolved cleanly'
+        );
+      } else {
+        recordLedger(
+          'TECH_REDIRECT_FAILURE',
+          'unknown',
+          'unknown',
+          false,
+          'Final destination status unverified'
+        );
+      }
+    }
+
+    // 14. TECH_HTTPS_DOWNGRADE
+    const isOriginalHttps =
+      reqUrl.startsWith('https://') ||
+      redirectChain.some((h) => (h.fromUrl || h.url || '').startsWith('https://'));
+
+    if (!isOriginalHttps) {
+      recordLedger(
+        'TECH_HTTPS_DOWNGRADE',
+        'not_applicable',
+        'na',
+        false,
+        'Original requested URL was not HTTPS; HTTPS downgrade check not applicable'
+      );
+    } else {
+      let hasDowngrade = false;
+      if (reqUrl.startsWith('https://') && finalUrl.startsWith('http://')) {
+        hasDowngrade = true;
+      }
+      for (const hop of redirectChain) {
+        const from = hop.fromUrl || hop.url || '';
+        if (from.startsWith('https://')) {
+          const loc = hop.locationHeader || hop.location || '';
+          const to = hop.toUrl || '';
+          if (loc.startsWith('http://') || to.startsWith('http://')) {
+            hasDowngrade = true;
+            break;
+          }
+        }
+      }
+
+      if (hasDowngrade) {
+        recordLedger(
+          'TECH_HTTPS_DOWNGRADE',
+          'executed_fail',
+          'fail',
+          true,
+          'HTTPS to HTTP security downgrade redirect detected'
+        );
+        findings.push({
+          id: `${auditId}-${page.id}-https-downgrade`,
+          auditId,
+          ruleId: 'TECH_HTTPS_DOWNGRADE',
+          category: 'technical',
+          severity: 'high',
+          status: 'fail',
+          title: 'HTTPS to HTTP security downgrade redirect',
+          description:
+            'A secure HTTPS request redirected to an unencrypted HTTP destination. Security downgrades expose user traffic and trigger browser security warnings.',
+          recommendation:
+            'Ensure redirects always preserve or upgrade to HTTPS. Never downgrade to unencrypted HTTP.',
+          pageUrl: page.url,
+          evidence: {
+            requestedUrl: reqUrl,
+            finalUrl,
+            chain: redirectChain,
+          },
+        });
+      } else if (page.httpStatus === 0 && page.fetchStatus === 'failed' && redirectChain.length === 0) {
+        recordLedger(
+          'TECH_HTTPS_DOWNGRADE',
+          'unknown',
+          'unknown',
+          false,
+          'Insufficient redirect evidence; page fetch failed before redirect verification'
+        );
+      } else {
+        recordLedger('TECH_HTTPS_DOWNGRADE', 'executed_pass', 'pass', true);
+      }
+    }
+
+    // Canonical helper: lookup page from auditContext
+    const lookupPage = (targetUrl: string): StandaloneCrawlPage | undefined => {
+      if (!auditContext) return undefined;
+      const norm = normalizeCanonicalUrl(targetUrl);
+      if (auditContext.pageByUrl) {
+        return auditContext.pageByUrl.get(norm);
+      }
+      if (auditContext.allPages) {
+        return auditContext.allPages.find((p) => {
+          return (
+            normalizeCanonicalUrl(p.url) === norm ||
+            (p.requestedUrl && normalizeCanonicalUrl(p.requestedUrl) === norm) ||
+            (p.finalUrl && normalizeCanonicalUrl(p.finalUrl) === norm)
+          );
+        });
+      }
+      return undefined;
+    };
+
+    // 15. TECH_CANONICAL_TARGET_STATUS
+    const canonicalRaw = page.canonicalUrl || page.evidence?.canonicalUrl;
+    if (!canonicalRaw) {
+      recordLedger(
+        'TECH_CANONICAL_TARGET_STATUS',
+        'not_applicable',
+        'na',
+        false,
+        'No canonical tag declared on this page'
+      );
+    } else {
+      let resolvedCan: string;
+      try {
+        resolvedCan = new URL(canonicalRaw, page.url).href;
+      } catch {
+        resolvedCan = canonicalRaw;
+      }
+      const normPage = normalizeCanonicalUrl(page.url);
+      const normCan = normalizeCanonicalUrl(resolvedCan);
+
+      if (normPage === normCan) {
+        // Self-referencing canonical
+        if (page.httpStatus >= 400) {
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'executed_fail',
+            'fail',
+            true,
+            `Self-referencing canonical on error page (HTTP ${page.httpStatus})`
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-canonical-target-self-error`,
+            auditId,
+            ruleId: 'TECH_CANONICAL_TARGET_STATUS',
+            category: 'technical',
+            severity: 'high',
+            status: 'fail',
+            title: `Canonical points to broken page (HTTP ${page.httpStatus})`,
+            description: `The rel='canonical' tag points to an error page returning HTTP ${page.httpStatus}. Search engines cannot consolidate signals to a 4xx/5xx target.`,
+            recommendation: 'Update canonical tag to point to a valid, live page returning HTTP 200.',
+            pageUrl: page.url,
+            evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetHttpStatus: page.httpStatus },
+          });
+        } else {
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'executed_pass',
+            'pass',
+            true,
+            'Self-referencing canonical target status verified'
+          );
+        }
+      } else {
+        const targetPage = lookupPage(resolvedCan) || lookupPage(canonicalRaw);
+        if (!targetPage) {
+          recordLedger(
+            'TECH_CANONICAL_TARGET_STATUS',
+            'unknown',
+            'unknown',
+            false,
+            `Declared canonical target '${canonicalRaw}' was not visited during this crawl; its HTTP status cannot be determined from available evidence.`
+          );
+        } else {
+          const tStatus = targetPage.httpStatus;
+          if (tStatus >= 400) {
+            recordLedger(
+              'TECH_CANONICAL_TARGET_STATUS',
+              'executed_fail',
+              'fail',
+              true,
+              `Canonical points to broken page (HTTP ${tStatus})`
+            );
+            findings.push({
+              id: `${auditId}-${page.id}-canonical-target-broken`,
+              auditId,
+              ruleId: 'TECH_CANONICAL_TARGET_STATUS',
+              category: 'technical',
+              severity: 'high',
+              status: 'fail',
+              title: `Canonical points to broken page (HTTP ${tStatus})`,
+              description: `The rel='canonical' tag points to an error page '${canonicalRaw}' returning HTTP ${tStatus}. Search engines cannot consolidate signals to a 4xx/5xx target.`,
+              recommendation: 'Update canonical tag to point to a valid, live page returning HTTP 200.',
+              pageUrl: page.url,
+              evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetHttpStatus: tStatus },
+            });
+          } else if (tStatus >= 300 && tStatus < 400) {
+            recordLedger(
+              'TECH_CANONICAL_TARGET_STATUS',
+              'executed_warning',
+              'warning',
+              true,
+              `Canonical points to redirecting page (HTTP ${tStatus})`
+            );
+            findings.push({
+              id: `${auditId}-${page.id}-canonical-target-redirect`,
+              auditId,
+              ruleId: 'TECH_CANONICAL_TARGET_STATUS',
+              category: 'technical',
+              severity: 'medium',
+              status: 'warning',
+              title: `Canonical points to redirecting page (HTTP ${tStatus})`,
+              description: `The rel='canonical' tag points to a redirecting page '${canonicalRaw}'. Canonical tags should point directly to the final destination.`,
+              recommendation: 'Update the canonical URL to point directly to the destination of the redirect.',
+              pageUrl: page.url,
+              evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetHttpStatus: tStatus },
+            });
+          } else if (tStatus === 200) {
+            recordLedger(
+              'TECH_CANONICAL_TARGET_STATUS',
+              'executed_pass',
+              'pass',
+              true,
+              'Canonical target responds with HTTP 200 OK'
+            );
+          } else {
+            recordLedger(
+              'TECH_CANONICAL_TARGET_STATUS',
+              'unknown',
+              'unknown',
+              false,
+              `Canonical target status unverified (HTTP ${tStatus})`
+            );
+          }
+        }
+      }
+    }
+
+    // 16. TECH_CANONICAL_CONFLICT
+    if (!canonicalRaw) {
+      recordLedger(
+        'TECH_CANONICAL_CONFLICT',
+        'not_applicable',
+        'na',
+        false,
+        'No canonical URL present'
+      );
+    } else {
+      let resolvedCan: string;
+      try {
+        resolvedCan = new URL(canonicalRaw, page.url).href;
+      } catch {
+        resolvedCan = canonicalRaw;
+      }
+      const normPage = normalizeCanonicalUrl(page.url);
+      const normCan = normalizeCanonicalUrl(resolvedCan);
+
+      if (normPage === normCan) {
+        // Self-referencing: check current page robots directives
+        const metaRobots = (page.metaRobots || page.evidence?.metaRobots || '').toLowerCase();
+        const xRobots = (page.headers?.['x-robots-tag'] || '').toLowerCase();
+        const isNoindex =
+          metaRobots.includes('noindex') ||
+          metaRobots.includes('none') ||
+          xRobots.includes('noindex') ||
+          xRobots.includes('none');
+
+        if (isNoindex) {
+          recordLedger(
+            'TECH_CANONICAL_CONFLICT',
+            'executed_fail',
+            'fail',
+            true,
+            'Canonical points to noindexed target'
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-canonical-conflict-self-noindex`,
+            auditId,
+            ruleId: 'TECH_CANONICAL_CONFLICT',
+            category: 'technical',
+            severity: 'high',
+            status: 'fail',
+            title: 'Canonical points to noindexed target',
+            description: `Declared canonical target points to this page which specifies 'noindex'. Search engines cannot consolidate signals to a page excluded from search results.`,
+            recommendation: "Remove 'noindex' or update canonical URL to point to an indexable page.",
+            pageUrl: page.url,
+            evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetRobots: page.metaRobots },
+          });
+        } else {
+          recordLedger('TECH_CANONICAL_CONFLICT', 'executed_pass', 'pass', true);
+        }
+      } else {
+        const targetPage = lookupPage(resolvedCan) || lookupPage(canonicalRaw);
+        if (!targetPage) {
+          // Target was not crawled: Unknown target robots evidence must NOT become PASS!
+          recordLedger(
+            'TECH_CANONICAL_CONFLICT',
+            'unknown',
+            'unknown',
+            false,
+            'Canonical target was not crawled; target robots indexability directives cannot be verified'
+          );
+        } else {
+          const tRobots = (targetPage.metaRobots || targetPage.evidence?.metaRobots || '').toLowerCase();
+          const tXRobots = (targetPage.headers?.['x-robots-tag'] || '').toLowerCase();
+          const isTargetNoindex =
+            tRobots.includes('noindex') ||
+            tRobots.includes('none') ||
+            tXRobots.includes('noindex') ||
+            tXRobots.includes('none');
+
+          if (isTargetNoindex) {
+            recordLedger(
+              'TECH_CANONICAL_CONFLICT',
+              'executed_fail',
+              'fail',
+              true,
+              'Canonical points to noindexed target'
+            );
+            findings.push({
+              id: `${auditId}-${page.id}-canonical-conflict-target-noindex`,
+              auditId,
+              ruleId: 'TECH_CANONICAL_CONFLICT',
+              category: 'technical',
+              severity: 'high',
+              status: 'fail',
+              title: 'Canonical points to noindexed target',
+              description: `Declared canonical target '${canonicalRaw}' specifies 'noindex'. Search engines cannot consolidate signals to a page excluded from search results.`,
+              recommendation: "Remove 'noindex' from the canonical target, or change the canonical URL to point to an indexable page.",
+              pageUrl: page.url,
+              evidence: { pageUrl: page.url, canonicalUrl: canonicalRaw, targetRobots: targetPage.metaRobots },
+            });
+          } else {
+            recordLedger('TECH_CANONICAL_CONFLICT', 'executed_pass', 'pass', true);
+          }
+        }
+      }
+    }
+
+    // 17. TECH_CANONICAL_MULTIPLE
+    if (category !== 'HTML_DOCUMENT' && page.fetchStatus !== 'success') {
+      recordLedger(
+        'TECH_CANONICAL_MULTIPLE',
+        'not_applicable',
+        'na',
+        false,
+        'Non-HTML or failed page does not contain HTML canonical tags'
+      );
+    } else {
+      const canonicalHrefs =
+        page.canonicalHrefs ||
+        page.evidence?.canonicalHrefs ||
+        (canonicalRaw ? [canonicalRaw] : []);
+      const canonicalCount =
+        page.canonicalCount !== undefined
+          ? page.canonicalCount
+          : page.evidence?.canonicalCount !== undefined
+          ? page.evidence.canonicalCount
+          : canonicalHrefs.length;
+
+      if (canonicalCount <= 1) {
+        recordLedger(
+          'TECH_CANONICAL_MULTIPLE',
+          'executed_pass',
+          'pass',
+          true,
+          `Page specifies ${canonicalCount} canonical tag declaration`
+        );
+      } else {
+        // count > 1: check if declarations are identical or conflicting
+        const normHrefs = new Set(
+          canonicalHrefs.map((h) => normalizeCanonicalUrl(h, page.url))
+        );
+
+        if (normHrefs.size <= 1) {
+          recordLedger(
+            'TECH_CANONICAL_MULTIPLE',
+            'executed_warning',
+            'warning',
+            true,
+            `Multiple identical canonical tags (${canonicalCount} declarations)`
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-canonical-multiple-identical`,
+            auditId,
+            ruleId: 'TECH_CANONICAL_MULTIPLE',
+            category: 'technical',
+            severity: 'medium',
+            status: 'warning',
+            title: `Multiple identical canonical tags (${canonicalCount} declarations)`,
+            description: `Page HTML contains ${canonicalCount} rel='canonical' tags that point to the exact same destination ('${canonicalHrefs[0]}'). While non-conflicting, redundant duplicate declarations should be removed.`,
+            recommendation: 'Remove redundant duplicate canonical declarations so exactly one rel=\'canonical\' tag remains.',
+            pageUrl: page.url,
+            evidence: {
+              canonicalTagCount: canonicalCount,
+              canonicalHrefs,
+            },
+          });
+        } else {
+          recordLedger(
+            'TECH_CANONICAL_MULTIPLE',
+            'executed_fail',
+            'fail',
+            true,
+            `Multiple conflicting canonical tags detected (${canonicalCount} tags)`
+          );
+          findings.push({
+            id: `${auditId}-${page.id}-canonical-multiple-conflicting`,
+            auditId,
+            ruleId: 'TECH_CANONICAL_MULTIPLE',
+            category: 'technical',
+            severity: 'high',
+            status: 'fail',
+            title: `Multiple conflicting canonical tags detected (${canonicalCount} tags)`,
+            description: `Page HTML contains ${canonicalCount} conflicting rel='canonical' elements. Declaring conflicting canonical URLs creates ambiguous signals and search engines may disregard all declarations.`,
+            recommendation: 'Consolidate canonical declarations into a single, unambiguous rel=\'canonical\' tag in the HTML <head>.',
+            pageUrl: page.url,
+            evidence: {
+              canonicalTagCount: canonicalCount,
+              canonicalHrefs,
+            },
+          });
         }
       }
     }
@@ -1366,6 +1964,26 @@ export class StandaloneRulesEngine {
     );
     const parseErrorSitemaps = sitemaps.filter((s) => s.status === 'parse_error');
 
+    const isRobotsBlockingSitemaps = Boolean(
+      sitemapEvidence?.errors?.some((e: string) =>
+        e.toLowerCase().includes('robots.txt policy') || e.toLowerCase().includes('disallowed by robots')
+      ) ||
+      (sitemaps.length > 0 &&
+        sitemaps.every(
+          (s) => s.status === 'unauthorized' && s.errorMessage?.toLowerCase().includes('robots')
+        )) ||
+      (robotsEvidence &&
+        (robotsEvidence.policyOutcome === 'forbidden' ||
+          robotsEvidence.policyOutcome === 'fetch_failed_unverified' ||
+          robotsEvidence.httpStatus === 401 ||
+          robotsEvidence.httpStatus === 403 ||
+          robotsEvidence.httpStatus === 429 ||
+          robotsEvidence.httpStatus === 0 ||
+          (robotsEvidence.httpStatus !== undefined &&
+            robotsEvidence.httpStatus >= 500 &&
+            robotsEvidence.httpStatus < 600)))
+    );
+
     if (validSitemaps.length > 0) {
       recordLedger(
         'TECH_SITEMAP_AVAILABILITY',
@@ -1373,6 +1991,14 @@ export class StandaloneRulesEngine {
         'pass',
         true,
         `Discovered ${validSitemaps.length} accessible XML sitemap(s)`
+      );
+    } else if (isRobotsBlockingSitemaps) {
+      recordLedger(
+        'TECH_SITEMAP_AVAILABILITY',
+        'not_evaluated',
+        'unknown',
+        false,
+        'Sitemap discovery was not evaluated because robots.txt policy blocked access'
       );
     } else if (brokenDeclaredSitemaps.length > 0) {
       // DECLARED_SITEMAP_BROKEN: Robots.txt explicitly declared a sitemap that failed to load
@@ -1531,9 +2157,22 @@ export class StandaloneRulesEngine {
           (!p.contentTypeCategory && (p.headers?.['content-type']?.includes('text/html') ?? true)))
     );
 
+    const pageByUrl = new Map<string, StandaloneCrawlPage>();
+    for (const p of pages) {
+      if (p.url) pageByUrl.set(normalizeCanonicalUrl(p.url), p);
+      if (p.requestedUrl) pageByUrl.set(normalizeCanonicalUrl(p.requestedUrl), p);
+      if (p.finalUrl) pageByUrl.set(normalizeCanonicalUrl(p.finalUrl), p);
+    }
+
+    const enrichedContext: StandaloneAuditContext = {
+      ...(auditContext || {}),
+      allPages: pages,
+      pageByUrl,
+    };
+
     // Page evaluations
     for (const p of pages) {
-      const { findings, ledgerRecords } = this.evaluatePageDetailed(p, auditId, auditContext);
+      const { findings, ledgerRecords } = this.evaluatePageDetailed(p, auditId, enrichedContext);
       allFindings.push(...findings);
       allLedger.push(...ledgerRecords);
     }
@@ -1542,7 +2181,7 @@ export class StandaloneRulesEngine {
     const { findings: siteFindings, ledgerRecords: siteLedger } = this.evaluateSitewideDetailed(
       usablePages,
       auditId,
-      auditContext
+      enrichedContext
     );
     allFindings.push(...siteFindings);
     allLedger.push(...siteLedger);

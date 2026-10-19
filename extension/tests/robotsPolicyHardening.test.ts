@@ -185,7 +185,7 @@ describe('Robots.txt Policy Hardening & RFC 9309 Enforcement', () => {
       expect(crawler.isAllowedByRobots('/admin/')).toBe(true);
     });
 
-    it('clears disallow directives on empty Disallow per RFC 9309 §2.2.2', () => {
+    it('does not erase earlier disallow directives on empty Disallow per RFC 9309 §2.2.2', () => {
       const crawler = new InBrowserCrawler('https://example.com/', baseConfig);
       const robotsTxt = `
         User-agent: *
@@ -194,7 +194,7 @@ describe('Robots.txt Policy Hardening & RFC 9309 Enforcement', () => {
       `;
       crawler.parseRobotsTxt(robotsTxt);
 
-      expect(crawler.isAllowedByRobots('/admin/test')).toBe(true);
+      expect(crawler.isAllowedByRobots('/admin/test')).toBe(false);
       expect(crawler.isAllowedByRobots('/other')).toBe(true);
     });
 

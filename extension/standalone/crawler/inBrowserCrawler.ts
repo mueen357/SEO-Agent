@@ -10,10 +10,23 @@ import type {
   StandaloneContentCategory,
   StandaloneRobotsEvidence,
   StandaloneSitemapEvidence,
+  RedirectHop,
 } from '../types';
-import { normalizeRobotsEvidence, normalizeSitemapEvidence } from '../types';
+import { normalizeRobotsEvidence, normalizeSitemapEvidence, normalizeSitemapEntry } from '../types';
 import { StandaloneDomParser } from '../audit/domParserEngine';
 import { StandaloneSitemapParser, isSsrfTarget, readBoundedResponseBody } from './sitemapParser';
+
+export interface ControlledRedirectResult {
+  response: Response;
+  finalUrl: string;
+  redirectCount: number;
+  redirectChain: RedirectHop[];
+  disallowedRedirect: boolean;
+  disallowedDestination?: string;
+  redirectLimitReached: boolean;
+  loopDetected: boolean;
+  failureCategory?: string;
+}
 
 export interface CrawlCallbacks {
   onPageCrawled: (page: StandaloneCrawlPage) => Promise<void>;
@@ -243,6 +256,13 @@ export class InBrowserCrawler {
   /**
    * Manually handles HTTP redirects up to maxRedirects (3), strictly verifying each destination before requesting.
    * Ensures destination remains on the exact authorized origin and does not target private ranges / SSRF.
+   *
+   * SECURITY TRADEOFF NOTE:
+   * RFC 9309 §2.3.1.5 recommends following at least 5 hops of redirects for robots.txt.
+   * However, Website Audit Agent intentionally restricts robots.txt redirects to a maximum of 3 hops
+   * and enforces strict same-origin isolation. This security tradeoff prioritizes browser sandboxing,
+   * SSRF mitigation, and protection against redirect loop exhaustion over traversing extensive or
+   * cross-origin redirect chains.
    */
   private async fetchRobotsTxtWithControlledRedirect(
     robotsUrl: string,
@@ -367,6 +387,7 @@ export class InBrowserCrawler {
           policyOutcome: 'enforced',
         })!;
       } else if (status === 404 || status === 410) {
+        // RFC 9309 §2.3.1.2: 404/410 explicitly confirms robots.txt is unavailable/not present -> permissive access
         this.robotsPolicyStatus = 'not_present_permissive';
         this.robotsFailureReason = 'none';
         this.robotsFailureMessage = '';
@@ -382,6 +403,7 @@ export class InBrowserCrawler {
           policyOutcome: 'not_present_permissive',
         })!;
       } else if (status === 403 || status === 401) {
+        // RFC 9309 §2.3.1.3: 401/403 access denied -> full disallow
         this.robotsPolicyStatus = 'forbidden';
         this.robotsFailureReason = 'http_401_403';
         this.robotsFailureMessage = `Robots.txt access denied (HTTP ${status})`;
@@ -397,6 +419,10 @@ export class InBrowserCrawler {
           policyOutcome: 'forbidden',
         })!;
       } else if (status === 429) {
+        // PRODUCT SECURITY POLICY NOTE:
+        // While RFC 9309 §2.3.1.2 permits crawlers to treat unhandled 400-499 responses as "resource unavailable"
+        // (allowing unrestricted access), Website Audit Agent deliberately implements a strict fail-closed policy
+        // for HTTP 429 (rate-limited). This prevents client audits from hammering servers that are actively rate-limiting requests.
         this.robotsPolicyStatus = 'fetch_failed_unverified';
         this.robotsFailureReason = 'http_429';
         this.robotsFailureMessage = 'Robots.txt rate limited (HTTP 429)';
@@ -412,7 +438,8 @@ export class InBrowserCrawler {
           policyOutcome: 'fetch_failed_unverified',
         })!;
       } else {
-        // 5xx or other non-success status: RFC 9309 §2.3.1.4 disallows crawling
+        // RFC 9309 §2.3.1.4: 5xx server errors require full disallow.
+        // PRODUCT POLICY NOTE: Any other unhandled status or non-404 4xx also fails closed for safety.
         this.robotsPolicyStatus = 'fetch_failed_unverified';
         this.robotsFailureReason = 'http_5xx';
         this.robotsFailureMessage = `Robots.txt unavailable due to server error (HTTP ${status})`;
@@ -548,9 +575,9 @@ export class InBrowserCrawler {
         inDirectives = true;
         if (field === 'disallow') {
           if (!value) {
-            // RFC 9309 §2.2.2: Empty Disallow: indicates access is allowed / clears previous disallows
-            currentGroup.disallow = [];
-            currentGroup.rules = currentGroup.rules.filter((r) => r.allow);
+            // RFC 9309 §2.2.2: An empty Disallow value indicates that access is allowed.
+            // Per RFC semantics, an empty Disallow rule MUST NOT erase unrelated earlier nonempty Disallow rules.
+            currentGroup.rules.push({ path: '', allow: true });
           } else {
             currentGroup.disallow.push(value);
             currentGroup.rules.push({ path: value, allow: false });
@@ -723,13 +750,97 @@ export class InBrowserCrawler {
   }
 
   public async discoverSitemaps(): Promise<StandaloneSitemapEvidence> {
-    const seedSitemapUrls: string[] = [];
-    const sitemaps = this.robotsEvidence?.sitemapDeclarations || this.robotsEvidence?.sitemapsDeclared || [];
-    if (sitemaps.length > 0) {
-      seedSitemapUrls.push(...sitemaps);
+    const candidateSitemapUrls: string[] = [];
+    const declared = this.robotsEvidence?.sitemapDeclarations || this.robotsEvidence?.sitemapsDeclared || [];
+    if (declared.length > 0) {
+      candidateSitemapUrls.push(...declared);
     }
-    // Standard sitemap fallback location
-    seedSitemapUrls.push(`${this.origin}/sitemap.xml`);
+    const defaultSitemap = `${this.origin}/sitemap.xml`;
+    if (!candidateSitemapUrls.includes(defaultSitemap)) {
+      candidateSitemapUrls.push(defaultSitemap);
+    }
+
+    // MANDATORY CRAWL POLICY GATE:
+    // If robots policy is blocking (forbidden, fetch_failed_unverified, 5xx, 429, timeout, connection refused, oversized, redirect blocked),
+    // ZERO sitemap network requests must be issued!
+    const isRobotsBlockingAll =
+      this.config.respectRobots &&
+      (this.robotsPolicyStatus === 'forbidden' ||
+        this.robotsPolicyStatus === 'fetch_failed_unverified' ||
+        this.robotsEvidence?.policyOutcome === 'forbidden' ||
+        this.robotsEvidence?.policyOutcome === 'fetch_failed_unverified' ||
+        this.robotsEvidence?.httpStatus === 429 ||
+        (this.robotsEvidence?.httpStatus !== undefined &&
+          this.robotsEvidence.httpStatus >= 500 &&
+          this.robotsEvidence.httpStatus < 600) ||
+        this.robotsEvidence?.httpStatus === 401 ||
+        this.robotsEvidence?.httpStatus === 403 ||
+        this.robotsEvidence?.httpStatus === 0);
+
+    if (isRobotsBlockingAll) {
+      const blockedEntries = candidateSitemapUrls.map((u) => ({
+        sitemapUrl: u,
+        url: u,
+        status: 'unauthorized',
+        fetchStatus: 'not_fetched',
+        parseStatus: 'not_parsed',
+        errorMessage: `Sitemap discovery blocked by robots.txt policy (${this.robotsFailureReason || this.robotsPolicyStatus})`,
+        urlsCount: 0,
+        urlCount: 0,
+        urls: [],
+        isIndex: false,
+        childSitemaps: [],
+      }));
+
+      this.sitemapEvidence = normalizeSitemapEvidence({
+        sitemaps: blockedEntries,
+        urls: [],
+        allSitemapUrls: [],
+        totalDiscoveredUrlsCount: 0,
+        indexCount: 0,
+        hasErrors: true,
+        errors: [`Sitemap discovery blocked by robots.txt policy (${this.robotsFailureReason || this.robotsPolicyStatus})`],
+      })!;
+      return this.sitemapEvidence;
+    }
+
+    // When robots policy is enforced (e.g. 200) or permissive (404/410),
+    // filter individual candidate sitemap URLs against robots rules before issuing any network requests:
+    const allowedSitemapUrls: string[] = [];
+    const blockedEntries: any[] = [];
+
+    for (const sUrl of candidateSitemapUrls) {
+      if (this.config.respectRobots && !this.isAllowedByRobots(sUrl)) {
+        blockedEntries.push({
+          sitemapUrl: sUrl,
+          url: sUrl,
+          status: 'unauthorized',
+          fetchStatus: 'not_fetched',
+          parseStatus: 'not_parsed',
+          errorMessage: 'Disallowed by robots.txt policy',
+          urlsCount: 0,
+          urlCount: 0,
+          urls: [],
+          isIndex: false,
+          childSitemaps: [],
+        });
+      } else {
+        allowedSitemapUrls.push(sUrl);
+      }
+    }
+
+    if (allowedSitemapUrls.length === 0) {
+      this.sitemapEvidence = normalizeSitemapEvidence({
+        sitemaps: blockedEntries,
+        urls: [],
+        allSitemapUrls: [],
+        totalDiscoveredUrlsCount: 0,
+        indexCount: 0,
+        hasErrors: true,
+        errors: ['All candidate sitemaps disallowed by robots.txt policy'],
+      })!;
+      return this.sitemapEvidence;
+    }
 
     const parser = new StandaloneSitemapParser(this.origin, {
       maxSitemaps: 10,
@@ -739,8 +850,13 @@ export class InBrowserCrawler {
       fetchTimeoutMs: 5000,
     });
 
-    const evidence = await parser.discoverAndParse(seedSitemapUrls, this.origin);
-    this.sitemapEvidence = normalizeSitemapEvidence(evidence)!;
+    const parsedEvidence = await parser.discoverAndParse(allowedSitemapUrls, this.origin);
+    const normalized = normalizeSitemapEvidence(parsedEvidence)!;
+    if (blockedEntries.length > 0) {
+      normalized.sitemaps.push(...blockedEntries.map(normalizeSitemapEntry));
+      normalized.sitemapsDiscovered = normalized.sitemaps;
+    }
+    this.sitemapEvidence = normalized;
 
     // Enqueue discovered in-scope sitemap URLs up to maxPages budget
     const discoveredUrls = this.sitemapEvidence.urls || [];
@@ -830,6 +946,13 @@ export class InBrowserCrawler {
           id: `page-${crawledCount + 1}-${Date.now()}`,
           auditId: '',
           url: item.url,
+          requestedUrl: item.url,
+          finalUrl: item.url,
+          redirectChain: [],
+          redirectCount: 0,
+          redirectLoopDetected: false,
+          canonicalHrefs: [],
+          canonicalCount: 0,
           depth: item.depth,
           httpStatus: status,
           fetchStatus,
@@ -867,6 +990,13 @@ export class InBrowserCrawler {
             id: `page-${crawledCount + 1}-${Date.now()}`,
             auditId: '',
             url: item.url,
+            requestedUrl: item.url,
+            finalUrl: item.url,
+            redirectChain: [],
+            redirectCount: 0,
+            redirectLoopDetected: false,
+            canonicalHrefs: [],
+            canonicalCount: 0,
             depth: item.depth,
             httpStatus: 0,
             fetchStatus: 'failed',
@@ -909,15 +1039,23 @@ export class InBrowserCrawler {
 
           // Check redirect destination safety
           if (redirectResult.disallowedRedirect) {
+            const isLoop = redirectResult.loopDetected;
             pageRecord = {
               id: `page-${crawledCount + 1}-${Date.now()}`,
               auditId: '',
               url: item.url,
+              requestedUrl: item.url,
+              finalUrl: redirectResult.finalUrl || item.url,
+              redirectChain: redirectResult.redirectChain || [],
+              redirectCount: redirectResult.redirectCount || 0,
+              redirectLoopDetected: isLoop,
+              canonicalHrefs: [],
+              canonicalCount: 0,
               depth: item.depth,
-              httpStatus: response.status || 301,
-              fetchStatus: 'skipped',
-              errorCode: 'FETCH_REDIRECT_BLOCKED',
-              errorMessage: `Redirect blocked: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
+              httpStatus: response.status || (isLoop ? 310 : 301),
+              fetchStatus: isLoop ? 'redirect_loop' : 'skipped',
+              errorCode: isLoop ? 'FETCH_REDIRECT_LOOP' : 'FETCH_REDIRECT_BLOCKED',
+              errorMessage: isLoop ? 'Redirect loop detected' : `Redirect blocked: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
               headings: { h1: [], h2: [], h3: [] },
               links: [],
               images: [],
@@ -927,7 +1065,7 @@ export class InBrowserCrawler {
               fetchedAt: Date.now(),
               isInSitemap,
               contentTypeCategory: 'HTTP_ERROR',
-              title: `Disallowed redirect destination: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
+              title: isLoop ? 'Circular Redirect Loop' : `Disallowed redirect destination: ${redirectResult.disallowedDestination || 'out_of_scope'}`,
             };
             await callbacks.onPageCrawled(pageRecord);
             this.crawledUrls.push(item.url);
@@ -950,6 +1088,13 @@ export class InBrowserCrawler {
               id: `page-${crawledCount + 1}-${Date.now()}`,
               auditId: '',
               url: item.url,
+              requestedUrl: item.url,
+              finalUrl: redirectResult.finalUrl || item.url,
+              redirectChain: redirectResult.redirectChain || [],
+              redirectCount: redirectResult.redirectCount || 0,
+              redirectLoopDetected: redirectResult.loopDetected || false,
+              canonicalHrefs: [],
+              canonicalCount: 0,
               depth: item.depth,
               httpStatus: response.status,
               fetchStatus: response.ok ? 'success' : 'failed',
@@ -983,6 +1128,13 @@ export class InBrowserCrawler {
                 id: `page-${crawledCount + 1}-${Date.now()}`,
                 auditId: '',
                 url: item.url,
+                requestedUrl: item.url,
+                finalUrl: redirectResult.finalUrl || item.url,
+                redirectChain: redirectResult.redirectChain || [],
+                redirectCount: redirectResult.redirectCount || 0,
+                redirectLoopDetected: redirectResult.loopDetected || false,
+                canonicalHrefs: [],
+                canonicalCount: 0,
                 depth: item.depth,
                 httpStatus: response.status,
                 fetchStatus: response.ok ? 'success' : 'failed',
@@ -1010,6 +1162,13 @@ export class InBrowserCrawler {
               id: `page-${crawledCount + 1}-${Date.now()}`,
               auditId: '',
               url: item.url,
+              requestedUrl: item.url,
+              finalUrl: redirectResult.finalUrl || item.url,
+              redirectChain: redirectResult.redirectChain || [],
+              redirectCount: redirectResult.redirectCount || 0,
+              redirectLoopDetected: redirectResult.loopDetected || false,
+              canonicalHrefs: [],
+              canonicalCount: 0,
               depth: item.depth,
               httpStatus: response.status,
               fetchStatus: 'failed',
@@ -1043,6 +1202,13 @@ export class InBrowserCrawler {
               id: `page-${crawledCount + 1}-${Date.now()}`,
               auditId: '',
               url: item.url,
+              requestedUrl: item.url,
+              finalUrl: redirectResult.finalUrl || item.url,
+              redirectChain: redirectResult.redirectChain || [],
+              redirectCount: redirectResult.redirectCount || 0,
+              redirectLoopDetected: redirectResult.loopDetected || false,
+              canonicalHrefs: [],
+              canonicalCount: 0,
               depth: item.depth,
               httpStatus: response.status,
               fetchStatus: 'failed',
@@ -1070,6 +1236,13 @@ export class InBrowserCrawler {
             id: `page-${crawledCount + 1}-${Date.now()}`,
             auditId: '', // Filled by coordinator
             url: item.url,
+            requestedUrl: item.url,
+            finalUrl: redirectResult.finalUrl || item.url,
+            redirectChain: redirectResult.redirectChain || [],
+            redirectCount: redirectResult.redirectCount || 0,
+            redirectLoopDetected: redirectResult.loopDetected || false,
+            canonicalHrefs: parsedEvidence.canonicalHrefs || (parsedEvidence.canonicalUrl ? [parsedEvidence.canonicalUrl] : []),
+            canonicalCount: typeof parsedEvidence.canonicalCount === 'number' ? parsedEvidence.canonicalCount : (parsedEvidence.canonicalUrl ? 1 : 0),
             depth: item.depth,
             httpStatus: response.status,
             fetchStatus: response.ok ? 'success' : 'failed',
@@ -1183,16 +1356,13 @@ export class InBrowserCrawler {
   public async fetchWithControlledRedirect(
     initialUrl: string,
     signal: AbortSignal
-  ): Promise<{
-    response: Response;
-    finalUrl: string;
-    redirectCount: number;
-    disallowedRedirect: boolean;
-    disallowedDestination?: string;
-  }> {
+  ): Promise<ControlledRedirectResult> {
     let currentUrl = initialUrl;
     let redirectCount = 0;
     const maxRedirects = 3;
+    const redirectChain: RedirectHop[] = [];
+    const visitedUrls = new Set<string>();
+    visitedUrls.add(this.normalizeUrl(initialUrl));
 
     while (redirectCount <= maxRedirects) {
       const response = await fetch(currentUrl, {
@@ -1208,12 +1378,24 @@ export class InBrowserCrawler {
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get('location');
         if (!location) {
+          redirectChain.push({
+            url: currentUrl,
+            status: response.status,
+            fromUrl: currentUrl,
+            httpStatus: response.status,
+            isBlocked: true,
+            blockReason: 'missing_location',
+          });
           return {
             response,
             finalUrl: currentUrl,
-            redirectCount,
+            redirectCount: redirectCount + 1,
+            redirectChain,
             disallowedRedirect: true,
             disallowedDestination: 'missing_location_header',
+            redirectLimitReached: false,
+            loopDetected: false,
+            failureCategory: 'missing_location',
           };
         }
 
@@ -1221,28 +1403,122 @@ export class InBrowserCrawler {
         try {
           targetUrl = new URL(location, currentUrl).href;
         } catch {
+          redirectChain.push({
+            url: currentUrl,
+            status: response.status,
+            fromUrl: currentUrl,
+            toUrl: location,
+            httpStatus: response.status,
+            location: location,
+            locationHeader: location,
+            isBlocked: true,
+            blockReason: 'invalid_url',
+          });
           return {
             response,
             finalUrl: currentUrl,
-            redirectCount,
+            redirectCount: redirectCount + 1,
+            redirectChain,
             disallowedRedirect: true,
             disallowedDestination: location,
+            redirectLimitReached: false,
+            loopDetected: false,
+            failureCategory: 'invalid_url',
           };
         }
 
-        // Strictly validate redirect destination BEFORE fetching!
         const normTarget = this.normalizeUrl(targetUrl);
-        if (!this.isInScope(normTarget)) {
+
+        // Circular redirect loop check: detect repeated normalized URL BEFORE fetching next hop!
+        if (visitedUrls.has(normTarget)) {
+          redirectChain.push({
+            url: currentUrl,
+            status: response.status,
+            fromUrl: currentUrl,
+            toUrl: normTarget,
+            httpStatus: response.status,
+            location: location,
+            locationHeader: location,
+            isBlocked: true,
+            blockReason: 'redirect_loop',
+          });
+          return {
+            response,
+            finalUrl: normTarget,
+            redirectCount: redirectCount + 1,
+            redirectChain,
+            disallowedRedirect: true,
+            disallowedDestination: normTarget,
+            redirectLimitReached: false,
+            loopDetected: true,
+            failureCategory: 'redirect_loop',
+          };
+        }
+
+        // Scope and SSRF destination safety check BEFORE requesting next hop!
+        if (!this.isInScope(normTarget) || isSsrfTarget(normTarget, this.origin)) {
+          redirectChain.push({
+            url: currentUrl,
+            status: response.status,
+            fromUrl: currentUrl,
+            toUrl: normTarget,
+            httpStatus: response.status,
+            location: location,
+            locationHeader: location,
+            isBlocked: true,
+            blockReason: 'disallowed_scope_or_origin',
+          });
           return {
             response,
             finalUrl: currentUrl,
-            redirectCount,
+            redirectCount: redirectCount + 1,
+            redirectChain,
             disallowedRedirect: true,
             disallowedDestination: targetUrl,
+            redirectLimitReached: false,
+            loopDetected: false,
+            failureCategory: 'disallowed_destination',
           };
         }
 
+        // Redirect hop count check (max 3 redirects)
+        if (redirectCount >= maxRedirects) {
+          redirectChain.push({
+            url: currentUrl,
+            status: response.status,
+            fromUrl: currentUrl,
+            toUrl: normTarget,
+            httpStatus: response.status,
+            location: location,
+            locationHeader: location,
+            isBlocked: true,
+            blockReason: 'too_many_redirects',
+          });
+          return {
+            response,
+            finalUrl: currentUrl,
+            redirectCount: redirectCount + 1,
+            redirectChain,
+            disallowedRedirect: true,
+            disallowedDestination: 'too_many_redirects',
+            redirectLimitReached: true,
+            loopDetected: false,
+            failureCategory: 'too_many_redirects',
+          };
+        }
+
+        redirectChain.push({
+          url: currentUrl,
+          status: response.status,
+          fromUrl: currentUrl,
+          toUrl: normTarget,
+          httpStatus: response.status,
+          location: location,
+          locationHeader: location,
+          isBlocked: false,
+        });
         redirectCount++;
+        visitedUrls.add(normTarget);
         currentUrl = normTarget;
         continue;
       }
@@ -1250,13 +1526,17 @@ export class InBrowserCrawler {
       // Handle transparent browser redirect if any
       if (response.redirected && response.url) {
         const normFinal = this.normalizeUrl(response.url);
-        if (!this.isInScope(normFinal)) {
+        if (!this.isInScope(normFinal) || isSsrfTarget(normFinal, this.origin)) {
           return {
             response,
             finalUrl: response.url,
-            redirectCount,
+            redirectCount: redirectCount + 1,
+            redirectChain,
             disallowedRedirect: true,
             disallowedDestination: response.url,
+            redirectLimitReached: false,
+            loopDetected: false,
+            failureCategory: 'disallowed_destination',
           };
         }
         currentUrl = normFinal;
@@ -1266,7 +1546,10 @@ export class InBrowserCrawler {
         response,
         finalUrl: currentUrl,
         redirectCount,
+        redirectChain,
         disallowedRedirect: false,
+        redirectLimitReached: false,
+        loopDetected: false,
       };
     }
 
@@ -1274,8 +1557,12 @@ export class InBrowserCrawler {
       response: new Response(null, { status: 310, statusText: 'Too many redirects' }),
       finalUrl: currentUrl,
       redirectCount,
+      redirectChain,
       disallowedRedirect: true,
       disallowedDestination: 'too_many_redirects',
+      redirectLimitReached: true,
+      loopDetected: false,
+      failureCategory: 'too_many_redirects',
     };
   }
 

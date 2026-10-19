@@ -53,10 +53,11 @@ export const ALL_CANONICAL_RULE_IDS = new Set<string>(
 export const ALL_CANONICAL_51_RULES: readonly string[] = CANONICAL_RULES_MANIFEST.map((r) => r.rule_id);
 
 /**
- * 33 Canonical Rules verified and actively implemented in Standalone client rules engine:
- * - 16 On-Page (100% complete coverage)
- * - 15 Technical (15/22 coverage)
+ * 40 Canonical Rules verified and actively implemented in Standalone client rules engine:
+ * - 16 On-Page (16/16 - 100% complete coverage)
+ * - 22 Technical (22/22 - 100% complete coverage)
  * - 2 Sitewide (2/13 coverage)
+ * Total: 40/51 Canonical Rules Implemented
  */
 export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
   // On-Page (16/16 - 100% coverage)
@@ -76,7 +77,7 @@ export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
   'ONPAGE_INTERNAL_OUTLINKS',
   'ONPAGE_EMPTY_ANCHOR_TEXT',
   'ONPAGE_HTML_LANG',
-  // Technical (15/22 coverage)
+  // Technical (22/22 - 100% coverage)
   'TECH_HTTP_4XX',
   'TECH_HTTP_5XX',
   'TECH_HTTP_429',
@@ -84,7 +85,6 @@ export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
   'TECH_META_ROBOTS_DIRECTIVES',
   'TECH_X_ROBOTS_TAG',
   'TECH_HTTPS_USAGE',
-  // Phase 2B Checkpoint 1 Newly Implemented Technical Rules:
   'TECH_ROBOTS_FETCH_STATUS',
   'TECH_ROBOTS_DISALLOW',
   'TECH_ROBOTS_SITEMAP_DECLARATION',
@@ -93,6 +93,14 @@ export const CANONICAL_IMPLEMENTED_RULES = new Set<string>([
   'TECH_SITEMAP_URL_STATUS',
   'TECH_SITEMAP_NOINDEX_CONFLICT',
   'TECH_SITEMAP_CANONICAL_CONFLICT',
+  // Phase 2C Newly Implemented Technical Rules:
+  'TECH_REDIRECT_CHAIN',
+  'TECH_REDIRECT_LOOP',
+  'TECH_REDIRECT_FAILURE',
+  'TECH_CANONICAL_TARGET_STATUS',
+  'TECH_CANONICAL_CONFLICT',
+  'TECH_CANONICAL_MULTIPLE',
+  'TECH_HTTPS_DOWNGRADE',
   // Sitewide (2/13)
   'SITE_TITLE_DUPLICATE',
   'SITE_NO_OBSERVED_INTERNAL_INLINKS',

@@ -551,7 +551,7 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Coverage & Rules ({scorecard?.coverage?.executedRulesTotal ?? 33}/51)
+              Coverage & Rules ({scorecard?.coverage?.executedRulesTotal ?? CANONICAL_IMPLEMENTED_RULES.size}/51)
             </button>
           </div>
 

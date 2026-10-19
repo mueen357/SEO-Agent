@@ -18,13 +18,28 @@ export type StandaloneAuditStatus =
   | 'cancelled'
   | 'error';
 
+export interface RedirectHop {
+  url?: string;
+  status?: number;
+  location?: string;
+  fromUrl?: string;
+  toUrl?: string;
+  httpStatus?: number;
+  locationHeader?: string;
+  isBlocked?: boolean;
+  safetyBlocked?: boolean;
+  blockReason?: string;
+}
+
 export type StandaloneFetchErrorCode =
   | 'FETCH_NETWORK_ERROR'
   | 'FETCH_TIMEOUT'
   | 'FETCH_PERMISSION_DENIED'
   | 'FETCH_REDIRECT_BLOCKED'
+  | 'FETCH_REDIRECT_LOOP'
   | 'FETCH_BODY_TOO_LARGE'
-  | 'FETCH_PARSE_FAILED';
+  | 'FETCH_PARSE_FAILED'
+  | 'FETCH_ROBOTS_BLOCKED';
 
 export interface StandaloneAuditConfig {
   maxPages: number;
@@ -50,9 +65,22 @@ export interface StandaloneCrawlPage {
   id: string;
   auditId: string;
   url: string;
+  requestedUrl?: string;
+  finalUrl?: string;
+  redirectChain?: RedirectHop[];
+  redirectCount?: number;
+  redirectLoopDetected?: boolean;
   depth: number;
   httpStatus: number;
-  fetchStatus: 'success' | 'failed' | 'skipped' | 'timeout' | 'robots_blocked';
+  fetchStatus:
+    | 'success'
+    | 'failed'
+    | 'skipped'
+    | 'timeout'
+    | 'robots_blocked'
+    | 'redirect_loop'
+    | 'policy_blocked'
+    | 'http_error';
   errorCode?: StandaloneFetchErrorCode;
   errorMessage?: string;
   contentTypeCategory?: StandaloneContentCategory;
@@ -71,6 +99,8 @@ export interface StandaloneCrawlPage {
   h1RawCount?: number;
   h1HasContent?: boolean;
   canonicalUrl?: string;
+  canonicalHrefs?: string[];
+  canonicalCount?: number;
   metaRobots?: string;
   htmlLang?: string | null;
   links: string[];

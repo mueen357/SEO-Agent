@@ -7,6 +7,8 @@ export interface ParsedHtmlEvidence {
   title?: string;
   metaDescription?: string;
   canonicalUrl?: string;
+  canonicalHrefs?: string[];
+  canonicalCount?: number;
   metaRobots?: string;
   htmlLang?: string | null;
   headings: {
@@ -127,9 +129,13 @@ export class StandaloneDomParser {
     const metaDescEl = doc.querySelector('meta[name="description" i]');
     const metaDescription = metaDescEl?.getAttribute('content')?.trim() || undefined;
 
-    // Canonical
-    const canonicalEl = doc.querySelector('link[rel="canonical" i]');
-    const canonicalUrl = canonicalEl?.getAttribute('href')?.trim() || undefined;
+    // Canonical: capture ALL rel=canonical elements (not just first)
+    const canonicalEls = Array.from(doc.querySelectorAll('link[rel~="canonical" i]'));
+    const canonicalHrefs = canonicalEls
+      .map((el) => el.getAttribute('href')?.trim())
+      .filter((h): h is string => typeof h === 'string');
+    const canonicalCount = canonicalEls.length;
+    const canonicalUrl = canonicalHrefs[0] || undefined;
 
     // Meta Robots
     const metaRobotsEl = doc.querySelector('meta[name="robots" i]');
@@ -343,6 +349,8 @@ export class StandaloneDomParser {
       title,
       metaDescription,
       canonicalUrl,
+      canonicalHrefs,
+      canonicalCount,
       metaRobots,
       htmlLang,
       headings,
@@ -375,8 +383,21 @@ export class StandaloneDomParser {
     const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
     const metaDescMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i) ||
                           html.match(/<meta[^>]*content=["']([^"']*)["'][^>]*name=["']description["']/i);
-    const canonicalMatch = html.match(/<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']*)["']/i) ||
-                           html.match(/<link[^>]*href=["']([^"']*)["'][^>]*rel=["']canonical["']/i);
+    const canonicalHrefs: string[] = [];
+    const linkRegex = /<link\b([^>]+)>/gi;
+    let linkM: RegExpExecArray | null;
+    while ((linkM = linkRegex.exec(html)) !== null) {
+      const attrs = linkM[1] || '';
+      const relM = attrs.match(/rel=["']([^"']*)["']/i);
+      if (relM && relM[1] && /\bcanonical\b/i.test(relM[1])) {
+        const hrefM = attrs.match(/href=["']([^"']*)["']/i);
+        if (hrefM && hrefM[1] !== undefined) {
+          canonicalHrefs.push(hrefM[1].trim());
+        }
+      }
+    }
+    const canonicalCount = canonicalHrefs.length;
+    const canonicalUrl = canonicalHrefs[0] || undefined;
     const robotsMatch = html.match(/<meta[^>]*name=["']robots["'][^>]*content=["']([^"']*)["']/i) ||
                         html.match(/<meta[^>]*content=["']([^"']*)["'][^>]*name=["']robots["']/i);
 
@@ -596,7 +617,9 @@ export class StandaloneDomParser {
     return {
       title: titleMatch && titleMatch[1] ? titleMatch[1].trim() : undefined,
       metaDescription: metaDescMatch && metaDescMatch[1] ? metaDescMatch[1].trim() : undefined,
-      canonicalUrl: canonicalMatch && canonicalMatch[1] ? canonicalMatch[1].trim() : undefined,
+      canonicalUrl,
+      canonicalHrefs,
+      canonicalCount,
       metaRobots: robotsMatch && robotsMatch[1] ? robotsMatch[1].trim() : undefined,
       htmlLang,
       headings,

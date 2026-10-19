@@ -87,25 +87,25 @@ function createMockPage(
   };
 }
 
-describe('Canonical Registry Parity & Integrity (Phase 2B: 33 Implemented Rules)', () => {
+describe('Canonical Registry Parity & Integrity (Phase 2C: 40 Implemented Rules)', () => {
   it('validates canonical registry integrity with zero discrepancies', () => {
     const validation = validateCanonicalRegistry();
     expect(validation.isValid).toBe(true);
     expect(validation.totalCanonicalRules).toBe(51);
-    expect(validation.implementedCount).toBe(33);
+    expect(validation.implementedCount).toBe(40);
     expect(validation.familyCounts.on_page).toBe(16);
     expect(validation.familyCounts.technical).toBe(22);
     expect(validation.familyCounts.sitewide).toBe(13);
   });
 
-  it('guarantees all 33 implemented rules exist in authoritative 51-rule registry', () => {
-    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(33);
+  it('guarantees all 40 implemented rules exist in authoritative 51-rule registry', () => {
+    expect(CANONICAL_IMPLEMENTED_RULES.size).toBe(40);
     for (const ruleId of CANONICAL_IMPLEMENTED_RULES) {
       expect(isCanonicalRuleId(ruleId)).toBe(true);
     }
   });
 
-  it('verifies 16/16 On-Page, 15/22 Technical, and 2/13 Site-Wide target breakdown', () => {
+  it('verifies 16/16 On-Page, 22/22 Technical, and 2/13 Site-Wide target breakdown', () => {
     let onPageCount = 0;
     let techCount = 0;
     let siteCount = 0;
@@ -117,7 +117,7 @@ describe('Canonical Registry Parity & Integrity (Phase 2B: 33 Implemented Rules)
     }
 
     expect(onPageCount).toBe(16);
-    expect(techCount).toBe(15);
+    expect(techCount).toBe(22);
     expect(siteCount).toBe(2);
   });
 });
@@ -618,14 +618,14 @@ describe('Execution Ledger Idempotency & Persistence', () => {
     await StandaloneAuditStorage.replaceExecutionLedger(auditId, run1.ledgerRecords);
 
     let stored = await StandaloneAuditStorage.getExecutionLedgerForAudit(auditId);
-    expect(stored).toHaveLength(33);
+    expect(stored).toHaveLength(40);
 
     // Re-evaluate the same audit and replace
     const run2 = StandaloneRulesEngine.evaluateAudit([page], auditId);
     await StandaloneAuditStorage.replaceExecutionLedger(auditId, run2.ledgerRecords);
 
     stored = await StandaloneAuditStorage.getExecutionLedgerForAudit(auditId);
-    // Still exactly 33 records! Zero duplicates!
-    expect(stored).toHaveLength(33);
+    // Still exactly 40 records! Zero duplicates!
+    expect(stored).toHaveLength(40);
   });
 });
