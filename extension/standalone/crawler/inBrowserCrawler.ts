@@ -164,8 +164,10 @@ export class InBrowserCrawler {
     this.hostname = parsed.hostname;
 
     if (existingQueue && existingQueue.length > 0) {
-      this.queue = [...existingQueue];
-      this.seenUrls = new Set(existingSeen || existingQueue.map((q) => q.url));
+      this.queue = existingQueue.map((q) => ({ url: this.normalizeUrl(q.url), depth: q.depth }));
+      this.seenUrls = new Set(
+        existingSeen ? existingSeen.map((u) => this.normalizeUrl(u)) : this.queue.map((q) => q.url)
+      );
     } else {
       const normSeed = this.normalizeUrl(seedUrl);
       this.queue.push({ url: normSeed, depth: 0 });
@@ -189,11 +191,11 @@ export class InBrowserCrawler {
     try {
       const u = new URL(rawUrl);
       u.hash = ''; // Strip fragments
-      let norm = u.origin + u.pathname;
-      if (norm.length > 1 && norm.endsWith('/')) {
-        norm = norm.slice(0, -1);
+      let path = u.pathname;
+      if (path.length > 1 && path.endsWith('/')) {
+        path = path.slice(0, -1);
       }
-      return norm + (u.search || '');
+      return u.origin + path + (u.search || '');
     } catch {
       return rawUrl;
     }

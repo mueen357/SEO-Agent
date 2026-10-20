@@ -1012,8 +1012,20 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                       );
                     })}
                   {findings.filter((f) => ['SITE_TITLE_DUPLICATE', 'SITE_META_DESCRIPTION_DUPLICATE', 'SITE_H1_DUPLICATE'].includes(f.ruleId) && f.status === 'warning').length === 0 && (
-                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
-                      ✓ Zero duplicate titles, meta descriptions, or H1 headings detected.
+                    <div className="text-[11px] p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      {crawledPages.length < 2 ? (
+                        <span className="text-slate-400">
+                          Metadata uniqueness analysis requires at least 2 crawled pages ({crawledPages.length} page audited).
+                        </span>
+                      ) : findings.some((f) => ['SITE_TITLE_DUPLICATE', 'SITE_META_DESCRIPTION_DUPLICATE', 'SITE_H1_DUPLICATE'].includes(f.ruleId) && (f.status === 'unknown' || f.status === 'not_evaluated')) ? (
+                        <span className="text-amber-400">
+                          Metadata uniqueness evaluation incomplete or content unavailable.
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400">
+                          ✓ Zero duplicate titles, meta descriptions, or H1 headings detected across {crawledPages.length} audited pages.
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1081,8 +1093,24 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                       );
                     })}
                   {findings.filter((f) => ['SITE_CONTENT_DUPLICATE_EXACT', 'SITE_CONTENT_DUPLICATE_NEAR'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
-                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
-                      ✓ Zero exact or near-duplicate content clusters detected.
+                    <div className="text-[11px] p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      {crawledPages.filter((p) => p.contentQualityStatus === 'usable' || (p.mainTextWordCount ?? 0) >= 100).length < 2 ? (
+                        <span className="text-slate-400">
+                          Duplicate content analysis requires at least 2 pages with usable body text ({crawledPages.length} page(s) crawled; insufficient text content).
+                        </span>
+                      ) : findings.some((f) => f.ruleId === 'SITE_CONTENT_DUPLICATE_NEAR' && (f.evidence?.incompleteAnalysis || f.status === 'unknown')) ? (
+                        <span className="text-amber-400">
+                          Near-duplicate candidate comparison reached safety limit (2,500 comparisons / 100 pages budget); evaluation marked incomplete.
+                        </span>
+                      ) : findings.some((f) => ['SITE_CONTENT_DUPLICATE_EXACT', 'SITE_CONTENT_DUPLICATE_NEAR'].includes(f.ruleId) && (f.status === 'unknown' || f.status === 'not_evaluated')) ? (
+                        <span className="text-amber-400">
+                          Duplicate content analysis incomplete: content unavailable or evaluation was bounded.
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400">
+                          ✓ Zero exact or near-duplicate content clusters detected across {crawledPages.length} audited pages.
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1130,8 +1158,20 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                       );
                     })}
                   {findings.filter((f) => ['SITE_INTERNAL_LINK_TO_4XX', 'SITE_INTERNAL_LINK_TO_5XX'].includes(f.ruleId) && f.status === 'fail').length === 0 && (
-                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
-                      ✓ Zero internal hyperlinks point to confirmed 4xx or 5xx error destinations.
+                    <div className="text-[11px] p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      {(activeJob?.linkGraph?.totalUniqueEdges ?? 0) === 0 ? (
+                        <span className="text-slate-400">
+                          No internal hyperlinks discovered across crawled pages to verify.
+                        </span>
+                      ) : (activeJob?.pendingQueue?.length ?? 0) > 0 ? (
+                        <span className="text-amber-300">
+                          ✓ No broken links among crawled pages ({activeJob?.linkGraph?.totalUniqueEdges ?? 0} links verified; unvisited links remain uncrawled).
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400">
+                          ✓ Zero internal hyperlinks point to confirmed 4xx or 5xx error destinations ({activeJob?.linkGraph?.totalUniqueEdges ?? 0} links verified).
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1165,8 +1205,16 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                       </div>
                     ))}
                   {findings.filter((f) => ['SITE_DUPLICATE_CANONICAL_REVIEW', 'SITE_CONTENT_CANONICAL_CONFLICT'].includes(f.ruleId) && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
-                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
-                      ✓ Clean canonical signals; no competing self-canonicals or broken canonical targets.
+                    <div className="text-[11px] p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      {findings.some((f) => ['SITE_DUPLICATE_CANONICAL_REVIEW', 'SITE_CONTENT_CANONICAL_CONFLICT'].includes(f.ruleId) && (f.status === 'unknown' || f.evidence?.consolidation_status === 'UNCHECKED_TARGET' || f.evidence?.conflict_status === 'UNCHECKED_TARGET')) ? (
+                        <span className="text-amber-400">
+                          Canonical targets in duplicate content groups could not be fully verified (one or more targets were not crawled).
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400">
+                          ✓ Clean canonical signals; all observed canonical targets verified without conflicting self-canonicals.
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1220,8 +1268,16 @@ export function StandaloneAuditView({ activeUrl }: StandaloneAuditViewProps = {}
                       </div>
                     ))}
                   {findings.filter((f) => (f.category === 'sitewide' || f.ruleId.startsWith('SITE_')) && (f.status === 'fail' || f.status === 'warning')).length === 0 && (
-                    <div className="text-[11px] text-emerald-400 p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
-                      ✓ Zero site-wide architecture errors or warnings detected.
+                    <div className="text-[11px] p-2 text-center bg-slate-950/40 rounded border border-slate-800/40">
+                      {crawledPages.length < 3 ? (
+                        <span className="text-slate-400">
+                          Site-wide architecture analysis is limited (multi-page topology rules require at least 3 crawled pages; {crawledPages.length} audited).
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400">
+                          ✓ Zero site-wide architecture errors or warnings detected across {crawledPages.length} audited pages.
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

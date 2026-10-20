@@ -47,6 +47,9 @@ export interface ParsedHtmlEvidence {
   extractionVersion?: string;
   mainTextExcerpt?: string;
   isContentTruncated?: boolean;
+  isExcerptTruncated?: boolean;
+  isSourceContentTruncated?: boolean;
+  processingLimitReached?: boolean;
 }
 
 let creatingOffscreenPromise: Promise<void> | null = null;
@@ -390,6 +393,9 @@ export class StandaloneDomParser {
       extractionVersion: contentResult.extractionVersion,
       mainTextExcerpt: contentResult.mainTextExcerpt,
       isContentTruncated: contentResult.isTruncated,
+      isExcerptTruncated: contentResult.isExcerptTruncated,
+      isSourceContentTruncated: contentResult.isSourceContentTruncated,
+      processingLimitReached: contentResult.processingLimitReached,
     };
   }
 
@@ -668,6 +674,9 @@ export class StandaloneDomParser {
       extractionVersion: contentResult.extractionVersion,
       mainTextExcerpt: contentResult.mainTextExcerpt,
       isContentTruncated: contentResult.isTruncated,
+      isExcerptTruncated: contentResult.isExcerptTruncated,
+      isSourceContentTruncated: contentResult.isSourceContentTruncated,
+      processingLimitReached: contentResult.processingLimitReached,
     };
   }
 }

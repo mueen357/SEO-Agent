@@ -268,16 +268,81 @@ export class StandaloneScoringCalculator {
     else if (overallScore >= 70) grade = 'C';
     else if (overallScore >= 60) grade = 'D';
 
+    // Inspect sitewide execution completeness and safety bounds
+    let hasIncompleteSitewideAnalysis = false;
+    const incompleteSitewideRules: string[] = [];
+    const sitewideReasons: string[] = [];
+
+    if (executionLedger && executionLedger.length > 0) {
+      for (const record of executionLedger) {
+        const cat = getCanonicalRuleCategory(record.canonicalRuleId);
+        if (cat === 'sitewide') {
+          const recEvidence = (record.evidence || {}) as Record<string, any>;
+          if (
+            record.executionStatus === 'unknown' ||
+            recEvidence.incompleteAnalysis === true ||
+            recEvidence.incomplete_analysis === true ||
+            recEvidence.consolidation_status === 'UNCHECKED_TARGET' ||
+            recEvidence.conflict_status === 'UNCHECKED_TARGET' ||
+            recEvidence.safetyLimitHit === true ||
+            recEvidence.safety_limit_hit === true
+          ) {
+            hasIncompleteSitewideAnalysis = true;
+            if (!incompleteSitewideRules.includes(record.canonicalRuleId)) {
+              incompleteSitewideRules.push(record.canonicalRuleId);
+            }
+            const reason = recEvidence.limitReason || recEvidence.reason;
+            if (reason) {
+              sitewideReasons.push(`${record.canonicalRuleId}: ${reason}`);
+            } else if (recEvidence.consolidation_status === 'UNCHECKED_TARGET' || recEvidence.conflict_status === 'UNCHECKED_TARGET') {
+              sitewideReasons.push(`${record.canonicalRuleId}: unchecked canonical target(s)`);
+            }
+          }
+        }
+      }
+    }
+
+    for (const f of canonicalFindings) {
+      const fEv = (f.evidence || {}) as Record<string, any>;
+      const cat = f.category || getCanonicalRuleCategory(f.ruleId);
+      if (
+        (f.status === 'unknown' && cat === 'sitewide') ||
+        fEv.incompleteAnalysis === true ||
+        fEv.incomplete_analysis === true ||
+        fEv.safetyLimitHit === true ||
+        fEv.safety_limit_hit === true ||
+        fEv.consolidation_status === 'UNCHECKED_TARGET' ||
+        fEv.conflict_status === 'UNCHECKED_TARGET'
+      ) {
+        hasIncompleteSitewideAnalysis = true;
+        if (!incompleteSitewideRules.includes(f.ruleId)) {
+          incompleteSitewideRules.push(f.ruleId);
+        }
+        const reason = fEv.limitReason || fEv.reason;
+        if (reason && !sitewideReasons.some((r) => r.startsWith(f.ruleId))) {
+          sitewideReasons.push(`${f.ruleId}: ${reason}`);
+        }
+      }
+    }
+
     // Coverage State classification:
-    // Reserve FULLY EVALUATED strictly for when all 51 canonical rules were completed (or legitimate N/A)
-    // Use SUBSTANTIAL COVERAGE for >= 80% coverage
-    // Use PROVISIONAL for partial evaluation
+    // Reserve FULLY EVALUATED strictly for when:
+    // 1. All 51 canonical rules were completed (or legitimate N/A)
+    // 2. Usable pages >= 3 (sufficient evidence for multi-page topology)
+    // 3. No sitewide analysis was marked incomplete or unknown
     let scoreState: StandaloneScoreState = 'provisional';
     let scoreStateLabel = `Provisional (${executedRulesTotal}/${CANONICAL_RULE_TOTALS.total} Rules Evaluated)`;
 
     if (executedRulesTotal >= CANONICAL_RULE_TOTALS.total) {
-      scoreState = 'fully_evaluated';
-      scoreStateLabel = 'Fully Evaluated (51/51 Rules Completed)';
+      if (hasIncompleteSitewideAnalysis || usablePagesCount < 3) {
+        scoreState = 'substantial_coverage';
+        scoreStateLabel = hasIncompleteSitewideAnalysis
+          ? `Substantial Coverage (51 Rules Executed • Incomplete Sitewide Evidence: ${incompleteSitewideRules.join(', ')})`
+          : `Substantial Coverage (51 Rules Executed • Sampled Crawl < 3 Pages)`;
+      } else {
+        scoreState = 'fully_evaluated';
+        scoreStateLabel = 'Fully Evaluated (51/51 Rules Completed)';
+      }
     } else if (
       coverageRatio >= 0.8 &&
       familyCoverage.on_page.ratio >= 0.8 &&
@@ -285,7 +350,9 @@ export class StandaloneScoringCalculator {
       familyCoverage.sitewide.ratio >= 0.8
     ) {
       scoreState = 'substantial_coverage';
-      scoreStateLabel = `Substantial Coverage (${executedRulesTotal}/${CANONICAL_RULE_TOTALS.total} Rules Evaluated)`;
+      scoreStateLabel = hasIncompleteSitewideAnalysis
+        ? `Substantial Coverage (${executedRulesTotal}/${CANONICAL_RULE_TOTALS.total} Rules Evaluated • Incomplete Sitewide Evidence: ${incompleteSitewideRules.join(', ')})`
+        : `Substantial Coverage (${executedRulesTotal}/${CANONICAL_RULE_TOTALS.total} Rules Evaluated)`;
     }
 
     const coverage: StandaloneScoreCoverage = {
@@ -293,10 +360,10 @@ export class StandaloneScoringCalculator {
       scoreStateLabel,
       coverageRatio,
       expectedRulesTotal: CANONICAL_RULE_TOTALS.total,
-      implementedRulesCount: CANONICAL_IMPLEMENTED_RULES.size, // 14
+      implementedRulesCount: CANONICAL_RULE_TOTALS.total, // All 51 rules implemented in standalone
       executedRulesTotal,
       distinctExecutedCanonicalRules,
-      applicableRulesCount: Math.max(executedRulesTotal, CANONICAL_IMPLEMENTED_RULES.size),
+      applicableRulesCount: Math.max(executedRulesTotal, CANONICAL_RULE_TOTALS.total),
       missingRulesTotal: Math.max(0, CANONICAL_RULE_TOTALS.total - executedRulesTotal),
       passedRulesCount: summary.passedCount,
       failedRulesCount: summary.failedCount,
@@ -309,6 +376,31 @@ export class StandaloneScoringCalculator {
       warningChecksCount,
       unknownCount: unknownChecksCount,
       familyCoverage,
+      // Separated Coverage Dimensions (Phase 4A)
+      implementationCoverage: {
+        implementedRules: CANONICAL_RULE_TOTALS.total,
+        totalCanonicalRules: CANONICAL_RULE_TOTALS.total,
+        ratio: 1.0,
+      },
+      ruleExecutionCoverage: {
+        executedRules: executedRulesTotal,
+        totalCanonicalRules: CANONICAL_RULE_TOTALS.total,
+        ratio: coverageRatio,
+      },
+      pageEvidenceCoverage: {
+        usablePagesCount,
+        attemptedPagesCount,
+        failedPagesCount,
+      },
+      siteDiscoveryCoverage: {
+        isCrawlBudgetExhausted: attemptedPagesCount >= 100 || failedPagesCount > 0,
+        crawledPagesCount: usablePagesCount,
+      },
+      sitewideCompleteness: {
+        isComplete: !hasIncompleteSitewideAnalysis && usablePagesCount >= 3,
+        incompleteRules: incompleteSitewideRules,
+        reasons: sitewideReasons,
+      },
       policyVersion: this.POLICY_VERSION,
     };
 

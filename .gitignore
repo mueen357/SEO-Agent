@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 .pnpm-store/
 .venv/
@@ -50,6 +50,8 @@ Thumbs.db
 .idea/
 # Scratch and Local Testing Profiles
 scratch_profile/
+scratch_profile_clean/
+scratch_profile*/
 scratch/
 
 # Databases & Persistence

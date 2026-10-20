@@ -1,11 +1,75 @@
-/**
- * Deterministic Content Normalization, SHA-256, SimHash-64, and Main Content Extraction.
- * 100% Client-Side MV3 Compatible. Parallels backend app/content/ architecture.
- */
+import html5EntitiesData from './html5Entities.json';
+
+const HTML5_ENTITIES: Record<string, string> = html5EntitiesData as Record<string, string>;
 
 // ============================================================================
 // 1. TEXT AND UNICODE NORMALIZATION
 // ============================================================================
+
+/**
+ * Decodes HTML entities with full HTML5 named entity catalog, decimal, hex,
+ * and astral-plane Unicode code point support.
+ * Parallels Python's `html.unescape` with 100% precision.
+ */
+const INVALID_CHARREFS: Record<number, string> = {
+  0: '\ufffd', 13: '\r', 128: '\u20ac', 129: '\x81', 130: '\u201a', 131: '\u0192',
+  132: '\u201e', 133: '\u2026', 134: '\u2020', 135: '\u2021', 136: '\u02c6', 137: '\u2030',
+  138: '\u0160', 139: '\u2039', 140: '\u0152', 141: '\x8d', 142: '\u017d', 143: '\x8f',
+  144: '\x90', 145: '\u2018', 146: '\u2019', 147: '\u201c', 148: '\u201d', 149: '\u2022',
+  150: '\u2013', 151: '\u2014', 152: '\u02dc', 153: '\u2122', 154: '\u0161', 155: '\u203a',
+  156: '\u0153', 157: '\x9d', 158: '\u017e', 159: '\u0178',
+};
+
+const INVALID_CODEPOINTS = new Set([
+  1, 2, 3, 4, 5, 6, 7, 8, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+  127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159,
+  64976, 64977, 64978, 64979, 64980, 64981, 64982, 64983, 64984, 64985, 64986, 64987, 64988, 64989, 64990, 64991, 64992, 64993, 64994, 64995, 64996, 64997, 64998, 64999, 65000, 65001, 65002, 65003, 65004, 65005, 65006, 65007,
+  65534, 65535, 131070, 131071, 196606, 196607, 262142, 262143, 327678, 327679, 393214, 393215, 458750, 458751, 524286, 524287, 589822, 589823, 655358, 655359, 720894, 720895, 786430, 786431, 851966, 851967, 917502, 917503, 983038, 983039, 1048574, 1048575, 1114110, 1114111,
+]);
+
+/**
+ * Counts Unicode code points (characters) rather than UTF-16 code units.
+ * Equivalent to Python's `len(str)`.
+ */
+export function unicodeCodePointCount(str: string): number {
+  if (!str) return 0;
+  return Array.from(str).length;
+}
+
+/**
+ * Decodes HTML entities with full HTML5 named entity catalog, decimal, hex,
+ * and astral-plane Unicode code point support.
+ * Parallels Python's `html.unescape` with 100% precision.
+ */
+export function unescapeHtml(text: string): string {
+  if (!text || !text.includes('&')) return text || '';
+  return text.replace(/&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)/g, (_match, s: string) => {
+    if (s[0] === '#') {
+      const isHex = s[1] === 'x' || s[1] === 'X';
+      const clean = s.endsWith(';') ? s.slice(isHex ? 2 : 1, -1) : s.slice(isHex ? 2 : 1);
+      const num = parseInt(clean, isHex ? 16 : 10);
+      if (isNaN(num)) return '&' + s;
+      if (INVALID_CHARREFS[num] !== undefined) return INVALID_CHARREFS[num];
+      if ((num >= 0xd800 && num <= 0xdfff) || num > 0x10ffff) return '\ufffd';
+      if (INVALID_CODEPOINTS.has(num)) return '';
+      try {
+        return String.fromCodePoint(num);
+      } catch {
+        return '\ufffd';
+      }
+    } else {
+      if (HTML5_ENTITIES[s]) return HTML5_ENTITIES[s];
+      // Longest matching prefix algorithm from HTML5 specification
+      for (let x = s.length - 1; x > 1; x--) {
+        const prefix = s.slice(0, x);
+        if (HTML5_ENTITIES[prefix]) {
+          return HTML5_ENTITIES[prefix] + s.slice(x);
+        }
+      }
+      return '&' + s;
+    }
+  });
+}
 
 /**
  * Normalizes text using Unicode NFKC, HTML entity decoding, and whitespace compaction.
@@ -14,20 +78,11 @@
 export function normalizeText(text: string): string {
   if (!text) return '';
 
-  // Decode common HTML entities
-  let decoded = text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  // Decode HTML entities with full HTML5 specification
+  const decoded = unescapeHtml(text);
 
-  // Unicode NFKC normalization
-  let nfkcText = decoded.normalize('NFKC');
+  // Unicode NFKC normalization decomposes and maps compatible characters
+  const nfkcText = decoded.normalize('NFKC');
 
   // Collapse whitespace, tabs, newlines, non-breaking spaces (\u00a0), zero-width spaces (\u200b), BOM (\ufeff)
   return nfkcText.replace(/[\s\u00a0\u200b\ufeff]+/g, ' ').trim();
@@ -466,8 +521,13 @@ export interface MainContentResult {
   extractionSource: string;
   extractionVersion: string;
   contentQualityStatus: 'empty' | 'thin' | 'usable' | 'sufficient' | 'non_html';
-  isTruncated: boolean;
+  isTruncated: boolean; // Backward compatibility (true if excerpt or source was truncated)
+  isExcerptTruncated: boolean; // Excerpt truncated to 300 chars for UI/storage display
+  isSourceContentTruncated: boolean; // Raw HTML input exceeded 150,000 char parsing budget
+  processingLimitReached: boolean; // Safety budget reached during extraction
 }
+
+export const MAX_RAW_HTML_LENGTH = 150_000;
 
 /**
  * Extracts meaningful primary text from HTML, stripping boilerplate and computing fingerprints.
@@ -486,7 +546,20 @@ export function extractMainContent(html: string, pageUrl?: string): MainContentR
       extractionVersion: '1.0.0',
       contentQualityStatus: 'empty',
       isTruncated: false,
+      isExcerptTruncated: false,
+      isSourceContentTruncated: false,
+      processingLimitReached: false,
     };
+  }
+
+  let isSourceContentTruncated = false;
+  let processingLimitReached = false;
+  let workingHtml = html;
+
+  if (workingHtml.length > MAX_RAW_HTML_LENGTH) {
+    workingHtml = workingHtml.slice(0, MAX_RAW_HTML_LENGTH);
+    isSourceContentTruncated = true;
+    processingLimitReached = true;
   }
 
   let rawText = '';
@@ -495,7 +568,7 @@ export function extractMainContent(html: string, pageUrl?: string): MainContentR
   if (typeof DOMParser !== 'undefined') {
     try {
       const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
+      const doc = parser.parseFromString(workingHtml, 'text/html');
 
       // 1. Remove all boilerplate elements
       for (const tag of BOILERPLATE_TAGS) {
@@ -534,10 +607,12 @@ export function extractMainContent(html: string, pageUrl?: string): MainContentR
         }
       }
     } catch {
-      rawText = stripHtmlWithRegex(html);
+      rawText = stripHtmlWithRegex(workingHtml);
+      sourceName = 'regex_fallback';
     }
   } else {
-    rawText = stripHtmlWithRegex(html);
+    rawText = stripHtmlWithRegex(workingHtml);
+    sourceName = 'regex_fallback';
   }
 
   const normalizedText = normalizeText(rawText);
@@ -562,7 +637,8 @@ export function extractMainContent(html: string, pageUrl?: string): MainContentR
     simhashVal = computeSimHash64(tokens);
   }
 
-  const excerpt = normalizedText.length > 300 ? normalizedText.slice(0, 300) : normalizedText;
+  const isExcerptTruncated = normalizedText.length > 300;
+  const excerpt = isExcerptTruncated ? normalizedText.slice(0, 300) : normalizedText;
 
   return {
     mainTextExcerpt: excerpt,
@@ -571,9 +647,12 @@ export function extractMainContent(html: string, pageUrl?: string): MainContentR
     normalizedMainTextHash: contentHash,
     mainTextSimhash: simhashVal,
     extractionSource: sourceName,
-    extractionVersion: '1.0.0',
+    extractionVersion: '2.0.0',
     contentQualityStatus: quality,
-    isTruncated: normalizedText.length > 300,
+    isTruncated: isExcerptTruncated || isSourceContentTruncated,
+    isExcerptTruncated,
+    isSourceContentTruncated,
+    processingLimitReached,
   };
 }
 

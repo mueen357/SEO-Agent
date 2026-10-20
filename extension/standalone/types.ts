@@ -184,6 +184,10 @@ export interface StandaloneCrawlPage {
   contentQualityStatus?: 'empty' | 'thin' | 'usable' | 'sufficient' | 'non_html';
   extractionSource?: string;
   mainTextExcerpt?: string;
+  isContentTruncated?: boolean;
+  isExcerptTruncated?: boolean;
+  isSourceContentTruncated?: boolean;
+  processingLimitReached?: boolean;
   evidence?: import('./audit/domParserEngine').ParsedHtmlEvidence;
 }
 
@@ -250,6 +254,7 @@ export interface StandaloneRuleExecutionRecord {
   executionStatus: StandaloneRuleExecutionStatus;
   result: 'pass' | 'fail' | 'warning' | 'na' | 'unknown' | 'error';
   evidenceAvailable: boolean;
+  evidence?: Record<string, any>;
   reason?: string;
   executedAt: number;
   engineVersion: string;
@@ -299,6 +304,31 @@ export interface StandaloneScoreCoverage {
     sitewide: { executed: number; total: number; ratio: number };
   };
   executionLedgerSummary?: StandaloneExecutionLedger['summary'];
+  // Separated Coverage Dimensions (Phase 4A)
+  implementationCoverage?: {
+    implementedRules: number;
+    totalCanonicalRules: number;
+    ratio: number;
+  };
+  ruleExecutionCoverage?: {
+    executedRules: number;
+    totalCanonicalRules: number;
+    ratio: number;
+  };
+  pageEvidenceCoverage?: {
+    usablePagesCount: number;
+    attemptedPagesCount: number;
+    failedPagesCount: number;
+  };
+  siteDiscoveryCoverage?: {
+    isCrawlBudgetExhausted: boolean;
+    crawledPagesCount: number;
+  };
+  sitewideCompleteness?: {
+    isComplete: boolean;
+    incompleteRules: string[];
+    reasons: string[];
+  };
   policyVersion: string;
 }
 

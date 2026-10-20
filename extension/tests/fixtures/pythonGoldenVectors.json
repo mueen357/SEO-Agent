@@ -1,0 +1,535 @@
+{
+  "single": [
+    {
+      "raw": "Hello World! This is a test of HTML5 entities: &amp; &quot; &lt; &gt; &copy; &euro;",
+      "norm": "Hello World! This is a test of HTML5 entities: & \" < > © €",
+      "folded": "hello world! this is a test of html5 entities: & \" < > © €",
+      "tokens": [
+        "hello",
+        "world",
+        "this",
+        "is",
+        "test",
+        "of",
+        "html5",
+        "entities"
+      ],
+      "ngrams": [
+        "hello world",
+        "world this",
+        "this is",
+        "is test",
+        "test of",
+        "of html5",
+        "html5 entities"
+      ],
+      "sha256": "b2af3ddfdb93e2241ca1563ab89e22431df1d5a7103bbc0e424ac4e3a9b5277d",
+      "simhash": "0da1402740410122"
+    },
+    {
+      "raw": "Astral plane emoji: &#128512; &#x1F680; and named &lambda; &alpha; &omega;",
+      "norm": "Astral plane emoji: 😀 🚀 and named λ α ω",
+      "folded": "astral plane emoji: 😀 🚀 and named λ α ω",
+      "tokens": [
+        "astral",
+        "plane",
+        "emoji",
+        "and",
+        "named"
+      ],
+      "ngrams": [
+        "astral plane",
+        "plane emoji",
+        "emoji and",
+        "and named"
+      ],
+      "sha256": "9639ab4501d4a1722283fa9edb82f934226d87278dd3ab38fe79235c8e5b7a0b",
+      "simhash": "ba303c3f5a2d7113"
+    },
+    {
+      "raw": "Urdu sample: &quot;یہ ایک اردو متن ہے جو کہ ٹیسٹ کے لیے استعمال ہو رہا ہے&quot;",
+      "norm": "Urdu sample: \"یہ ایک اردو متن ہے جو کہ ٹیسٹ کے لیے استعمال ہو رہا ہے\"",
+      "folded": "urdu sample: \"یہ ایک اردو متن ہے جو کہ ٹیسٹ کے لیے استعمال ہو رہا ہے\"",
+      "tokens": [
+        "urdu",
+        "sample",
+        "یہ",
+        "ایک",
+        "اردو",
+        "متن",
+        "ہے",
+        "جو",
+        "کہ",
+        "ٹیسٹ",
+        "کے",
+        "لیے",
+        "استعمال",
+        "ہو",
+        "رہا",
+        "ہے"
+      ],
+      "ngrams": [
+        "urdu sample",
+        "sample یہ",
+        "یہ ایک",
+        "ایک اردو",
+        "اردو متن",
+        "متن ہے",
+        "ہے جو",
+        "جو کہ",
+        "کہ ٹیسٹ",
+        "ٹیسٹ کے",
+        "کے لیے",
+        "لیے استعمال",
+        "استعمال ہو",
+        "ہو رہا",
+        "رہا ہے"
+      ],
+      "sha256": "a177be41de3b6b0b2543ac6554b09b94ff09c4a383c6839202f0c5c634c66bed",
+      "simhash": "488d81ac009db111"
+    },
+    {
+      "raw": "Arabic sample: &quot;هذا نص تجريبي باللغة العربية لاختبار المحتوى&quot;",
+      "norm": "Arabic sample: \"هذا نص تجريبي باللغة العربية لاختبار المحتوى\"",
+      "folded": "arabic sample: \"هذا نص تجريبي باللغة العربية لاختبار المحتوى\"",
+      "tokens": [
+        "arabic",
+        "sample",
+        "هذا",
+        "نص",
+        "تجريبي",
+        "باللغة",
+        "العربية",
+        "لاختبار",
+        "المحتوى"
+      ],
+      "ngrams": [
+        "arabic sample",
+        "sample هذا",
+        "هذا نص",
+        "نص تجريبي",
+        "تجريبي باللغة",
+        "باللغة العربية",
+        "العربية لاختبار",
+        "لاختبار المحتوى"
+      ],
+      "sha256": "82ef93ea74fa3ff2690086ccc0184ee437bfab0447085b23726fd30b427f1183",
+      "simhash": "ce3739e1d5fe3921"
+    },
+    {
+      "raw": "Accented French: &eacute;t&eacute; &agrave; la plage avec des &oelig;ufs et No&euml;l",
+      "norm": "Accented French: été à la plage avec des œufs et Noël",
+      "folded": "accented french: été à la plage avec des œufs et noël",
+      "tokens": [
+        "accented",
+        "french",
+        "été",
+        "la",
+        "plage",
+        "avec",
+        "des",
+        "œufs",
+        "et",
+        "noël"
+      ],
+      "ngrams": [
+        "accented french",
+        "french été",
+        "été la",
+        "la plage",
+        "plage avec",
+        "avec des",
+        "des œufs",
+        "œufs et",
+        "et noël"
+      ],
+      "sha256": "e57d41528aa9f14589b54b75d55dd60f8f336b96b9cd7d7bc6f5cba0fa8bdf03",
+      "simhash": "cc65ab1c9218c050"
+    },
+    {
+      "raw": "Special whitespace: hello world​with﻿BOM and    multiple    spaces",
+      "norm": "Special whitespace: hello world with BOM and multiple spaces",
+      "folded": "special whitespace: hello world with bom and multiple spaces",
+      "tokens": [
+        "special",
+        "whitespace",
+        "hello",
+        "world",
+        "with",
+        "bom",
+        "and",
+        "multiple",
+        "spaces"
+      ],
+      "ngrams": [
+        "special whitespace",
+        "whitespace hello",
+        "hello world",
+        "world with",
+        "with bom",
+        "bom and",
+        "and multiple",
+        "multiple spaces"
+      ],
+      "sha256": "4a5efe2f4387f83b5453de2c6a709c31721ff36c32095c48b2db839323342d0c",
+      "simhash": "6f7d583bb5ef6096"
+    },
+    {
+      "raw": "Malformed entities: &unknown; &#x99999999; &#0; &notanentity &",
+      "norm": "Malformed entities: &unknown; � � ¬anentity &",
+      "folded": "malformed entities: &unknown; � � ¬anentity &",
+      "tokens": [
+        "malformed",
+        "entities",
+        "unknown",
+        "anentity"
+      ],
+      "ngrams": [
+        "malformed entities",
+        "entities unknown",
+        "unknown anentity"
+      ],
+      "sha256": "b5aaa7fb2652d320b9cdbb333317bff54295c60c4a9956970e521b865ab5a951",
+      "simhash": "25024d6048db0101"
+    },
+    {
+      "raw": "Repeated words: test test test test test and n-gram overlap checking",
+      "norm": "Repeated words: test test test test test and n-gram overlap checking",
+      "folded": "repeated words: test test test test test and n-gram overlap checking",
+      "tokens": [
+        "repeated",
+        "words",
+        "test",
+        "test",
+        "test",
+        "test",
+        "test",
+        "and",
+        "gram",
+        "overlap",
+        "checking"
+      ],
+      "ngrams": [
+        "repeated words",
+        "words test",
+        "test test",
+        "test test",
+        "test test",
+        "test test",
+        "test and",
+        "and gram",
+        "gram overlap",
+        "overlap checking"
+      ],
+      "sha256": "b8b8a46a8fc6f44a2401f0235b84b5eca9d5bdec2b518587aff7e8a98191edd0",
+      "simhash": "898f6bcd4621d373"
+    },
+    {
+      "raw": "Mixed scripts: English with اردو and العربية and français &amp; symbols &#128516;",
+      "norm": "Mixed scripts: English with اردو and العربية and français & symbols 😄",
+      "folded": "mixed scripts: english with اردو and العربية and français & symbols 😄",
+      "tokens": [
+        "mixed",
+        "scripts",
+        "english",
+        "with",
+        "اردو",
+        "and",
+        "العربية",
+        "and",
+        "français",
+        "symbols"
+      ],
+      "ngrams": [
+        "mixed scripts",
+        "scripts english",
+        "english with",
+        "with اردو",
+        "اردو and",
+        "and العربية",
+        "العربية and",
+        "and français",
+        "français symbols"
+      ],
+      "sha256": "f724f041067ce67eba7fc9b8ce1f82410a06cc8d6f550abb2486770be76faf8c",
+      "simhash": "36450d34144d34b9"
+    },
+    {
+      "raw": "Punctuation & boundaries: one,two;three:four-five/six (seven) [eight] {nine}!",
+      "norm": "Punctuation & boundaries: one,two;three:four-five/six (seven) [eight] {nine}!",
+      "folded": "punctuation & boundaries: one,two;three:four-five/six (seven) [eight] {nine}!",
+      "tokens": [
+        "punctuation",
+        "boundaries",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine"
+      ],
+      "ngrams": [
+        "punctuation boundaries",
+        "boundaries one",
+        "one two",
+        "two three",
+        "three four",
+        "four five",
+        "five six",
+        "six seven",
+        "seven eight",
+        "eight nine"
+      ],
+      "sha256": "75c0f2b3192ef3958b77db5831f4a7ac71c54f6c4d6dd1fc61c40910b886b4f9",
+      "simhash": "bd8afc049a1ac392"
+    }
+  ],
+  "pairwise": [
+    {
+      "index1": 0,
+      "index2": 0,
+      "hex1": "0da1402740410122",
+      "hex2": "0da1402740410122",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 0,
+      "index2": 1,
+      "hex1": "0da1402740410122",
+      "hex2": "ba303c3f5a2d7113",
+      "distance": 29,
+      "similarity": 0.546875,
+      "lengthSimilarity": 0.6724137931034483
+    },
+    {
+      "index1": 0,
+      "index2": 2,
+      "hex1": "0da1402740410122",
+      "hex2": "488d81ac009db111",
+      "distance": 26,
+      "similarity": 0.59375,
+      "lengthSimilarity": 0.8405797101449275
+    },
+    {
+      "index1": 1,
+      "index2": 1,
+      "hex1": "ba303c3f5a2d7113",
+      "hex2": "ba303c3f5a2d7113",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 1,
+      "index2": 2,
+      "hex1": "ba303c3f5a2d7113",
+      "hex2": "488d81ac009db111",
+      "distance": 31,
+      "similarity": 0.515625,
+      "lengthSimilarity": 0.5652173913043478
+    },
+    {
+      "index1": 1,
+      "index2": 3,
+      "hex1": "ba303c3f5a2d7113",
+      "hex2": "ce3739e1d5fe3921",
+      "distance": 30,
+      "similarity": 0.53125,
+      "lengthSimilarity": 0.639344262295082
+    },
+    {
+      "index1": 2,
+      "index2": 2,
+      "hex1": "488d81ac009db111",
+      "hex2": "488d81ac009db111",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 2,
+      "index2": 3,
+      "hex1": "488d81ac009db111",
+      "hex2": "ce3739e1d5fe3921",
+      "distance": 29,
+      "similarity": 0.546875,
+      "lengthSimilarity": 0.8840579710144928
+    },
+    {
+      "index1": 2,
+      "index2": 4,
+      "hex1": "488d81ac009db111",
+      "hex2": "cc65ab1c9218c050",
+      "distance": 24,
+      "similarity": 0.625,
+      "lengthSimilarity": 0.7681159420289855
+    },
+    {
+      "index1": 3,
+      "index2": 3,
+      "hex1": "ce3739e1d5fe3921",
+      "hex2": "ce3739e1d5fe3921",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 3,
+      "index2": 4,
+      "hex1": "ce3739e1d5fe3921",
+      "hex2": "cc65ab1c9218c050",
+      "distance": 33,
+      "similarity": 0.484375,
+      "lengthSimilarity": 0.8688524590163934
+    },
+    {
+      "index1": 3,
+      "index2": 5,
+      "hex1": "ce3739e1d5fe3921",
+      "hex2": "6f7d583bb5ef6096",
+      "distance": 28,
+      "similarity": 0.5625,
+      "lengthSimilarity": 0.9836065573770492
+    },
+    {
+      "index1": 4,
+      "index2": 4,
+      "hex1": "cc65ab1c9218c050",
+      "hex2": "cc65ab1c9218c050",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 4,
+      "index2": 5,
+      "hex1": "cc65ab1c9218c050",
+      "hex2": "6f7d583bb5ef6096",
+      "distance": 33,
+      "similarity": 0.484375,
+      "lengthSimilarity": 0.8833333333333333
+    },
+    {
+      "index1": 4,
+      "index2": 6,
+      "hex1": "cc65ab1c9218c050",
+      "hex2": "25024d6048db0101",
+      "distance": 35,
+      "similarity": 0.453125,
+      "lengthSimilarity": 0.8490566037735849
+    },
+    {
+      "index1": 5,
+      "index2": 5,
+      "hex1": "6f7d583bb5ef6096",
+      "hex2": "6f7d583bb5ef6096",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 5,
+      "index2": 6,
+      "hex1": "6f7d583bb5ef6096",
+      "hex2": "25024d6048db0101",
+      "distance": 36,
+      "similarity": 0.4375,
+      "lengthSimilarity": 0.75
+    },
+    {
+      "index1": 5,
+      "index2": 7,
+      "hex1": "6f7d583bb5ef6096",
+      "hex2": "898f6bcd4621d373",
+      "distance": 41,
+      "similarity": 0.359375,
+      "lengthSimilarity": 0.8823529411764706
+    },
+    {
+      "index1": 6,
+      "index2": 6,
+      "hex1": "25024d6048db0101",
+      "hex2": "25024d6048db0101",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 6,
+      "index2": 7,
+      "hex1": "25024d6048db0101",
+      "hex2": "898f6bcd4621d373",
+      "distance": 33,
+      "similarity": 0.484375,
+      "lengthSimilarity": 0.6617647058823529
+    },
+    {
+      "index1": 6,
+      "index2": 8,
+      "hex1": "25024d6048db0101",
+      "hex2": "36450d34144d34b9",
+      "distance": 27,
+      "similarity": 0.578125,
+      "lengthSimilarity": 0.6521739130434783
+    },
+    {
+      "index1": 7,
+      "index2": 7,
+      "hex1": "898f6bcd4621d373",
+      "hex2": "898f6bcd4621d373",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 7,
+      "index2": 8,
+      "hex1": "898f6bcd4621d373",
+      "hex2": "36450d34144d34b9",
+      "distance": 38,
+      "similarity": 0.40625,
+      "lengthSimilarity": 0.9855072463768116
+    },
+    {
+      "index1": 7,
+      "index2": 9,
+      "hex1": "898f6bcd4621d373",
+      "hex2": "bd8afc049a1ac392",
+      "distance": 29,
+      "similarity": 0.546875,
+      "lengthSimilarity": 0.8831168831168831
+    },
+    {
+      "index1": 8,
+      "index2": 8,
+      "hex1": "36450d34144d34b9",
+      "hex2": "36450d34144d34b9",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    },
+    {
+      "index1": 8,
+      "index2": 9,
+      "hex1": "36450d34144d34b9",
+      "hex2": "bd8afc049a1ac392",
+      "distance": 37,
+      "similarity": 0.421875,
+      "lengthSimilarity": 0.8961038961038961
+    },
+    {
+      "index1": 9,
+      "index2": 9,
+      "hex1": "bd8afc049a1ac392",
+      "hex2": "bd8afc049a1ac392",
+      "distance": 0,
+      "similarity": 1.0,
+      "lengthSimilarity": 1.0
+    }
+  ]
+}

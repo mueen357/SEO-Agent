@@ -95,9 +95,9 @@ describe('Standalone Live Fixture Acceptance (http://127.0.0.1:4321/)', () => {
     // 7. Honest Score Coverage (Provisional state when 38/51 canonical rules executed)
     expect(job.scorecard?.coverage).toBeDefined();
     expect(job.scorecard?.coverage?.scoreState).toBe('provisional');
-    expect(job.scorecard?.coverage?.executedRulesTotal).toBe(42);
+    expect(job.scorecard?.coverage?.executedRulesTotal).toBe(46);
     expect(job.scorecard?.coverage?.expectedRulesTotal).toBe(51);
-    expect(job.scorecard?.coverage?.distinctExecutedCanonicalRules).toHaveLength(42);
-    expect(job.scorecard?.coverage?.coverageRatio).toBeCloseTo(42 / 51, 2);
+    expect(job.scorecard?.coverage?.distinctExecutedCanonicalRules).toHaveLength(46);
+    expect(job.scorecard?.coverage?.coverageRatio).toBeCloseTo(46 / 51, 2);
   });
 });

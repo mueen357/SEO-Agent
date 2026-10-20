@@ -193,9 +193,11 @@ export class StandaloneAuditCoordinator {
       scoringFinished: false,
     };
 
+    const normalizedTargetUrl = parsed.href;
+
     const job: StandaloneAuditJob = {
       id: auditId,
-      targetUrl,
+      targetUrl: normalizedTargetUrl,
       origin: parsed.origin,
       hostname: parsed.hostname,
       status: 'discovering',
@@ -204,8 +206,8 @@ export class StandaloneAuditCoordinator {
       sequence: 1,
       stageCheckpoints: initialCheckpoints,
       config,
-      discoveredUrls: [targetUrl],
-      pendingQueue: [{ url: targetUrl, depth: 0 }],
+      discoveredUrls: [normalizedTargetUrl],
+      pendingQueue: [{ url: normalizedTargetUrl, depth: 0 }],
       crawledUrls: [],
       failedUrls: [],
       startedAt: Date.now(),

@@ -254,7 +254,8 @@ export class StandaloneRulesEngine {
       executionStatus: StandaloneRuleExecutionRecord['executionStatus'],
       result: StandaloneRuleExecutionRecord['result'],
       evidenceAvailable: boolean,
-      reason?: string
+      reason?: string,
+      evidence?: Record<string, any>
     ) => {
       ledgerRecords.push({
         id: `${auditId}-${page.id}-${canonicalRuleId}`,
@@ -267,6 +268,7 @@ export class StandaloneRulesEngine {
         result,
         evidenceAvailable,
         reason,
+        evidence,
         executedAt: now,
         engineVersion: this.ENGINE_VERSION,
       });
@@ -1728,20 +1730,21 @@ export class StandaloneRulesEngine {
     }
 
     // ONPAGE_IMAGE_ALT_MISSING & ONPAGE_IMAGE_ALT_EMPTY
-    const totalImgs = page.imageCount ?? page.images.length;
+    const totalImgs = page.imageCount ?? page.images?.length ?? 0;
     if (totalImgs === 0) {
       recordLedger('ONPAGE_IMAGE_ALT_MISSING', 'not_applicable', 'na', false, 'Page contains no <img> elements');
       recordLedger('ONPAGE_IMAGE_ALT_EMPTY', 'not_applicable', 'na', false, 'Page contains no <img> elements');
     } else {
+      const imgList = page.images || [];
       const missingAltCount =
         page.missingAltCount !== undefined
           ? page.missingAltCount
-          : page.images.filter((img) => img.hasAlt === false || (!img.hasAlt && (!img.alt || img.alt.trim() === ''))).length;
+          : imgList.filter((img) => img.hasAlt === false || (!img.hasAlt && (!img.alt || img.alt.trim() === ''))).length;
 
       const emptyAltCount =
         page.emptyAltCount !== undefined
           ? page.emptyAltCount
-          : page.images.filter((img) => (img.hasAlt === true || img.hasAlt === undefined) && img.alt !== undefined && img.alt.trim() === '').length;
+          : imgList.filter((img) => (img.hasAlt === true || img.hasAlt === undefined) && img.alt !== undefined && img.alt.trim() === '').length;
 
       if (missingAltCount > 0) {
         recordLedger(
@@ -1966,6 +1969,8 @@ export class StandaloneRulesEngine {
     clusters: StandaloneCrawlPage[][];
     incompleteAnalysis: boolean;
     safetyLimitHit: boolean;
+    comparisonsCount?: number;
+    limitReason?: string;
   } {
     // Exclude exact duplicates from near-duplicate grouping
     const hashToPages = new Map<string, StandaloneCrawlPage[]>();
@@ -1983,7 +1988,7 @@ export class StandaloneRulesEngine {
     }
 
     // Keep one representative per exact hash for near-duplicate search
-    const repPages: StandaloneCrawlPage[] = [];
+    let repPages: StandaloneCrawlPage[] = [];
     const seenExact = new Set<string>();
     for (const p of eligiblePages) {
       const { normalizedMainTextHash } = this.getPageContentFingerprints(p);
@@ -1995,6 +2000,27 @@ export class StandaloneRulesEngine {
       } else {
         repPages.push(p);
       }
+    }
+
+    // Explicit Safety Budgets
+    const MAX_ELIGIBLE_PAGES = 100;
+    const MAX_CANDIDATE_COMPARISONS = 2500;
+    const MAX_RUNTIME_MS = 250;
+    const MAX_BRON_KERBOSCH_STEPS = 10_000;
+
+    let incompleteAnalysis = false;
+    let safetyLimitHit = false;
+    const reasons: string[] = [];
+    let comparisonsCount = 0;
+
+    // Hard bound on eligible pages to prevent quadratic combinatorial blowup
+    if (repPages.length > MAX_ELIGIBLE_PAGES) {
+      incompleteAnalysis = true;
+      safetyLimitHit = true;
+      reasons.push(
+        `eligible_pages_budget_exceeded (${repPages.length} eligible pages exceeds safety maximum ${MAX_ELIGIBLE_PAGES})`
+      );
+      repPages = repPages.slice(0, MAX_ELIGIBLE_PAGES);
     }
 
     // Disjoint Set Union (DSU)
@@ -2022,8 +2048,12 @@ export class StandaloneRulesEngine {
     const nearPairSet = new Set<string>();
     const makePairKey = (id1: string, id2: string) => (id1 < id2 ? `${id1}::${id2}` : `${id2}::${id1}`);
 
+    const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    let comparisonLoopInterrupted = false;
+
     const n = repPages.length;
     for (let i = 0; i < n; i++) {
+      if (comparisonLoopInterrupted) break;
       const p1 = repPages[i];
       if (!p1) continue;
       const fp1 = this.getPageContentFingerprints(p1);
@@ -2031,6 +2061,30 @@ export class StandaloneRulesEngine {
       const sh1 = fp1.mainTextSimhash;
 
       for (let j = i + 1; j < n; j++) {
+        comparisonsCount++;
+        if (comparisonsCount > MAX_CANDIDATE_COMPARISONS) {
+          safetyLimitHit = true;
+          incompleteAnalysis = true;
+          reasons.push(
+            `pairwise_comparison_budget_exceeded (${MAX_CANDIDATE_COMPARISONS} pairs limit reached)`
+          );
+          comparisonLoopInterrupted = true;
+          break;
+        }
+
+        if (comparisonsCount % 100 === 0) {
+          const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startTime;
+          if (elapsed > MAX_RUNTIME_MS) {
+            safetyLimitHit = true;
+            incompleteAnalysis = true;
+            reasons.push(
+              `runtime_budget_exceeded (${Math.round(elapsed)}ms exceeded budget ${MAX_RUNTIME_MS}ms)`
+            );
+            comparisonLoopInterrupted = true;
+            break;
+          }
+        }
+
         const p2 = repPages[j];
         if (!p2) continue;
         const fp2 = this.getPageContentFingerprints(p2);
@@ -2065,9 +2119,6 @@ export class StandaloneRulesEngine {
     }
 
     const clusters: StandaloneCrawlPage[][] = [];
-    let incompleteAnalysis = false;
-    let safetyLimitHit = false;
-    const MAX_BRON_KERBOSCH_STEPS = 10_000;
 
     // Sort connected components deterministically: larger size first, then sorted IDs
     const sortedComponents = Array.from(groupsByRoot.values())
@@ -2148,6 +2199,7 @@ export class StandaloneRulesEngine {
         if (stepLimitExceeded) {
           safetyLimitHit = true;
           incompleteAnalysis = true;
+          reasons.push(`bron_kerbosch_steps_exceeded (${MAX_BRON_KERBOSCH_STEPS} step budget reached)`);
         }
 
         // Sort cliques deterministically: largest size first, then sorted member IDs
@@ -2175,7 +2227,8 @@ export class StandaloneRulesEngine {
       }
     }
 
-    return { clusters, incompleteAnalysis, safetyLimitHit };
+    const limitReason = reasons.join('; ');
+    return { clusters, incompleteAnalysis, safetyLimitHit, comparisonsCount, limitReason };
   }
 
   /**
@@ -2200,7 +2253,8 @@ export class StandaloneRulesEngine {
       executionStatus: StandaloneRuleExecutionRecord['executionStatus'],
       result: StandaloneRuleExecutionRecord['result'],
       evidenceAvailable: boolean,
-      reason?: string
+      reason?: string,
+      evidence?: Record<string, any>
     ) => {
       ledgerRecords.push({
         id: `${auditId}-sitewide-${canonicalRuleId}`,
@@ -2213,6 +2267,7 @@ export class StandaloneRulesEngine {
         result,
         evidenceAvailable,
         reason,
+        evidence,
         executedAt: now,
         engineVersion: this.ENGINE_VERSION,
       });
@@ -2949,17 +3004,30 @@ export class StandaloneRulesEngine {
         'Requires at least 2 usable pages for near-duplicate content analysis'
       );
     } else {
-      const { clusters: nearClusters, incompleteAnalysis, safetyLimitHit } =
-        this.detectNearDuplicateClusters(nearEligiblePages);
+      const {
+        clusters: nearClusters,
+        incompleteAnalysis,
+        safetyLimitHit,
+        comparisonsCount,
+        limitReason,
+      } = this.detectNearDuplicateClusters(nearEligiblePages);
 
       if (nearClusters.length === 0) {
         if (incompleteAnalysis) {
           recordLedger(
             'SITE_CONTENT_DUPLICATE_NEAR',
-            'not_evaluated',
+            'unknown',
             'unknown',
             false,
-            'Near-duplicate analysis incomplete (safety iteration limit exceeded)'
+            `Near-duplicate analysis incomplete (${limitReason || 'safety limits reached'})`,
+            {
+              incompleteAnalysis: true,
+              incomplete_analysis: true,
+              safetyLimitHit: true,
+              safety_limit_hit: true,
+              comparisonsCount,
+              limitReason,
+            }
           );
           findings.push({
             id: `${auditId}-sitewide-dup-near-incomplete`,
@@ -2968,15 +3036,16 @@ export class StandaloneRulesEngine {
             category: 'sitewide',
             severity: 'medium',
             status: 'unknown',
-            title: 'Near-duplicate analysis incomplete (safety limit exceeded)',
-            description: 'Candidate similarity graph complexity exceeded safety iteration bounds before consistent cliques could be fully resolved. Marked inconclusive to avoid false negative clean pass.',
+            title: 'Near-duplicate analysis incomplete (safety budget reached)',
+            description: `Candidate similarity graph analysis reached safety budget limits before all pairs could be evaluated (${limitReason || 'budget limit reached'}). Marked unknown to avoid false negative clean pass.`,
             recommendation: 'Review pages with high template or link density manually for near-duplicate content.',
             pageUrl: seedUrl,
             evidence: {
               pages_evaluated: nearEligiblePages.length,
               safety_limit_hit: true,
               incomplete_analysis: true,
-              reason: 'graph_complexity_limit_exceeded',
+              comparisons_count: comparisonsCount,
+              reason: limitReason || 'safety_limit_reached',
             },
           });
         } else {
@@ -2998,16 +3067,8 @@ export class StandaloneRulesEngine {
           const groupHash = computeContentSha256(rootUrl).slice(0, 16);
           const groupId = `near_${groupHash}`;
           const descSuffix = safetyLimitHit
-            ? ' (Candidate analysis reached safety iteration bound; additional clusters may be unresolved).'
+            ? ` (Candidate analysis reached safety iteration bound: ${limitReason || 'additional clusters may remain unresolved'}).`
             : '';
-
-          recordLedger(
-            'SITE_CONTENT_DUPLICATE_NEAR',
-            'executed_warning',
-            'warning',
-            true,
-            `Near-duplicate main content candidate group (${cluster.length} pages)`
-          );
 
           findings.push({
             id: `${auditId}-sitewide-dup-near-${cluster.length}-${groupHash}`,
@@ -3029,8 +3090,28 @@ export class StandaloneRulesEngine {
               method: 'SimHash-64 Hamming Distance <= 3 (token 1-grams & 2-grams)',
               incomplete_analysis: incompleteAnalysis,
               safety_limit_hit: safetyLimitHit,
+              comparisons_count: comparisonsCount,
+              reason: limitReason,
             },
           });
+        }
+
+        if (incompleteAnalysis) {
+          recordLedger(
+            'SITE_CONTENT_DUPLICATE_NEAR',
+            'executed_warning',
+            'warning',
+            true,
+            `Near-duplicate clusters detected, but candidate comparison reached safety limit (${limitReason || 'budget limit reached'})`
+          );
+        } else {
+          recordLedger(
+            'SITE_CONTENT_DUPLICATE_NEAR',
+            'executed_warning',
+            'warning',
+            true,
+            `Near-duplicate main content candidate group (${nearClusters.length} group(s))`
+          );
         }
       }
     }
@@ -3048,9 +3129,15 @@ export class StandaloneRulesEngine {
       );
     } else {
       let hasCompetingSelfCanonicals = false;
+      let hasBrokenCanonicalTarget = false;
+      let hasUncheckedCanonicalTarget = false;
+      let hasMissingCanonical = false;
+      let hasConfirmedPassGroup = false;
+
       for (const [h, groupPages] of exactDuplicateGroups.entries()) {
         const canonicals = new Set<string>();
         let selfReferencingCount = 0;
+        let missingCanonicalCount = 0;
         const distinctUrls = Array.from(
           new Set(groupPages.map((p) => normalizeGraphUrl(p.finalUrl || p.requestedUrl || p.url)))
         );
@@ -3063,30 +3150,12 @@ export class StandaloneRulesEngine {
             if (canNorm === urlNorm) {
               selfReferencingCount++;
             }
+          } else {
+            missingCanonicalCount++;
           }
         }
 
-        if (canonicals.size === 1 && groupPages.length > 1) {
-          const preferredCan = Array.from(canonicals)[0];
-          findings.push({
-            id: `${auditId}-sitewide-dup-can-consolidated-${h.slice(0, 16)}`,
-            auditId,
-            ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
-            category: 'sitewide',
-            severity: 'info',
-            status: 'pass',
-            title: `Duplicate content pages consolidated to single canonical (${distinctUrls.length} pages)`,
-            description: `${distinctUrls.length} pages with identical main content all declare canonical preference to '${preferredCan}'.`,
-            recommendation: 'Canonical signals are consolidated cleanly.',
-            pageUrl: distinctUrls[0] ?? seedUrl,
-            evidence: {
-              group_hash: h,
-              page_count: distinctUrls.length,
-              urls: distinctUrls.slice(0, 10),
-              preferred_canonical: preferredCan,
-            },
-          });
-        } else if (selfReferencingCount >= 2 && canonicals.size >= 2) {
+        if (selfReferencingCount >= 2 && canonicals.size >= 2) {
           hasCompetingSelfCanonicals = true;
           findings.push({
             id: `${auditId}-sitewide-dup-can-competing-${h.slice(0, 16)}`,
@@ -3104,26 +3173,171 @@ export class StandaloneRulesEngine {
               page_count: distinctUrls.length,
               urls: distinctUrls.slice(0, 10),
               declared_canonicals: Array.from(canonicals).slice(0, 10),
+              consolidation_status: 'CONFIRMED_CONFLICT',
             },
           });
+        } else if (missingCanonicalCount > 0 && canonicals.size > 0) {
+          hasMissingCanonical = true;
+          findings.push({
+            id: `${auditId}-sitewide-dup-can-inconsistent-${h.slice(0, 16)}`,
+            auditId,
+            ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'warning',
+            title: `Inconsistent canonical tags in duplicate content group (${distinctUrls.length} pages)`,
+            description: `${distinctUrls.length} pages have identical main content, but ${missingCanonicalCount} page(s) lack canonical declarations while others declare canonical targets.`,
+            recommendation: 'Ensure all pages in the duplicate cluster consistently declare a rel=canonical pointing to the single authoritative version.',
+            pageUrl: distinctUrls[0] ?? seedUrl,
+            evidence: {
+              group_hash: h,
+              page_count: distinctUrls.length,
+              urls: distinctUrls.slice(0, 10),
+              declared_canonicals: Array.from(canonicals),
+              missing_count: missingCanonicalCount,
+              consolidation_status: 'MISSING_CANONICAL',
+            },
+          });
+        } else if (missingCanonicalCount === groupPages.length) {
+          hasMissingCanonical = true;
+          findings.push({
+            id: `${auditId}-sitewide-dup-can-missing-${h.slice(0, 16)}`,
+            auditId,
+            ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
+            category: 'sitewide',
+            severity: 'medium',
+            status: 'warning',
+            title: `Missing canonical declarations in duplicate content group (${distinctUrls.length} pages)`,
+            description: `${distinctUrls.length} pages share identical main content but none declare a rel=canonical tag to signal which URL search engines should index.`,
+            recommendation: 'Add a rel=canonical tag to each duplicate page referencing the single authoritative URL.',
+            pageUrl: distinctUrls[0] ?? seedUrl,
+            evidence: {
+              group_hash: h,
+              page_count: distinctUrls.length,
+              urls: distinctUrls.slice(0, 10),
+              consolidation_status: 'MISSING_CANONICAL',
+            },
+          });
+        } else if (canonicals.size === 1 && groupPages.length > 1) {
+          const preferredCan = Array.from(canonicals)[0];
+          if (!preferredCan) continue;
+          const targetPage = linkGraph.urlToPage.get(preferredCan);
+          const observedStatus = observedUrlMap?.get(preferredCan);
+          const targetStatus = targetPage?.httpStatus ?? observedStatus?.httpStatus;
+
+          if (targetStatus !== undefined && targetStatus >= 400) {
+            hasBrokenCanonicalTarget = true;
+            findings.push({
+              id: `${auditId}-sitewide-dup-can-broken-${h.slice(0, 16)}`,
+              auditId,
+              ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
+              category: 'sitewide',
+              severity: 'high',
+              status: 'fail',
+              title: `Duplicate content pages consolidate to broken canonical destination (HTTP ${targetStatus})`,
+              description: `${distinctUrls.length} pages consolidate to canonical target '${preferredCan}', but that destination returned HTTP ${targetStatus}.`,
+              recommendation: 'Update canonical tags to point to a live, indexable HTTP 200 page.',
+              pageUrl: distinctUrls[0] ?? seedUrl,
+              evidence: {
+                group_hash: h,
+                page_count: distinctUrls.length,
+                urls: distinctUrls.slice(0, 10),
+                preferred_canonical: preferredCan,
+                target_http_status: targetStatus,
+                consolidation_status: 'CONFIRMED_CONFLICT',
+              },
+            });
+          } else if (targetStatus === undefined) {
+            hasUncheckedCanonicalTarget = true;
+            findings.push({
+              id: `${auditId}-sitewide-dup-can-unchecked-${h.slice(0, 16)}`,
+              auditId,
+              ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
+              category: 'sitewide',
+              severity: 'medium',
+              status: 'unknown',
+              title: `Duplicate content pages point to uncrawled canonical target (${distinctUrls.length} pages)`,
+              description: `${distinctUrls.length} pages with identical main content all declare canonical preference to '${preferredCan}', but this target URL was not crawled or observed during the audit. Consolidation health cannot be verified without confirmed HTTP 200 status.`,
+              recommendation: `Verify that '${preferredCan}' is accessible, returns HTTP 200, and is indexable.`,
+              pageUrl: distinctUrls[0] ?? seedUrl,
+              evidence: {
+                group_hash: h,
+                page_count: distinctUrls.length,
+                urls: distinctUrls.slice(0, 10),
+                preferred_canonical: preferredCan,
+                consolidation_status: 'UNCHECKED_TARGET',
+              },
+            });
+          } else {
+            hasConfirmedPassGroup = true;
+            findings.push({
+              id: `${auditId}-sitewide-dup-can-consolidated-${h.slice(0, 16)}`,
+              auditId,
+              ruleId: 'SITE_DUPLICATE_CANONICAL_REVIEW',
+              category: 'sitewide',
+              severity: 'info',
+              status: 'pass',
+              title: `Duplicate content pages consolidated to single canonical (${distinctUrls.length} pages)`,
+              description: `${distinctUrls.length} pages with identical main content all declare canonical preference to verified target '${preferredCan}' (HTTP ${targetStatus}).`,
+              recommendation: 'Canonical signals are consolidated cleanly.',
+              pageUrl: distinctUrls[0] ?? seedUrl,
+              evidence: {
+                group_hash: h,
+                page_count: distinctUrls.length,
+                urls: distinctUrls.slice(0, 10),
+                preferred_canonical: preferredCan,
+                target_http_status: targetStatus,
+                consolidation_status: 'CONFIRMED_PASS',
+              },
+            });
+          }
         }
       }
 
-      if (hasCompetingSelfCanonicals) {
+      if (hasBrokenCanonicalTarget) {
+        recordLedger(
+          'SITE_DUPLICATE_CANONICAL_REVIEW',
+          'executed_fail',
+          'fail',
+          true,
+          'Duplicate content pages point canonical consolidation to error destination (HTTP 4xx/5xx)',
+          { consolidation_status: 'CONFIRMED_CONFLICT' }
+        );
+      } else if (hasCompetingSelfCanonicals) {
         recordLedger(
           'SITE_DUPLICATE_CANONICAL_REVIEW',
           'executed_warning',
           'warning',
           true,
-          'Duplicate content pages detected with competing self-referencing canonicals'
+          'Duplicate content pages detected with competing self-referencing canonicals',
+          { consolidation_status: 'CONFIRMED_CONFLICT' }
         );
-      } else {
+      } else if (hasMissingCanonical) {
+        recordLedger(
+          'SITE_DUPLICATE_CANONICAL_REVIEW',
+          'executed_warning',
+          'warning',
+          true,
+          'Duplicate content pages lack consistent canonical declarations',
+          { consolidation_status: 'MISSING_CANONICAL' }
+        );
+      } else if (hasUncheckedCanonicalTarget) {
+        recordLedger(
+          'SITE_DUPLICATE_CANONICAL_REVIEW',
+          'unknown',
+          'unknown',
+          false,
+          'Canonical targets for duplicate content groups were not crawled/observed; consolidation unverified',
+          { consolidation_status: 'UNCHECKED_TARGET' }
+        );
+      } else if (hasConfirmedPassGroup) {
         recordLedger(
           'SITE_DUPLICATE_CANONICAL_REVIEW',
           'executed_pass',
           'pass',
           true,
-          `Evaluated ${exactDuplicateGroups.size} duplicate group(s); no competing self-referencing canonicals detected`
+          `Evaluated ${exactDuplicateGroups.size} duplicate group(s); all groups cleanly consolidate to verified HTTP 200 canonical destinations`,
+          { consolidation_status: 'CONFIRMED_PASS' }
         );
       }
     }
@@ -3141,22 +3355,27 @@ export class StandaloneRulesEngine {
       );
     } else {
       let hasConflict = false;
+      let hasUncheckedTarget = false;
+      let totalDeclaredCanonicals = 0;
+      let verifiedHealthyCanonicals = 0;
+
       for (const [h, groupPages] of exactDuplicateGroups.entries()) {
         for (const p of groupPages) {
           if (!p.canonicalUrl) continue;
+          totalDeclaredCanonicals++;
           const canNorm = normalizeGraphUrl(p.canonicalUrl, p.url);
           const targetPage = linkGraph.urlToPage.get(canNorm);
           const observedStatus = observedUrlMap?.get(canNorm);
           const targetStatus = targetPage?.httpStatus ?? observedStatus?.httpStatus;
 
-          if (targetStatus && targetStatus >= 400) {
+          if (targetStatus !== undefined && targetStatus >= 400) {
             hasConflict = true;
             findings.push({
               id: `${auditId}-sitewide-can-conflict-${p.id || canNorm.slice(-16)}`,
               auditId,
               ruleId: 'SITE_CONTENT_CANONICAL_CONFLICT',
               category: 'sitewide',
-              severity: 'high',
+              severity: targetStatus >= 500 ? 'critical' : 'high',
               status: 'fail',
               title: `Duplicate page points canonical to error page (HTTP ${targetStatus})`,
               description: `Page '${p.finalUrl || p.requestedUrl || p.url}' has duplicate content and specifies a canonical URL '${p.canonicalUrl}' that returns HTTP ${targetStatus}.`,
@@ -3166,19 +3385,59 @@ export class StandaloneRulesEngine {
                 page_url: p.finalUrl || p.requestedUrl || p.url,
                 canonical_url: p.canonicalUrl,
                 target_http_status: targetStatus,
+                conflict_type: 'CONFIRMED_CONFLICT',
               },
             });
+          } else if (targetStatus === undefined) {
+            hasUncheckedTarget = true;
+            findings.push({
+              id: `${auditId}-sitewide-can-unchecked-${p.id || canNorm.slice(-16)}`,
+              auditId,
+              ruleId: 'SITE_CONTENT_CANONICAL_CONFLICT',
+              category: 'sitewide',
+              severity: 'medium',
+              status: 'unknown',
+              title: 'Canonical destination not crawled for duplicate page',
+              description: `Page '${p.finalUrl || p.requestedUrl || p.url}' has duplicate content and specifies canonical URL '${p.canonicalUrl}' which was not crawled or observed during the audit. Target accessibility cannot be verified.`,
+              recommendation: 'Ensure the canonical URL is crawled or verified to return HTTP 200.',
+              pageUrl: p.finalUrl || p.requestedUrl || p.url,
+              evidence: {
+                page_url: p.finalUrl || p.requestedUrl || p.url,
+                canonical_url: p.canonicalUrl,
+                conflict_type: 'UNCHECKED_TARGET',
+              },
+            });
+          } else {
+            verifiedHealthyCanonicals++;
           }
         }
       }
 
-      if (hasConflict) {
+      if (totalDeclaredCanonicals === 0) {
+        recordLedger(
+          'SITE_CONTENT_CANONICAL_CONFLICT',
+          'not_applicable',
+          'na',
+          false,
+          'No canonical tags declared on pages in duplicate content groups'
+        );
+      } else if (hasConflict) {
         recordLedger(
           'SITE_CONTENT_CANONICAL_CONFLICT',
           'executed_fail',
           'fail',
           true,
-          'Duplicate pages point canonical targets to error pages (HTTP 4xx/5xx)'
+          'Duplicate pages point canonical targets to error pages (HTTP 4xx/5xx)',
+          { conflict_status: 'CONFIRMED_CONFLICT' }
+        );
+      } else if (hasUncheckedTarget) {
+        recordLedger(
+          'SITE_CONTENT_CANONICAL_CONFLICT',
+          'unknown',
+          'unknown',
+          false,
+          'Canonical targets for duplicate content groups were not crawled; conflict status unverified',
+          { conflict_status: 'UNCHECKED_TARGET' }
         );
       } else {
         recordLedger(
@@ -3186,7 +3445,8 @@ export class StandaloneRulesEngine {
           'executed_pass',
           'pass',
           true,
-          'Duplicate pages with canonical tags point to accessible pages (no HTTP 4xx or 5xx targets)'
+          `Evaluated ${totalDeclaredCanonicals} canonical target(s) across duplicate groups; all verified accessible (< HTTP 400)`,
+          { conflict_status: 'CONFIRMED_PASS' }
         );
       }
     }
