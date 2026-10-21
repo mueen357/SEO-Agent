@@ -24,7 +24,7 @@ import { checkBackendHealth, createAudit, startAudit } from '../../services/api'
 import { runQuickAudit } from '../../services/auditRunner';
 import { getAuditResultForUrl, saveActiveFullAuditId } from '../../services/storage';
 import { standaloneCoordinator } from '../../standalone/coordinator';
-import { StandaloneAuditStorage } from '../../standalone/persistence/indexedDb';
+import { StandaloneAuditStorage, normalizeOrigin } from '../../standalone/persistence/indexedDb';
 import type { ActiveTabInfo, QuickAuditResult, BackendHealthResponse } from '../../types/audit';
 import type { StandaloneAuditJob } from '../../standalone/types';
 
@@ -52,6 +52,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const activeJobRef = useRef<StandaloneAuditJob | null>(null);
   activeJobRef.current = standaloneJob;
+  const targetUrlRef = useRef(targetUrl);
+  targetUrlRef.current = targetUrl;
 
   const refreshTab = useCallback(async () => {
     setError(null);
@@ -61,8 +63,6 @@ export default function App() {
 
     if (activeTab.url && activeTab.isAuditable) {
       setTargetUrl(activeTab.url);
-      // Check host permission for active tab URL
-      standaloneCoordinator.checkHostPermission(activeTab.url).then(setPermissionGranted);
       // Check existing quick audit cache
       getAuditResultForUrl(activeTab.url).then(setQuickAudit);
     } else {
@@ -83,21 +83,56 @@ export default function App() {
     }
   }, []);
 
+  // Audit Context Isolation & Dynamic Permission Recheck:
+  // Re-evaluate host permission and retrieve origin-scoped audit whenever targetUrl changes
   useEffect(() => {
-    refreshTab();
+    if (!targetUrl) {
+      setPermissionGranted(false);
+      setStandaloneJob(null);
+      return;
+    }
 
-    // Query active or latest standalone audit from service worker
+    let isCurrent = true;
+    const currentOrigin = normalizeOrigin(targetUrl);
+
+    // Recheck host permission specifically for the currently entered target URL
+    standaloneCoordinator.checkHostPermission(targetUrl).then((granted) => {
+      if (isCurrent) setPermissionGranted(granted);
+    });
+
+    // Query active coordinator job or latest job matching this target origin
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
       chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
+        if (!isCurrent) return;
         if (res?.success && res.job) {
-          setStandaloneJob(res.job);
-        } else {
-          StandaloneAuditStorage.getLatestJob().then((latest) => {
-            if (latest) setStandaloneJob(latest);
-          }).catch(() => {});
+          const jobOrigin = normalizeOrigin(res.job.origin || res.job.targetUrl);
+          if (jobOrigin === currentOrigin) {
+            setStandaloneJob(res.job);
+            return;
+          }
         }
+        // Fall back to stored job specifically for this target origin
+        StandaloneAuditStorage.getLatestJobForTarget(targetUrl).then((latest) => {
+          if (isCurrent) {
+            setStandaloneJob(latest || null);
+          }
+        }).catch(() => {});
       });
+    } else {
+      StandaloneAuditStorage.getLatestJobForTarget(targetUrl).then((latest) => {
+        if (isCurrent) {
+          setStandaloneJob(latest || null);
+        }
+      }).catch(() => {});
     }
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [targetUrl]);
+
+  useEffect(() => {
+    refreshTab();
 
     // Subscribe to standalone coordinator broadcasts
     const messageListener = (msg: any) => {
@@ -107,6 +142,11 @@ export default function App() {
 
       if (!job) return;
 
+      const currentOrigin = normalizeOrigin(targetUrlRef.current);
+      const jobOrigin = normalizeOrigin(job.origin || job.targetUrl);
+      // Context Isolation: do not accept broadcasts for other websites
+      if (currentOrigin && jobOrigin !== currentOrigin) return;
+
       if (
         type === 'AUDIT_PROGRESS' ||
         type === 'STANDALONE_AUDIT_PROGRESS' ||
@@ -115,7 +155,12 @@ export default function App() {
         type === 'AUDIT_CANCELLED'
       ) {
         setStandaloneJob({ ...job });
-        if (job.status === 'completed' || job.status === 'completed_with_limitations') {
+        if (
+          job.status === 'completed' ||
+          job.status === 'completed_with_limitations' ||
+          job.status === 'failed' ||
+          job.status === 'cancelled'
+        ) {
           setIsStartingAudit(false);
         }
       }
@@ -132,10 +177,11 @@ export default function App() {
     };
   }, [refreshTab]);
 
-  // Request per-origin host permission
+  // Request per-origin host permission (Direct user activation)
   const handleGrantPermission = async () => {
     if (!targetUrl) return;
     setPermissionError(null);
+    setError(null);
     const granted = await standaloneCoordinator.requestHostPermission(targetUrl);
     setPermissionGranted(granted);
     if (!granted) {
@@ -152,18 +198,15 @@ export default function App() {
     setError(null);
     setPermissionError(null);
 
-    // Verify host permission first; request if needed
-    let hasPerm = permissionGranted;
-    if (!hasPerm) {
-      hasPerm = await standaloneCoordinator.checkHostPermission(targetUrl);
-      if (!hasPerm) {
-        hasPerm = await standaloneCoordinator.requestHostPermission(targetUrl);
-        if (!hasPerm) {
-          setPermissionError('Host permission is required to start the in-browser audit.');
-          return;
-        }
-        setPermissionGranted(true);
+    // If host permission not already granted, invoke permissions.request IMMEDIATELY
+    // during this user gesture with NO preceding await operations to avoid losing activation!
+    if (!permissionGranted) {
+      const granted = await standaloneCoordinator.requestHostPermission(targetUrl);
+      if (!granted) {
+        setPermissionError('Host permission is required to start the in-browser audit. Manifest V3 requires explicit host consent to audit this site.');
+        return;
       }
+      setPermissionGranted(true);
     }
 
     setIsStartingAudit(true);
@@ -274,11 +317,24 @@ export default function App() {
     standaloneJob &&
     (standaloneJob.status === 'crawling' ||
       standaloneJob.status === 'analyzing' ||
-      standaloneJob.status === 'scoring');
+      standaloneJob.status === 'scoring' ||
+      standaloneJob.status === 'discovering' ||
+      standaloneJob.status === 'requesting_permission');
 
   const isCompleted =
     standaloneJob &&
-    (standaloneJob.status === 'completed' || standaloneJob.status === 'completed_with_limitations');
+    (standaloneJob.status === 'completed' ||
+      standaloneJob.status === 'completed_with_limitations' ||
+      standaloneJob.status === 'partial');
+
+  const hasScore = typeof standaloneJob?.scorecard?.overallScore === 'number';
+  const overallScore = standaloneJob?.scorecard?.overallScore;
+  const grade = standaloneJob?.scorecard?.grade;
+  const isProvisional = Boolean(
+    standaloneJob?.scorecard?.coverage?.scoreState === 'provisional' ||
+    standaloneJob?.status === 'completed_with_limitations' ||
+    standaloneJob?.status === 'partial'
+  );
 
   return (
     <div className="w-[390px] bg-slate-950 text-slate-100 p-4 font-sans antialiased selection:bg-cyan-500 selection:text-slate-950 flex flex-col space-y-3.5">
@@ -420,15 +476,55 @@ export default function App() {
           <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 space-y-1.5 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-slate-400">Latest In-Browser Audit</span>
-              <span className="font-mono text-xs font-bold text-emerald-400">
-                Score: {standaloneJob?.scorecard?.overallScore ?? 100}/100 ({standaloneJob?.scorecard?.grade ?? 'A'})
-              </span>
+              {hasScore ? (
+                <span className="font-mono text-xs font-bold text-emerald-400">
+                  Score: {overallScore}/100 {grade ? `(${grade})` : ''} {isProvisional ? '• Provisional / Limited' : ''}
+                </span>
+              ) : (
+                <span className="font-mono text-xs font-semibold text-amber-400">
+                  Score Unavailable {isProvisional ? '(Provisional / Limited)' : ''}
+                </span>
+              )}
             </div>
             <div className="grid grid-cols-3 gap-1 text-center text-[10px] font-mono text-slate-300 pt-1 border-t border-slate-850">
               <div>Pages: {standaloneJob?.scorecard?.pagesCrawled ?? standaloneJob?.crawledUrls?.length ?? 0}</div>
               <div>Issues: {standaloneJob?.scorecard?.totalIssuesCount ?? 0}</div>
               <div>Status: {standaloneJob?.status === 'completed' ? 'Pass' : 'Limited'}</div>
             </div>
+          </div>
+        )}
+
+        {/* Failed / Incomplete Audit Card */}
+        {!isRunning && standaloneJob && (standaloneJob.status === 'failed' || standaloneJob.status === 'error') && (
+          <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-900/60 space-y-1 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-rose-300 font-medium">Audit Failed</span>
+              <span className="font-mono text-[11px] font-semibold text-rose-400">Score Unavailable</span>
+            </div>
+            <p className="text-[10px] text-rose-300/80">
+              {standaloneJob.errorMessage || 'Audit failed before completing evaluation.'}
+            </p>
+          </div>
+        )}
+
+        {/* Cancelled State Card */}
+        {!isRunning && standaloneJob && standaloneJob.status === 'cancelled' && (
+          <div className="p-2.5 rounded-lg bg-amber-950/40 border border-amber-900/60 space-y-1 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-amber-300 font-medium">Audit Cancelled</span>
+              <span className="font-mono text-[11px] font-semibold text-amber-400">Score Unavailable</span>
+            </div>
+            <p className="text-[10px] text-amber-300/80">
+              The audit was stopped by the user before completion.
+            </p>
+          </div>
+        )}
+
+        {/* Clear Empty State when No Audit for Current Site */}
+        {!isRunning && !standaloneJob && (
+          <div className="p-3 rounded-lg bg-slate-950/50 border border-slate-800/80 text-center space-y-1">
+            <p className="text-xs font-medium text-slate-300">No audit performed for this website yet.</p>
+            <p className="text-[10px] text-slate-500">Run Full Website Audit to evaluate 51 canonical SEO rules and detect technologies.</p>
           </div>
         )}
 

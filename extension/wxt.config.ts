@@ -20,9 +20,6 @@ export default defineConfig({
       'https://*/*',
       'http://*/*'
     ],
-    host_permissions: [
-      'http://127.0.0.1:4321/*'
-    ],
     web_accessible_resources: [
       {
         resources: ['sidepanel.html', 'popup.html', 'offscreen.html'],

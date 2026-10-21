@@ -14,6 +14,16 @@ import type {
 const DB_NAME = 'WebsiteAuditAgent_StandaloneDB';
 const DB_VERSION = 2;
 
+export function normalizeOrigin(urlOrOrigin: string): string {
+  if (!urlOrOrigin) return '';
+  const trimmed = urlOrOrigin.trim();
+  try {
+    return new URL(trimmed).origin.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
 export class StandaloneAuditStorage {
   private static dbPromise: Promise<IDBDatabase> | null = null;
   private static inMemoryAudits = new Map<string, StandaloneAuditJob>();
@@ -134,6 +144,49 @@ export class StandaloneAuditStorage {
       req.onsuccess = () => {
         const cursor = req.result;
         resolve(cursor ? (cursor.value as StandaloneAuditJob) : undefined);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /**
+   * Audit Context Isolation: Retrieve the latest audit specifically matching the
+   * normalized origin of the target URL. Never returns cross-origin audits.
+   */
+  public static async getLatestJobForTarget(targetUrlOrOrigin: string): Promise<StandaloneAuditJob | undefined> {
+    const targetOrigin = normalizeOrigin(targetUrlOrOrigin);
+    if (!targetOrigin) return undefined;
+
+    if (typeof indexedDB === 'undefined') {
+      const all = Array.from(this.inMemoryAudits.values()).filter((j) => {
+        const jobOrigin = normalizeOrigin(j.origin || j.targetUrl);
+        return jobOrigin === targetOrigin;
+      });
+      if (!all.length) return undefined;
+      all.sort((a, b) => b.updatedAt - a.updatedAt);
+      const latest = all[0];
+      return latest ? { ...latest } : undefined;
+    }
+
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('audits', 'readonly');
+      const store = tx.objectStore('audits');
+      const source = store.indexNames.contains('updatedAt') ? store.index('updatedAt') : store;
+      const req = source.openCursor(null, 'prev');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          resolve(undefined);
+          return;
+        }
+        const job = cursor.value as StandaloneAuditJob;
+        const jobOrigin = normalizeOrigin(job.origin || job.targetUrl);
+        if (jobOrigin === targetOrigin) {
+          resolve(job);
+          return;
+        }
+        cursor.continue();
       };
       req.onerror = () => reject(req.error);
     });
