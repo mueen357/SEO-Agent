@@ -129,7 +129,8 @@ export class StandaloneAuditStorage {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('audits', 'readonly');
       const store = tx.objectStore('audits');
-      const req = store.openCursor(null, 'prev');
+      const source = store.indexNames.contains('updatedAt') ? store.index('updatedAt') : store;
+      const req = source.openCursor(null, 'prev');
       req.onsuccess = () => {
         const cursor = req.result;
         resolve(cursor ? (cursor.value as StandaloneAuditJob) : undefined);

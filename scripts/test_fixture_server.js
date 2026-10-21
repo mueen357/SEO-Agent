@@ -199,6 +199,37 @@ ${urls.map((u) => `  <url><loc>http://127.0.0.1:${PORT}${u}</loc></url>`).join('
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`[Test Server] Multi-Page fixture running at http://127.0.0.1:${PORT}/`);
-});
+function startServer(port = PORT) {
+  return new Promise((resolve, reject) => {
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.log(`[Test Server] Port ${port} already active, reusing existing instance.`);
+        resolve(server);
+      } else {
+        reject(err);
+      }
+    });
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`[Test Server] Multi-Page fixture running at http://127.0.0.1:${port}/`);
+      resolve(server);
+    });
+  });
+}
+
+function stopServer() {
+  return new Promise((resolve) => {
+    try {
+      server.close(() => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+if (require.main === module) {
+  startServer().catch((err) => {
+    console.error('[Test Server] Failed to start:', err);
+  });
+}
+
+module.exports = { server, startServer, stopServer, PORT };

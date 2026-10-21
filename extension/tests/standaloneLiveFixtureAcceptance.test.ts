@@ -4,11 +4,20 @@
  * Zero mocks for fetch or DOM parsing.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { StandaloneAuditCoordinator } from '../standalone/coordinator';
 import { StandaloneAuditStorage } from '../standalone/persistence/indexedDb';
+const { startServer, stopServer } = require('../../scripts/test_fixture_server.js');
 
 describe('Standalone Live Fixture Acceptance (http://127.0.0.1:4321/)', () => {
+  beforeAll(async () => {
+    await startServer();
+  });
+
+  afterAll(async () => {
+    await stopServer();
+  });
+
   it('successfully crawls all 5 pages, detects WordPress 6.4.3, evaluates rules, and generates valid scorecard', async () => {
     StandaloneAuditStorage.clearInMemoryForTesting();
 

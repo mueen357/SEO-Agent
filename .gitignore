@@ -52,6 +52,8 @@ Thumbs.db
 scratch_profile/
 scratch_profile_clean/
 scratch_profile*/
+.tmp_chrome_profiles/
+test_evidence/
 scratch/
 
 # Databases & Persistence

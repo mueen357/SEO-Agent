@@ -18,7 +18,7 @@
  * Component G: 250-page safety limits & honest incomplete evaluation states
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { StandaloneRulesEngine } from '../standalone/audit/clientRules';
 import { StandaloneInternalLinkGraph } from '../standalone/audit/internalLinkGraph';
 import {
@@ -206,6 +206,16 @@ describe('Phase 4A Release Candidate Multi-Component Benchmarks', () => {
   // COMPONENT D: FULL HTTP CRAWL AGAINST LOCAL FIXTURE SERVER (PORT 4321)
   // =========================================================================
   describe('Component D: Full HTTP Crawl Against Local Fixture Server (http://127.0.0.1:4321/)', () => {
+    beforeAll(async () => {
+      const { startServer } = require('../../scripts/test_fixture_server.js');
+      await startServer();
+    });
+
+    afterAll(async () => {
+      const { stopServer } = require('../../scripts/test_fixture_server.js');
+      await stopServer();
+    });
+
     it('crawls 5 pages and verifies full HTTP crawl metrics', async () => {
       StandaloneAuditStorage.clearInMemoryForTesting();
       const coordinator = new StandaloneAuditCoordinator();
