@@ -108,6 +108,22 @@ Sitemap: http://127.0.0.1:4321/sitemap.xml
 `
 };
 
+const requestLog = [];
+
+function recordRequest(method, urlPath, headers, statusCode) {
+  if (urlPath === '/api/test-fixture/requests') return;
+  // Never log sensitive headers (cookies, auth)
+  requestLog.push({
+    timestamp: Date.now(),
+    method,
+    path: urlPath,
+    fullUrl: `http://127.0.0.1:${PORT}${urlPath}`,
+    origin: headers['origin'] || headers['host'] || `127.0.0.1:${PORT}`,
+    userAgent: headers['user-agent'] || '',
+    statusCode,
+  });
+}
+
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
 
@@ -122,6 +138,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (urlPath === '/api/test-fixture/requests') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(requestLog));
+    return;
+  }
+
   if (urlPath === '/sitemap.xml') {
     const urls = ['/', '/about', '/products', '/contact', '/blog'];
     for (let i = 1; i <= 260; i++) urls.push(`/page/${i}`);
@@ -129,6 +151,7 @@ const server = http.createServer((req, res) => {
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${urls.map((u) => `  <url><loc>http://127.0.0.1:${PORT}${u}</loc></url>`).join('\n')}
 </urlset>`;
+    recordRequest(req.method, urlPath, req.headers, 200);
     res.writeHead(200, {
       'Content-Type': 'application/xml; charset=utf-8',
       'X-Powered-By': 'PHP/8.2.0',
@@ -170,6 +193,7 @@ ${urls.map((u) => `  <url><loc>http://127.0.0.1:${PORT}${u}</loc></url>`).join('
   </main>
 </body>
 </html>`;
+    recordRequest(req.method, urlPath, req.headers, 200);
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'X-Powered-By': 'PHP/8.2.0',
@@ -181,6 +205,7 @@ ${urls.map((u) => `  <url><loc>http://127.0.0.1:${PORT}${u}</loc></url>`).join('
 
   if (PAGES[urlPath]) {
     const isRobots = urlPath === '/robots.txt';
+    recordRequest(req.method, urlPath, req.headers, 200);
     res.writeHead(200, {
       'Content-Type': isRobots ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8',
       'X-Powered-By': 'PHP/8.2.0',
@@ -188,12 +213,15 @@ ${urls.map((u) => `  <url><loc>http://127.0.0.1:${PORT}${u}</loc></url>`).join('
     });
     res.end(PAGES[urlPath]);
   } else if (urlPath.endsWith('.css')) {
+    recordRequest(req.method, urlPath, req.headers, 200);
     res.writeHead(200, { 'Content-Type': 'text/css' });
     res.end('body { margin: 0; }');
   } else if (urlPath.endsWith('.js')) {
+    recordRequest(req.method, urlPath, req.headers, 200);
     res.writeHead(200, { 'Content-Type': 'application/javascript' });
     res.end('console.log("wp-embed loaded");');
   } else {
+    recordRequest(req.method, urlPath, req.headers, 404);
     res.writeHead(404, { 'Content-Type': 'text/html' });
     res.end('<h1>404 Not Found</h1>');
   }
@@ -226,10 +254,18 @@ function stopServer() {
   });
 }
 
+function getRequestLog() {
+  return [...requestLog];
+}
+
+function clearRequestLog() {
+  requestLog.length = 0;
+}
+
 if (require.main === module) {
   startServer().catch((err) => {
     console.error('[Test Server] Failed to start:', err);
   });
 }
 
-module.exports = { server, startServer, stopServer, PORT };
+module.exports = { server, startServer, stopServer, getRequestLog, clearRequestLog, PORT };
