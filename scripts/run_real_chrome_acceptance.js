@@ -90,6 +90,77 @@ async function closeTab(targetId) {
   });
 }
 
+function parseRfc4180Csv(csvText) {
+  const rows = [];
+  let currentRow = [];
+  let currentField = '';
+  let inQuotes = false;
+  let i = 0;
+
+  while (i < csvText.length) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1];
+
+    if (inQuotes) {
+      if (char === '"' && nextChar === '"') {
+        currentField += '"';
+        i += 2;
+        continue;
+      }
+      if (char === '"') {
+        inQuotes = false;
+        i++;
+        continue;
+      }
+      currentField += char;
+      i++;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      i++;
+      continue;
+    }
+
+    if (char === ',') {
+      currentRow.push(currentField);
+      currentField = '';
+      i++;
+      continue;
+    }
+
+    if (char === '\r') {
+      if (nextChar === '\n') i++;
+      currentRow.push(currentField);
+      currentField = '';
+      rows.push(currentRow);
+      currentRow = [];
+      i++;
+      continue;
+    }
+
+    if (char === '\n') {
+      currentRow.push(currentField);
+      currentField = '';
+      rows.push(currentRow);
+      currentRow = [];
+      i++;
+      continue;
+    }
+
+    currentField += char;
+    i++;
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    currentRow.push(currentField);
+    rows.push(currentRow);
+  }
+
+  return rows.filter((r) => r.length > 1 || (r.length === 1 && r[0].trim().length > 0));
+}
+
 class CdpClient {
   constructor(wsUrl) {
     this.wsUrl = wsUrl;
@@ -613,14 +684,26 @@ async function main() {
       })()
     `);
 
-    harness.blocked(
-      'A06-NATIVE-SIDEPANEL-DOCK',
-      'Scenario B: Native Docked Side Panel Container',
-      `Programmatic docking verified blocked by Chrome MV3 security policy: "${programmaticSidepanelAttempt?.error || 'User gesture required'}". Requires native user action gesture on toolbar action icon. Scenario A tab verified.`,
-      'Native sidepanel docking via automated gesture',
-      programmaticSidepanelAttempt,
-      Math.round(performance.now() - a06Start)
-    );
+    if (programmaticSidepanelAttempt && programmaticSidepanelAttempt.success) {
+      harness.assert(
+        'A06-NATIVE-SIDEPANEL-DOCK',
+        'Scenario B: Native Docked Side Panel Container',
+        true,
+        'Native sidepanel docking via automated gesture or direct API',
+        programmaticSidepanelAttempt,
+        programmaticSidepanelAttempt,
+        Math.round(performance.now() - a06Start)
+      );
+    } else {
+      harness.blocked(
+        'A06-NATIVE-SIDEPANEL-DOCK',
+        'Scenario B: Native Docked Side Panel Container',
+        `Programmatic docking verified blocked by Chrome MV3 security policy: "${programmaticSidepanelAttempt?.error || 'User gesture required'}". Requires native user action gesture on toolbar action icon. Scenario A tab verified.`,
+        'Native sidepanel docking via automated gesture',
+        programmaticSidepanelAttempt,
+        Math.round(performance.now() - a06Start)
+      );
+    }
 
     // -----------------------------------------------------------------------
     // ASSERTION A07: Switch to Standalone Mode & Verify Engine Indicator
@@ -1148,23 +1231,48 @@ async function main() {
       fs.writeFileSync(savedCsvEvidence, downloadedCsvContent);
     }
 
-    // Validate parsed CSV
-    const csvLines = downloadedCsvContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
-    const expectedCsvHeader = 'Type,Page URL,Rule / Status,Severity / HTTP,Title / Evidence,Recommendation';
-    const csvHeaderValid = csvLines[0] === expectedCsvHeader;
-    const csvHasRows = csvLines.length > 5;
-    const csvHasPages = csvLines.some((l) => l.startsWith('"PAGE"') || l.startsWith('PAGE'));
-    const csvHasRobots = csvLines.some((l) => l.startsWith('"ROBOTS_TXT"') || l.startsWith('ROBOTS_TXT'));
-    const csvNoSensitiveTokens = !downloadedCsvContent.includes('Bearer ') && !downloadedCsvContent.includes('password');
+    // Validate parsed CSV with RFC 4180 parser
+    const csvRecords = parseRfc4180Csv(downloadedCsvContent);
+    const expectedCsvHeader = ['Type', 'Page URL', 'Rule / Status', 'Severity / HTTP', 'Title / Evidence', 'Recommendation'];
+    const csvHeaderValid =
+      csvRecords.length > 0 &&
+      csvRecords[0].length === 6 &&
+      csvRecords[0].every((h, idx) => h.trim() === expectedCsvHeader[idx]);
 
-    const csvValid = csvHeaderValid && csvHasRows && csvHasPages && csvHasRobots && csvNoSensitiveTokens;
+    const allRowsExact6Cols = csvRecords.length > 5 && csvRecords.every((r) => r.length === 6);
+    const csvHasPages = csvRecords.some((r) => r[0] === 'PAGE');
+    const csvHasRobots = csvRecords.some((r) => r[0] === 'ROBOTS_TXT');
+    const csvHasFindingsOrRules = csvRecords.some((r) => r[0].startsWith('SEO_') || r[0] === 'RULE_EXECUTION');
+    const csvNoSensitiveTokens =
+      !downloadedCsvContent.includes('Bearer ') &&
+      !downloadedCsvContent.includes('password') &&
+      !downloadedCsvContent.includes('"cookie"');
+
+    const csvHasQuotedFields = downloadedCsvContent.includes('","');
+
+    const csvValid =
+      csvHeaderValid &&
+      allRowsExact6Cols &&
+      csvHasPages &&
+      csvHasRobots &&
+      csvHasFindingsOrRules &&
+      csvNoSensitiveTokens &&
+      csvHasQuotedFields;
 
     harness.assert(
       'A18-REAL-EXPORT-CSV-DOWNLOAD',
-      'Real Client-Side CSV Export Triggered, Captured, Parsed & Validated',
+      'Real Client-Side CSV Export Triggered, Captured, Parsed & Validated via RFC 4180',
       Boolean(csvValid),
-      'Valid RFC 4180 CSV header, PAGE/ROBOTS rows, escaped fields, and zero sensitive tokens',
-      { csvHeaderValid, rowCount: csvLines.length, csvHasPages, csvHasRobots },
+      'Valid RFC 4180 CSV header, exactly 6 columns on all rows, PAGE/ROBOTS/FINDING rows, handled quotes/commas, and zero sensitive tokens',
+      {
+        csvHeaderValid,
+        allRowsExact6Cols,
+        rowCount: csvRecords.length,
+        csvHasPages,
+        csvHasRobots,
+        csvHasFindingsOrRules,
+        csvHasQuotedFields,
+      },
       { downloadedFile: downloadedCsvFile, byteSize: downloadedCsvContent.length },
       Math.round(performance.now() - a18Start)
     );
@@ -1180,8 +1288,8 @@ async function main() {
       csvValid,
       csvFilename: downloadedCsvFile ? path.basename(downloadedCsvFile) : null,
       csvByteSize: downloadedCsvContent.length,
-      csvRowCount: csvLines.length,
-      csvHeader: csvLines[0] || '',
+      csvRowCount: csvRecords.length,
+      csvHeader: csvRecords[0]?.join(',') || '',
       noSensitiveTokens: csvNoSensitiveTokens,
     };
 
@@ -1350,12 +1458,12 @@ async function main() {
     console.log('\n--- Testing Real Mid-Crawl Interruption & Durable Resumption ---');
     const a22Start = performance.now();
 
-    // Start a 15-page crawl with delayMs: 70 to establish an active in-flight crawl
+    // Start a 15-page crawl with delayMs: 60 to establish an active in-flight crawl
     await reopenedCdp.evaluate(`
       (async function() {
         chrome.runtime.sendMessage({
           type: 'START_AUDIT',
-          payload: { targetUrl: 'http://127.0.0.1:4321/', options: { maxPages: 15, maxDepth: 3, delayMs: 70, respectRobots: true } }
+          payload: { targetUrl: 'http://127.0.0.1:4321/', options: { maxPages: 15, maxDepth: 4, delayMs: 60, respectRobots: true } }
         });
       })()
     `);
@@ -1365,8 +1473,8 @@ async function main() {
     let stageAtInterruption = '';
 
     // Wait until at least 2 pages have been crawled while still in active 'crawling' stage
-    for (let p = 0; p < 20; p++) {
-      await sleep(300);
+    for (let p = 0; p < 25; p++) {
+      await sleep(250);
       const poll = await reopenedCdp.evaluate(`
         (async function() {
           return new Promise(resolve => {
@@ -1397,13 +1505,20 @@ async function main() {
       }
     }
 
-    // Now interrupt by cleanly terminating the active Service Worker mid-crawl!
-    const swToInterrupt = (await getJson('/json')).find(
+    // Verify Service Worker is active before termination
+    const swTargetsBefore = await getJson('/json');
+    const swToInterrupt = swTargetsBefore.find(
       (t) => t.type === 'service_worker' && t.url && t.url.includes('background.js')
     );
-    if (swToInterrupt) {
+    const workerActiveBefore = Boolean(swToInterrupt && swToInterrupt.id);
+    let workerTrulyTerminated = false;
+
+    // Terminate the active Service Worker mid-crawl!
+    if (workerActiveBefore) {
       await closeTab(swToInterrupt.id);
       await sleep(1500);
+      const postCloseTargets = await getJson('/json');
+      workerTrulyTerminated = !postCloseTargets.some((t) => t.id === swToInterrupt.id);
     }
 
     // Trigger durable resumption
@@ -1422,7 +1537,7 @@ async function main() {
     let finalResumedJob = null;
     let finalResumedPagesCount = 0;
 
-    for (let r = 0; r < 35; r++) {
+    for (let r = 0; r < 45; r++) {
       await sleep(500);
       const poll2 = await reopenedCdp.evaluate(`
         (async function() {
@@ -1460,30 +1575,95 @@ async function main() {
       }
     }
 
+    // Exhaustive IndexedDB verification for resumed 15-page audit
+    const audit15Verification = await reopenedCdp.evaluate(`
+      (async function() {
+        return new Promise(resolve => {
+          const req = indexedDB.open('WebsiteAuditAgent_StandaloneDB');
+          req.onsuccess = e => {
+            const db = e.target.result;
+            const tx = db.transaction(['audits', 'pages', 'findings', 'execution_ledger'], 'readonly');
+            const auditsReq = tx.objectStore('audits').getAll();
+            const pagesReq = tx.objectStore('pages').getAll();
+            const findingsReq = tx.objectStore('findings').getAll();
+            const ledgerReq = tx.objectStore('execution_ledger').getAll();
+
+            tx.oncomplete = () => {
+              const auditId = '${interruptedAuditJob ? interruptedAuditJob.id : ''}';
+              const job = (auditsReq.result || []).find(a => a.id === auditId);
+              const pages = (pagesReq.result || []).filter(p => p.auditId === auditId);
+              const findings = (findingsReq.result || []).filter(f => f.auditId === auditId);
+              const ledger = (ledgerReq.result || []).filter(l => l.auditId === auditId);
+
+              const uniqueUrls = Array.from(new Set(pages.map(p => p.url)));
+              const uniqueFindingIds = Array.from(new Set(findings.map(f => f.id)));
+              const uniqueLedgerIds = Array.from(new Set(ledger.map(l => l.id)));
+
+              resolve({
+                jobId: job ? job.id : null,
+                status: job ? job.status : null,
+                progressPercent: job ? job.progressPercent : 0,
+                hasCheckpoints: Boolean(job && job.stageCheckpoints && job.stageCheckpoints.crawlingFinished),
+                pagesCount: pages.length,
+                uniqueUrlsCount: uniqueUrls.length,
+                duplicatePagesCount: pages.length - uniqueUrls.length,
+                findingsCount: findings.length,
+                duplicateFindingsCount: findings.length - uniqueFindingIds.length,
+                ledgerCount: ledger.length,
+                duplicateLedgerCount: ledger.length - uniqueLedgerIds.length
+              });
+            };
+          };
+        });
+      })()
+    `);
+
     lifecycleData.midCrawlInterruption = {
       interruptedAuditId: interruptedAuditJob?.id,
       pagesAtInterruption,
       stageAtInterruption,
-      resumedPagesCount: finalResumedPagesCount,
-      resumedStatus: finalResumedJob?.status,
+      workerActiveBefore,
+      workerTrulyTerminated,
+      sameAuditIdResumed: audit15Verification?.jobId === interruptedAuditJob?.id,
+      resumedPagesCount: audit15Verification?.pagesCount || finalResumedPagesCount,
+      uniqueUrlsCount: audit15Verification?.uniqueUrlsCount,
+      duplicateFindingsCount: audit15Verification?.duplicateFindingsCount,
+      duplicateLedgerCount: audit15Verification?.duplicateLedgerCount,
+      hasCheckpoints: audit15Verification?.hasCheckpoints,
+      resumedStatus: audit15Verification?.status || finalResumedJob?.status,
       resumedCompleted,
     };
 
+    const a22Pass = Boolean(
+      interruptedAuditJob &&
+      pagesAtInterruption >= 2 &&
+      workerActiveBefore &&
+      workerTrulyTerminated &&
+      audit15Verification &&
+      audit15Verification.jobId === interruptedAuditJob.id &&
+      audit15Verification.pagesCount === 15 &&
+      audit15Verification.uniqueUrlsCount === 15 &&
+      audit15Verification.duplicateFindingsCount === 0 &&
+      audit15Verification.duplicateLedgerCount === 0 &&
+      audit15Verification.hasCheckpoints &&
+      (audit15Verification.status === 'completed' || audit15Verification.status === 'completed_with_limitations')
+    );
+
     harness.assert(
       'A22-MID-CRAWL-INTERRUPT-RESUME',
-      'Mid-Crawl Service Worker Interruption & Durable Checkpoint Resumption',
-      Boolean(
-        interruptedAuditJob &&
-        pagesAtInterruption >= 2 &&
-        finalResumedPagesCount >= pagesAtInterruption &&
-        (finalResumedJob?.status === 'completed' || finalResumedJob?.status === 'completed_with_limitations')
-      ),
-      'Audit interrupted mid-flight at >= 2 pages and successfully resumed to completion',
+      'Mid-Crawl Service Worker Interruption & Durable Checkpoint Resumption (15 Pages)',
+      a22Pass,
+      'Worker active before termination, truly terminated, same audit ID resumed, exactly 15 unique pages persisted, zero duplicate findings/ledger, and preserved checkpoints',
       {
-        interruptedId: interruptedAuditJob?.id,
-        pagesAtInterruption,
-        finalPagesCount: finalResumedPagesCount,
-        status: finalResumedJob?.status,
+        workerActiveBefore,
+        workerTrulyTerminated,
+        sameAuditIdResumed: audit15Verification?.jobId === interruptedAuditJob?.id,
+        pagesCount: audit15Verification?.pagesCount,
+        uniqueUrlsCount: audit15Verification?.uniqueUrlsCount,
+        duplicateFindings: audit15Verification?.duplicateFindingsCount,
+        duplicateLedger: audit15Verification?.duplicateLedgerCount,
+        hasCheckpoints: audit15Verification?.hasCheckpoints,
+        status: audit15Verification?.status,
       },
       lifecycleData.midCrawlInterruption,
       Math.round(performance.now() - a22Start)
@@ -1703,48 +1883,73 @@ async function main() {
       ...fixtureRequestLog.map((r) => r.fullUrl),
     ];
 
-    const allowedFixtureRequests = allCapturedUrls.filter(
-      (u) => u.startsWith('http://127.0.0.1:4321') || u.startsWith('http://localhost:4321')
+    function parseUrlOrigin(urlStr) {
+      try {
+        const u = new URL(urlStr);
+        return {
+          origin: u.origin,
+          protocol: u.protocol,
+          hostname: u.hostname,
+          port: u.port || (u.protocol === 'https:' ? '443' : u.protocol === 'http:' ? '80' : ''),
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    const parsedUrls = allCapturedUrls.map((u) => ({ raw: u, parsed: parseUrlOrigin(u) }));
+    const allowedFixtureRequests = parsedUrls.filter(
+      (p) =>
+        p.parsed &&
+        (p.parsed.origin === 'http://127.0.0.1:4321' || p.parsed.origin === 'http://localhost:4321')
     );
-    const chromeInternalRequests = allCapturedUrls.filter(
-      (u) =>
-        u.startsWith('chrome-extension://') ||
-        u.startsWith('chrome://') ||
-        u.startsWith('blob:') ||
-        u.startsWith('data:')
+    const chromeInternalRequests = parsedUrls.filter(
+      (p) =>
+        p.parsed &&
+        (p.parsed.protocol === 'chrome-extension:' ||
+          p.parsed.protocol === 'chrome:' ||
+          p.parsed.protocol === 'blob:' ||
+          p.parsed.protocol === 'data:')
     );
-    const unexpectedExternalRequests = allCapturedUrls.filter(
-      (u) =>
-        !u.startsWith('http://127.0.0.1:4321') &&
-        !u.startsWith('http://localhost:4321') &&
-        !u.startsWith('chrome-extension://') &&
-        !u.startsWith('chrome://') &&
-        !u.startsWith('blob:') &&
-        !u.startsWith('data:')
+    const unexpectedExternalRequests = parsedUrls.filter(
+      (p) =>
+        !p.parsed ||
+        (p.parsed.origin !== 'http://127.0.0.1:4321' &&
+          p.parsed.origin !== 'http://localhost:4321' &&
+          p.parsed.protocol !== 'chrome-extension:' &&
+          p.parsed.protocol !== 'chrome:' &&
+          p.parsed.protocol !== 'blob:' &&
+          p.parsed.protocol !== 'data:')
     );
+
+    const trafficCoverage = (cdpNetworkRequests.length > 0 && fixtureServerTelemetryActive)
+      ? 'FULLY_OBSERVED (Sidepanel UI Tab + Extension Offscreen/Worker Sessions + Local Fixture Server Telemetry)'
+      : 'PARTIALLY_OBSERVED (Local Fixture Server Telemetry)';
 
     auditData.networkSummary = {
       totalRequests: allCapturedUrls.length,
       allowedFixtureRequests: allowedFixtureRequests.length,
       chromeInternalRequests: chromeInternalRequests.length,
       unexpectedExternalRequests: unexpectedExternalRequests.length,
+      trafficCoverage,
       fixtureServerRequests: fixtureRequestLog.map((r) => ({
         method: r.method,
         path: r.path,
         statusCode: r.statusCode,
       })),
-      externalUrls: unexpectedExternalRequests,
+      externalUrls: unexpectedExternalRequests.map((r) => r.raw),
     };
 
     harness.assert(
       'A27-NETWORK-EXTERNAL-SAFETY',
       'Real Network Telemetry Confirms Zero External / Leakage Requests',
       unexpectedExternalRequests.length === 0 && allowedFixtureRequests.length > 0,
-      'All network traffic strictly constrained to local fixture and internal extension domains',
+      'All network traffic strictly constrained to local fixture and internal extension domains via exact origin parsing',
       {
         totalObserved: allCapturedUrls.length,
         fixtureRequests: allowedFixtureRequests.length,
         unexpectedExternalCount: unexpectedExternalRequests.length,
+        trafficCoverage,
       },
       auditData.networkSummary,
       0

@@ -76,7 +76,7 @@ type ActiveTabNav =
   | 'reports';
 
 export default function App() {
-  const [auditMode, setAuditMode] = useState<AuditModeSelection>('quick');
+  const [auditMode, setAuditMode] = useState<AuditModeSelection>('standalone');
   const [tab, setTab] = useState<ActiveTabInfo | null>(null);
   const [health, setHealth] = useState<BackendHealthResponse | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
@@ -125,7 +125,8 @@ export default function App() {
 
   useEffect(() => {
     refreshTab();
-    refreshHealth();
+    // Zero FastAPI / Zero Localhost: do NOT poll backend health automatically on mount!
+    // Backend health is only refreshed when user explicitly accesses the developer/legacy backend tab.
 
     // Check for saved active full audit and resume polling if still active
     getActiveFullAuditId().then((savedId) => {
@@ -341,14 +342,17 @@ export default function App() {
             Standalone Audit (Beta)
           </button>
           <button
-            onClick={() => setAuditMode('full')}
+            onClick={() => {
+              setAuditMode('full');
+              if (!health) refreshHealth();
+            }}
             className={`px-2.5 py-1 rounded-md font-medium transition-all ${
               auditMode === 'full'
                 ? 'bg-cyan-500 text-slate-950 shadow-sm font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Local Backend Audit
+            Local Backend Audit (Dev)
           </button>
         </div>
 

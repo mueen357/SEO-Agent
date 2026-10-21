@@ -101,11 +101,30 @@ export class StandaloneAuditCoordinator {
   public async checkHostPermission(targetUrl: string): Promise<boolean> {
     try {
       const parsed = new URL(targetUrl);
-      const originPattern = `${parsed.origin}/*`;
       if (typeof chrome !== 'undefined' && chrome.permissions && chrome.permissions.contains) {
-        return await new Promise<boolean>((resolve) => {
-          chrome.permissions.contains({ origins: [originPattern] }, (has) => resolve(Boolean(has)));
+        // Check exact origin with port first (for manifest-declared local fixtures)
+        const exactOriginPattern = `${parsed.origin}/*`;
+        const hasExact = await new Promise<boolean>((resolve) => {
+          try {
+            chrome.permissions.contains({ origins: [exactOriginPattern] }, (has) => resolve(Boolean(has)));
+          } catch {
+            resolve(false);
+          }
         });
+        if (hasExact) return true;
+
+        // Check scheme + hostname pattern (for user-granted runtime permissions without port)
+        const hostPattern = `${parsed.protocol}//${parsed.hostname}/*`;
+        if (hostPattern !== exactOriginPattern) {
+          return await new Promise<boolean>((resolve) => {
+            try {
+              chrome.permissions.contains({ origins: [hostPattern] }, (has) => resolve(Boolean(has)));
+            } catch {
+              resolve(false);
+            }
+          });
+        }
+        return false;
       }
       return true;
     } catch {
@@ -116,18 +135,24 @@ export class StandaloneAuditCoordinator {
   public async requestHostPermission(targetUrl: string): Promise<boolean> {
     try {
       const parsed = new URL(targetUrl);
-      const originPattern = `${parsed.origin}/*`;
+      // Chrome permissions.request does not support port numbers in match patterns per MV3 specification;
+      // use standard scheme + hostname pattern and enforce port in crawler application scope:
+      const patternToRequest = `${parsed.protocol}//${parsed.hostname}/*`;
 
       if (typeof chrome !== 'undefined' && chrome.permissions && chrome.permissions.request) {
         return await new Promise<boolean>((resolve) => {
-          chrome.permissions.request(
-            {
-              origins: [originPattern],
-            },
-            (granted) => {
-              resolve(Boolean(granted));
-            }
-          );
+          try {
+            chrome.permissions.request(
+              {
+                origins: [patternToRequest],
+              },
+              (granted) => {
+                resolve(Boolean(granted));
+              }
+            );
+          } catch {
+            resolve(false);
+          }
         });
       }
 
@@ -339,13 +364,17 @@ export class StandaloneAuditCoordinator {
           job.targetUrl,
           config,
           job.pendingQueue.length > 0 ? job.pendingQueue : undefined,
-          job.discoveredUrls
+          job.discoveredUrls,
+          crawledPages.length
         );
 
         await crawler.run({
           onPageCrawled: async (page) => {
             // Guard: Authoritative ownership check
             if (this.currentRunId !== runId || this.isCancelledFlag) return;
+
+            // Guard: Prevent duplicate page URL insertion on resume
+            if (crawledPages.some((p) => p.url === page.url)) return;
 
             page.auditId = auditId;
             crawledPages.push(page);

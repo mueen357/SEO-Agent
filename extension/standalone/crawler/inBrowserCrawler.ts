@@ -152,13 +152,17 @@ export class InBrowserCrawler {
     return this.sitemapEvidence;
   }
 
+  private initialCrawledCount: number = 0;
+
   constructor(
     seedUrl: string,
     config: StandaloneAuditConfig,
     existingQueue?: Array<{ url: string; depth: number }>,
-    existingSeen?: string[]
+    existingSeen?: string[],
+    initialCrawledCount: number = 0
   ) {
     this.config = config;
+    this.initialCrawledCount = initialCrawledCount;
     const parsed = new URL(seedUrl);
     this.origin = parsed.origin;
     this.hostname = parsed.hostname;
@@ -260,10 +264,28 @@ export class InBrowserCrawler {
   private async checkHostPermission(urlStr: string): Promise<boolean> {
     if (typeof chrome !== 'undefined' && chrome.permissions?.contains) {
       try {
-        const originPattern = `${new URL(urlStr).origin}/*`;
-        return await new Promise<boolean>((resolve) => {
-          chrome.permissions.contains({ origins: [originPattern] }, (res) => resolve(Boolean(res)));
+        const u = new URL(urlStr);
+        const exactOriginPattern = `${u.origin}/*`;
+        const hasExact = await new Promise<boolean>((resolve) => {
+          try {
+            chrome.permissions.contains({ origins: [exactOriginPattern] }, (res) => resolve(Boolean(res)));
+          } catch {
+            resolve(false);
+          }
         });
+        if (hasExact) return true;
+
+        const hostPattern = `${u.protocol}//${u.hostname}/*`;
+        if (hostPattern !== exactOriginPattern) {
+          return await new Promise<boolean>((resolve) => {
+            try {
+              chrome.permissions.contains({ origins: [hostPattern] }, (res) => resolve(Boolean(res)));
+            } catch {
+              resolve(false);
+            }
+          });
+        }
+        return false;
       } catch {
         return false;
       }
@@ -894,7 +916,7 @@ export class InBrowserCrawler {
   }
 
   public async run(callbacks: CrawlCallbacks): Promise<void> {
-    let crawledCount = 0;
+    let crawledCount = this.initialCrawledCount;
 
     // Load robots.txt once before beginning crawl
     if (this.config.respectRobots && !this.robotsFetched) {
